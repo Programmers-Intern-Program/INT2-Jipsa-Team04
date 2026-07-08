@@ -1,0 +1,29 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16      # Postgres + pgvector preinstalled
+    environment:
+      POSTGRES_DB: jipsa
+      POSTGRES_USER: jipsa
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports: ["5432:5432"]
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+  embedding:
+    build: ./embedding
+    ports: ["8000:8000"]
+  backend:
+    build: ./backend
+    depends_on: [db, embedding]
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/jipsa
+      SPRING_DATASOURCE_USERNAME: jipsa
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      EMBEDDING_URL: http://embedding:8000
+    ports: ["8080:8080"]
+  frontend:
+    build: ./frontend
+    ports: ["5173:5173"]
+volumes:
+  dbdata:
