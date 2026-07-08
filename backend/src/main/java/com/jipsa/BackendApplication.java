@@ -1,4 +1,4 @@
-package com.jipsa.backend;
+package com.jipsa;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

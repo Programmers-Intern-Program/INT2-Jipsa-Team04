@@ -1,4 +1,4 @@
-package com.jipsa.backend;
+package com.jipsa;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
