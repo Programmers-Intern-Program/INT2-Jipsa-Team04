@@ -1,25 +1,39 @@
 services:
   db:
-    image: pgvector/pgvector:pg16      # Postgres + pgvector preinstalled
+    image: mysql:8.0                      # or mariadb:10.6 to match the DDL header
     environment:
-      POSTGRES_DB: jipsa
-      POSTGRES_USER: jipsa
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-    ports: ["5432:5432"]
+      MYSQL_DATABASE: Jipsa_AWS_Server    # must match the DB the DDL USEs
+      MYSQL_USER: jipsa
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    ports: ["3306:3306"]
     volumes:
-      - dbdata:/var/lib/postgresql/data
+      - dbdata:/var/lib/mysql            # was /var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro   # auto-runs *.sql on first boot
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DB_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
   embedding:
     build: ./embedding
     ports: ["8000:8000"]
   backend:
     build: ./backend
-    depends_on: [db, embedding]
+    depends_on:
+      db:
+        condition: service_healthy
+      embedding:
+        condition: service_started
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/jipsa
+      SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/Jipsa_AWS_Server?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul
       SPRING_DATASOURCE_USERNAME: jipsa
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       EMBEDDING_URL: http://embedding:8000
     ports: ["8080:8080"]
   frontend:
