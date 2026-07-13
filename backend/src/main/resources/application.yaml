@@ -18,3 +18,8 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
+app:
+  s3:
+    bucket: ${S3_BUCKET}
+  aws:
+    region: ${AWS_REGION:ap-northeast-2}
