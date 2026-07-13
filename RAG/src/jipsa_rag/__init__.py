@@ -1,2 +1,3 @@
-def main() -> None:
-    print("Hello from jipsa-rag!")
+"""Jipsa RAG 서비스 패키지."""
+
+__version__ = "0.1.0"
