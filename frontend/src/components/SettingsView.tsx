@@ -11,11 +11,12 @@ import {
 import type { AISettings } from "../types";
 
 interface SettingsViewProps {
+  user: { name: string; email: string; role: string } | null;
   committedSettings: AISettings;
   onSaveSettings: (settings: AISettings) => Promise<void>;
 }
 
-export default function SettingsView({ committedSettings, onSaveSettings }: SettingsViewProps) {
+export default function SettingsView({ user, committedSettings, onSaveSettings }: SettingsViewProps) {
   const [localSettings, setLocalSettings] = useState<AISettings>({ ...committedSettings });
   const [isSaving, setIsSaving] = useState(false);
 
@@ -102,10 +103,10 @@ export default function SettingsView({ committedSettings, onSaveSettings }: Sett
             <div className="relative mb-4">
               <img 
                 src="https://lh3.googleusercontent.com/aida-public/AB6AXuCKKIn2elQpF3hFbise3_TUdXNOQBNTP3fcCXcf-RP4YOiJ-n3tU3buoUJ3eGBRBkEpzAeBlez5zzQOEs-SsOhHMALfLrtuFeVj3s4-hhGG4wCNmAOdpawgvAcyupp4KQcadGBbf3K4g2e0OspQNdzzC-E3ZDYm8zQpRLCcu5hQOBN8sU_B_AkxF2WkiAulSglvNZ-0nTpU53f1jNc9Z1xM1DEU_GvRZrhvj9w5OdJwYkuuOEmYcvwqlg" 
-                alt="김민수 프로필" 
+                alt={`${user?.name || "사용자"} 프로필`}
                 className="w-32 h-32 rounded-full object-cover border-4 border-white shadow-xl"
               />
-              <button 
+              <button
                 type="button"
                 onClick={() => alert("현재 프로필 변경 사진 업로드는 지원 대기 중입니다.")}
                 className="absolute bottom-1 right-1 bg-primary text-white p-2 rounded-full shadow-lg hover:scale-105 transition-transform cursor-pointer"
@@ -114,8 +115,8 @@ export default function SettingsView({ committedSettings, onSaveSettings }: Sett
                 <Edit className="w-4.5 h-4.5" />
               </button>
             </div>
-            <h3 className="text-xl font-bold text-on-surface font-sans">김민수</h3>
-            <p className="text-on-surface-variant text-body-sm font-medium mt-0.5">minsoo.kim@aidrive.ai</p>
+            <h3 className="text-xl font-bold text-on-surface font-sans">{user?.name || "사용자"}</h3>
+            <p className="text-on-surface-variant text-body-sm font-medium mt-0.5">{user?.email || ""}</p>
             
             <div className="flex gap-2 w-full mt-5">
               <button 
