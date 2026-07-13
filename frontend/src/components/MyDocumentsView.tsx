@@ -448,6 +448,41 @@ export default function MyDocumentsView({
     }
   };
 
+  // 폴더 삭제 (mock: 로컬 상태에만 반영, DELETE /api/v1/folders/{id} 연동은 별도 이슈).
+  // 하위 폴더까지 함께 삭제하고, 포함된 문서는 미분류(루트, folderId: null)로 옮긴다.
+  const handleDeleteFolder = (folderId: number, folderName: string) => {
+    const collectDescendantIds = (id: number): number[] => {
+      const childIds = folders.filter((f) => f.parentFolderId === id).map((f) => f.folderId);
+      return [id, ...childIds.flatMap(collectDescendantIds)];
+    };
+    const idsToDelete = collectDescendantIds(folderId);
+    const affectedDocCount = documents.filter(
+      (d) => d.folderId !== null && idsToDelete.includes(d.folderId)
+    ).length;
+
+    const subFolderCount = idsToDelete.length - 1;
+    const confirmMsg =
+      `'${folderName}' 폴더를 삭제하시겠습니까?` +
+      (subFolderCount > 0 ? `\n하위 폴더 ${subFolderCount}개도 함께 삭제됩니다.` : "") +
+      (affectedDocCount > 0 ? `\n포함된 문서 ${affectedDocCount}개는 [미분류]로 이동됩니다.` : "");
+
+    if (!window.confirm(confirmMsg)) return;
+
+    setFolders((prev) => prev.filter((f) => !idsToDelete.includes(f.folderId)));
+
+    if (affectedDocCount > 0) {
+      onUpdateDocuments(
+        documents.map((d) =>
+          d.folderId !== null && idsToDelete.includes(d.folderId) ? { ...d, folderId: null } : d
+        )
+      );
+    }
+
+    if (selectedFolder !== null && idsToDelete.includes(selectedFolder)) {
+      setSelectedFolder(null);
+    }
+  };
+
   const renderFolderNode = (node: FolderTreeNode, depth: number = 0): React.ReactNode => {
     const hasChildren = node.children.length > 0;
     const isExpanded = expandedFolders[node.id] ?? true; // Default expanded
@@ -492,11 +527,24 @@ export default function MyDocumentsView({
             <span className="text-xs font-semibold truncate" title={node.name}>{node.name}</span>
           </div>
 
-          <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold shrink-0 ${
-            isSelected ? "bg-primary/20 text-primary" : "bg-surface-container-low text-outline"
-          }`}>
-            {node.totalFileCount}
-          </span>
+          <div className="flex items-center gap-1 shrink-0">
+            <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+              isSelected ? "bg-primary/20 text-primary" : "bg-surface-container-low text-outline"
+            }`}>
+              {node.totalFileCount}
+            </span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDeleteFolder(node.id, node.name);
+              }}
+              className="p-1 rounded opacity-0 group-hover:opacity-100 text-outline hover:text-rose-500 hover:bg-rose-50 transition-all cursor-pointer"
+              title="폴더 삭제"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
         </div>
 
         {hasChildren && isExpanded && (
@@ -1095,7 +1143,20 @@ export default function MyDocumentsView({
                                 </p>
                               </div>
                             </div>
-                            <ChevronRight className="w-4 h-4 text-outline-variant group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteFolder(folder.folderId, folderName);
+                                }}
+                                className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 text-outline hover:text-rose-500 hover:bg-rose-50 transition-all cursor-pointer"
+                                title="폴더 삭제"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                              <ChevronRight className="w-4 h-4 text-outline-variant group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
+                            </div>
                           </div>
                         );
                       })}
@@ -1365,6 +1426,17 @@ export default function MyDocumentsView({
                                 className="px-2.5 py-1.5 bg-primary/10 text-primary text-[10px] font-extrabold rounded-lg hover:bg-primary/20 transition-all cursor-pointer whitespace-nowrap"
                               >
                                 폴더 열기
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteFolder(folder.folderId, folderName);
+                                }}
+                                className="p-1.5 rounded-lg text-outline hover:text-rose-500 hover:bg-rose-50 transition-all cursor-pointer"
+                                title="폴더 삭제"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
                           </td>
