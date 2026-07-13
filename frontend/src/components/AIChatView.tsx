@@ -1,42 +1,56 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { 
-  Sparkles, 
-  Send, 
-  Mic, 
-  Paperclip, 
-  User, 
-  FileText, 
-  FileSpreadsheet, 
-  PlusCircle, 
-  Link2, 
-  Check, 
+import {
+  Sparkles,
+  Send,
+  Mic,
+  Paperclip,
+  User,
+  FileText,
+  FileSpreadsheet,
+  PlusCircle,
+  Link2,
+  Check,
   X,
+  Plus,
+  Pencil,
 } from "lucide-react";
-import type { Document, ChatMessage } from "../types";
+import type { Document, ChatSession, ChatMessage } from "../types";
 import { mockFolders } from "../mocks/mockData";
 import { getFolderPath } from "../utils/folderTree";
 
 interface AIChatViewProps {
   documents: Document[];
-  selectedDocIds: string[];
+  chatSessions: ChatSession[];
+  activeChatSessionId: string;
+  onSelectChatSession: (id: string) => void;
+  onNewChatTab: () => void;
+  onCloseChatTab: (id: string) => void;
+  onRenameChatTab: (id: string, title: string) => void;
   onToggleDocSelection: (id: string) => void;
-  chatHistory: ChatMessage[];
   onSendMessage: (text: string, refDocIds: string[]) => Promise<void>;
   isLoadingChat: boolean;
 }
 
 export default function AIChatView({
   documents,
-  selectedDocIds,
+  chatSessions,
+  activeChatSessionId,
+  onSelectChatSession,
+  onNewChatTab,
+  onCloseChatTab,
+  onRenameChatTab,
   onToggleDocSelection,
-  chatHistory,
   onSendMessage,
   isLoadingChat
 }: AIChatViewProps) {
   const [inputText, setInputText] = useState("");
   const [isAddSourceOpen, setIsAddSourceOpen] = useState(false);
-  
+
+  const activeSession = chatSessions.find((s) => s.id === activeChatSessionId) ?? chatSessions[0];
+  const selectedDocIds = activeSession.selectedDocIds;
+  const chatHistory = activeSession.chatHistory;
+
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Auto scroll to bottom on new messages
@@ -140,6 +154,33 @@ export default function AIChatView({
 
       {/* Right Pane: Active RAG Chat Interface */}
       <section className="flex-1 flex flex-col relative bg-white overflow-hidden" id="chat-workspace-pane">
+        {/* Chat Tabs Bar: 여러 개의 독립된 대화 창을 탭으로 전환 */}
+        <div
+          className="flex items-end gap-1 px-3 pt-2.5 border-b border-outline-variant bg-surface-container-low/40 overflow-x-auto no-scrollbar shrink-0"
+          id="chat-tabs-bar"
+        >
+          {chatSessions.map((session) => (
+            <ChatTab
+              key={session.id}
+              session={session}
+              isActive={session.id === activeChatSessionId}
+              closable={chatSessions.length > 1}
+              onSelect={() => onSelectChatSession(session.id)}
+              onClose={() => onCloseChatTab(session.id)}
+              onRename={(title) => onRenameChatTab(session.id, title)}
+            />
+          ))}
+          <button
+            type="button"
+            onClick={onNewChatTab}
+            className="p-2 mb-1.5 ml-1 text-outline hover:text-primary hover:bg-white rounded-lg transition-colors cursor-pointer shrink-0"
+            title="새 대화 탭 열기"
+            id="btn-new-chat-tab"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+
         {/* Messages Feed */}
         <div className="flex-1 overflow-y-auto p-8 space-y-8 pb-36 custom-scrollbar" id="messages-scroller">
           {chatHistory.length === 0 ? (
@@ -397,6 +438,102 @@ export default function AIChatView({
         )}
       </AnimatePresence>
     </motion.div>
+  );
+}
+
+function ChatTab({
+  session,
+  isActive,
+  closable,
+  onSelect,
+  onClose,
+  onRename,
+}: {
+  session: ChatSession;
+  isActive: boolean;
+  closable: boolean;
+  onSelect: () => void;
+  onClose: () => void;
+  onRename: (title: string) => void;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(session.title);
+
+  const commitRename = () => {
+    setIsEditing(false);
+    const trimmed = draftTitle.trim();
+    onRename(trimmed || session.title);
+  };
+
+  return (
+    <div
+      onClick={onSelect}
+      className={`group flex items-center gap-2 px-3.5 py-2.5 rounded-t-xl cursor-pointer text-label-md font-semibold whitespace-nowrap border border-b-0 transition-colors ${
+        isActive
+          ? "bg-white text-primary border-outline-variant"
+          : "bg-transparent text-on-surface-variant border-transparent hover:bg-white/60"
+      }`}
+      id={`chat-tab-${session.id}`}
+      title={session.title}
+    >
+      {isEditing ? (
+        <input
+          autoFocus
+          value={draftTitle}
+          onChange={(e) => setDraftTitle(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitRename();
+            if (e.key === "Escape") {
+              setDraftTitle(session.title);
+              setIsEditing(false);
+            }
+          }}
+          className="max-w-[120px] bg-surface-container-low rounded px-1.5 py-0.5 text-label-md font-semibold outline-none ring-1 ring-primary/40"
+        />
+      ) : (
+        <span
+          className="max-w-[140px] truncate"
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            setDraftTitle(session.title);
+            setIsEditing(true);
+          }}
+        >
+          {session.title}
+        </span>
+      )}
+
+      {!isEditing && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setDraftTitle(session.title);
+            setIsEditing(true);
+          }}
+          className="p-0.5 rounded-full text-outline hover:text-primary hover:bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+          title="탭 이름 변경"
+        >
+          <Pencil className="w-3 h-3" />
+        </button>
+      )}
+
+      {closable && !isEditing && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
+          className="p-0.5 rounded-full text-outline hover:text-rose-500 hover:bg-rose-50 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+          title="탭 닫기"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
   );
 }
 

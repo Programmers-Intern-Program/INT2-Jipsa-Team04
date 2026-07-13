@@ -19,10 +19,10 @@ import DashboardView from "./components/DashboardView";
 import MyDocumentsView from "./components/MyDocumentsView";
 import AIChatView from "./components/AIChatView";
 import SettingsView from "./components/SettingsView";
-import LoginView from "./components/LoginView";
+import LandingView from "./components/LandingView";
 
 // Import types
-import type { Document, AISettings, ChatMessage } from "./types";
+import type { Document, AISettings, ChatMessage, ChatSession } from "./types";
 
 // 정적 mock 데이터 (백엔드 API 연동은 별도 이슈에서 처리)
 import { mockDocuments, mockAISettings } from "./mocks/mockData";
@@ -36,6 +36,17 @@ function getInitialSelectedDocIds(docs: Document[]): string[] {
   return [];
 }
 
+let chatSessionSeq = 0;
+function createChatSession(selectedDocIds: string[] = [], title?: string): ChatSession {
+  chatSessionSeq += 1;
+  return {
+    id: `session-${Date.now()}-${chatSessionSeq}`,
+    title: title ?? `대화 ${chatSessionSeq}`,
+    chatHistory: [],
+    selectedDocIds
+  };
+}
+
 export default function App() {
   const [user, setUser] = useState<{ name: string; email: string; role: string } | null>(() => {
     const saved = localStorage.getItem("aidrive_user");
@@ -43,8 +54,10 @@ export default function App() {
   });
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [documents, setDocuments] = useState<Document[]>(mockDocuments);
-  const [selectedDocIds, setSelectedDocIds] = useState<string[]>(() => getInitialSelectedDocIds(mockDocuments));
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>(() => [
+    createChatSession(getInitialSelectedDocIds(mockDocuments))
+  ]);
+  const [activeChatSessionId, setActiveChatSessionId] = useState<string>(() => chatSessions[0].id);
   const [committedSettings, setCommittedSettings] = useState<AISettings>(mockAISettings);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isLoadingChat, setIsLoadingChat] = useState(false);
@@ -69,27 +82,43 @@ export default function App() {
       folderId: null, // 미분류(루트)
       tags: [],
       modifiedAt: new Date().toLocaleDateString("ko-KR"),
-      ownerName: user?.name || "김민수",
+      ownerName: user?.name || "사용자",
       securityRank: "일반",
       summary: "AI 분류 대기 중인 문서입니다. (mock 데이터, 백엔드 연동 전)",
       piiDetected: false
     };
 
     setDocuments((prevDocs) => [newDocument, ...prevDocs]);
-    setSelectedDocIds((prev) => [newDocument.id, ...prev]);
+    setChatSessions((prev) =>
+      prev.map((session) =>
+        session.id === activeChatSessionId
+          ? { ...session, selectedDocIds: [newDocument.id, ...session.selectedDocIds] }
+          : session
+      )
+    );
 
     alert(`AI 분류 성공! (mock)\n\n• 파일명: ${newDocument.name}\n• 분류된 폴더: [미분류]\n• 보안 조치 등급: [${newDocument.securityRank}]`);
   };
 
-  // Toggle RAG document selection
+  // Toggle RAG document selection (활성 채팅 탭 기준)
   const handleToggleDocSelection = (id: string) => {
-    setSelectedDocIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    setChatSessions((prev) =>
+      prev.map((session) =>
+        session.id === activeChatSessionId
+          ? {
+              ...session,
+              selectedDocIds: session.selectedDocIds.includes(id)
+                ? session.selectedDocIds.filter((item) => item !== id)
+                : [...session.selectedDocIds, id]
+            }
+          : session
+      )
     );
   };
 
   // Send message to RAG Chat engine (mock: API 연동 전까지는 안내 메시지로 응답)
   const handleSendMessage = async (text: string) => {
+    const targetSessionId = activeChatSessionId;
     const userMessage: ChatMessage = {
       id: `chat-${Date.now()}`,
       sender: "user",
@@ -98,7 +127,13 @@ export default function App() {
       timestamp: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
     };
 
-    setChatHistory((prev) => [...prev, userMessage]);
+    setChatSessions((prev) =>
+      prev.map((session) =>
+        session.id === targetSessionId
+          ? { ...session, chatHistory: [...session.chatHistory, userMessage] }
+          : session
+      )
+    );
     setIsLoadingChat(true);
 
     // mock 응답 (실제 RAG 추론 엔진 연동은 별도 이슈)
@@ -110,7 +145,13 @@ export default function App() {
       citations: [],
       timestamp: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
     };
-    setChatHistory((prev) => [...prev, aiMessage]);
+    setChatSessions((prev) =>
+      prev.map((session) =>
+        session.id === targetSessionId
+          ? { ...session, chatHistory: [...session.chatHistory, aiMessage] }
+          : session
+      )
+    );
     setIsLoadingChat(false);
   };
 
@@ -119,10 +160,42 @@ export default function App() {
     setCommittedSettings(newSettings);
   };
 
-  // Smart navigation from Dashboard
+  // Smart navigation from Dashboard/Documents: 지정 문서로 새 채팅 탭을 열어 이동
   const handleNavigateToChat = (docIds: string[]) => {
-    setSelectedDocIds(docIds);
+    const newSession = createChatSession(docIds);
+    setChatSessions((prev) => [...prev, newSession]);
+    setActiveChatSessionId(newSession.id);
     setActiveTab("chat");
+  };
+
+  // 채팅 탭 관리
+  const handleNewChatTab = () => {
+    const newSession = createChatSession();
+    setChatSessions((prev) => [...prev, newSession]);
+    setActiveChatSessionId(newSession.id);
+  };
+
+  const handleCloseChatTab = (sessionId: string) => {
+    setChatSessions((prev) => {
+      const remaining = prev.filter((session) => session.id !== sessionId);
+      if (remaining.length === 0) {
+        const fresh = createChatSession();
+        setActiveChatSessionId(fresh.id);
+        return [fresh];
+      }
+      if (activeChatSessionId === sessionId) {
+        setActiveChatSessionId(remaining[remaining.length - 1].id);
+      }
+      return remaining;
+    });
+  };
+
+  const handleRenameChatTab = (sessionId: string, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    setChatSessions((prev) =>
+      prev.map((session) => (session.id === sessionId ? { ...session, title: trimmed } : session))
+    );
   };
 
   const handleUploadClickOnSidebar = () => {
@@ -132,7 +205,7 @@ export default function App() {
 
   if (!user) {
     return (
-      <LoginView
+      <LandingView
         onLogin={(userInfo) => {
           localStorage.setItem("aidrive_user", JSON.stringify(userInfo));
           setUser(userInfo);
@@ -286,11 +359,8 @@ export default function App() {
 
             <div className="flex items-center gap-3 pl-1" id="user-info-badge">
               <div className="text-right">
-                <p className="font-bold text-label-md text-on-surface leading-none">{user?.name || "김민수"}님</p>
+                <p className="font-bold text-label-md text-on-surface leading-none">{user?.name || "사용자"}님</p>
                 <p className="text-[10px] text-outline font-extrabold uppercase mt-1 tracking-wider">{user?.role || "Premium Plan"}</p>
-              </div>
-              <div className="w-10 h-10 rounded-full bg-primary/10 text-primary border border-primary/20 flex items-center justify-center font-bold text-sm shadow-sm select-none">
-                {(user?.name || "김")[0]}
               </div>
             </div>
           </div>
@@ -344,9 +414,13 @@ export default function App() {
               >
                 <AIChatView
                   documents={documents}
-                  selectedDocIds={selectedDocIds}
+                  chatSessions={chatSessions}
+                  activeChatSessionId={activeChatSessionId}
+                  onSelectChatSession={setActiveChatSessionId}
+                  onNewChatTab={handleNewChatTab}
+                  onCloseChatTab={handleCloseChatTab}
+                  onRenameChatTab={handleRenameChatTab}
                   onToggleDocSelection={handleToggleDocSelection}
-                  chatHistory={chatHistory}
                   onSendMessage={handleSendMessage}
                   isLoadingChat={isLoadingChat}
                 />
@@ -362,6 +436,7 @@ export default function App() {
                 transition={{ duration: 0.25 }}
               >
                 <SettingsView
+                  user={user}
                   committedSettings={committedSettings}
                   onSaveSettings={handleSaveSettings}
                 />

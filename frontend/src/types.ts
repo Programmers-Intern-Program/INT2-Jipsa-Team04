@@ -64,3 +64,11 @@ export interface ChatMessage {
   mapResults?: { docName: string; partialSummary: string }[];
   modelUsed?: string;
 }
+
+/** AI 채팅 탭(여러 개의 독립된 대화 창)을 표현. 프론트 전용 개념, 백엔드 스펙엔 없음. */
+export interface ChatSession {
+  id: string;
+  title: string;
+  chatHistory: ChatMessage[];
+  selectedDocIds: string[];
+}
