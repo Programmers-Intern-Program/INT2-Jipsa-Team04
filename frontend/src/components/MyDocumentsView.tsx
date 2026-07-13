@@ -28,6 +28,7 @@ import type { Document, Folder as FolderType } from "../types";
 import { formatBytes } from "../utils/formatBytes";
 import { mockFolders } from "../mocks/mockData";
 import { getFolderPath, getFolderAncestors, isDescendantOrSelf, ensureFolderPath } from "../utils/folderTree";
+import { listFolders, createFolder, deleteFolder } from "../api/folders";
 
 interface MyDocumentsViewProps {
   documents: Document[];
@@ -81,16 +82,60 @@ export default function MyDocumentsView({
   const [isUploading, setIsUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
 
-  // folders(폴더 트리) state. mockFolders로 시드하고, 신규 생성분은 localStorage에 누적 저장.
+  // 로그인(OAuth) 연동은 별도 이슈라 지금은 토큰이 없어 401로
+  // 실패하는 게 정상 — 그 경우 기존 mock 상태를 그대로 유지해 데모가 안 깨지게 한다.
   const [folders, setFolders] = useState<FolderType[]>(() => {
     const saved = localStorage.getItem("aidrive_folders");
     return saved ? JSON.parse(saved) : mockFolders;
   });
 
+  useEffect(() => {
+    listFolders()
+      .then(setFolders)
+      .catch((err) => {
+        console.warn("[folders] GET /api/v1/folders 실패 - mock 데이터 유지(로그인 연동 전이면 정상):", err);
+      });
+  }, []);
+
   // Save folders to localStorage on change
   useEffect(() => {
     localStorage.setItem("aidrive_folders", JSON.stringify(folders));
   }, [folders]);
+
+  // 인증 토큰이 아직 없어 API가 실패하면(401 등) 기존 로컬 mock 로직(ensureFolderPath)으로
+  // 폴백 — 로그인 연동 전에도 "폴더 생성" 데모 흐름은 그대로 동작해야 하기 때문이다.
+  const createFolderPathViaApi = async (
+    currentFolders: FolderType[],
+    segments: string[]
+  ): Promise<{ folders: FolderType[]; leafId: number | null }> => {
+    try {
+      let working = [...currentFolders];
+      let parentId: number | null = null;
+      let leafId: number | null = null;
+
+      for (const rawName of segments) {
+        const name = rawName.trim();
+        if (!name) continue;
+
+        const existing = working.find((f) => f.parentFolderId === parentId && f.name === name);
+        if (existing) {
+          parentId = existing.folderId;
+          leafId = existing.folderId;
+          continue;
+        }
+
+        const newId = await createFolder(name, parentId);
+        working = [...working, { folderId: newId, name, parentFolderId: parentId }];
+        parentId = newId;
+        leafId = newId;
+      }
+
+      return { folders: working, leafId };
+    } catch (err) {
+      console.warn("[folders] POST /api/v1/folders 실패 - 로컬 mock으로 폴백(로그인 연동 전이면 정상):", err);
+      return ensureFolderPath(currentFolders, segments);
+    }
+  };
 
   // Folder collapse state
   const [expandedFolders, setExpandedFolders] = useState<Record<number, boolean>>({});
@@ -448,8 +493,11 @@ export default function MyDocumentsView({
     }
   };
 
-  // 폴더 삭제 (mock: 로컬 상태에만 반영, DELETE /api/v1/folders/{id} 연동은 별도 이슈).
+  // DELETE /api/v1/folders/{id}를 fire-and-forget으로 호출한다 — 로그인 연동 전이라
+  // 401이 정상일 수 있어 로컬 상태 갱신은 API 응답을 기다리지 않는다.
   // 하위 폴더까지 함께 삭제하고, 포함된 문서는 미분류(루트, folderId: null)로 옮긴다.
+  // 주의: documents의 folderId 재배치는 File API가 아직 없어 로컬 상태에만 반영됨
+  // (File 도메인 연동은 별도 이슈 - com.jipsa.file 완성 후 서버 반영 필요).
   const handleDeleteFolder = (folderId: number, folderName: string) => {
     const collectDescendantIds = (id: number): number[] => {
       const childIds = folders.filter((f) => f.parentFolderId === id).map((f) => f.folderId);
@@ -467,6 +515,10 @@ export default function MyDocumentsView({
       (affectedDocCount > 0 ? `\n포함된 문서 ${affectedDocCount}개는 [미분류]로 이동됩니다.` : "");
 
     if (!window.confirm(confirmMsg)) return;
+
+    deleteFolder(folderId).catch((err) => {
+      console.warn("[folders] DELETE /api/v1/folders 실패 - 로컬 상태만 갱신됨(로그인 연동 전이면 정상):", err);
+    });
 
     setFolders((prev) => prev.filter((f) => !idsToDelete.includes(f.folderId)));
 
@@ -2099,12 +2151,13 @@ export default function MyDocumentsView({
                 >
                   취소
                 </button>
-                <button 
+                <button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
                     const segments = newFolderName.trim().split("/").filter(Boolean);
                     if (segments.length === 0) return;
-                    setFolders(prev => ensureFolderPath(prev, segments).folders);
+                    const { folders: updatedFolders } = await createFolderPathViaApi(folders, segments);
+                    setFolders(updatedFolders);
                     setIsNewFolderModalOpen(false);
                     setNewFolderName("");
                     alert("새 폴더가 성공적으로 생성되었습니다.");
@@ -2208,10 +2261,10 @@ export default function MyDocumentsView({
                       />
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={async () => {
                           const segments = newFolderNameInMove.trim().split("/").filter(Boolean);
                           if (segments.length === 0) return;
-                          const { folders: updatedFolders, leafId } = ensureFolderPath(folders, segments);
+                          const { folders: updatedFolders, leafId } = await createFolderPathViaApi(folders, segments);
                           setFolders(updatedFolders);
                           setMoveTargetFolder(leafId);
                           setIsCreatingNewFolderInMove(false);
