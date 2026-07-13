@@ -26,8 +26,8 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'
 	implementation 'io.jsonwebtoken:jjwt-api:0.13.0'
 	implementation 'com.anthropic:anthropic-java:2.48.0'
-	implementation platform("io.awspring.cloud:spring-cloud-aws-dependencies:3.4.0")
-	implementation "io.awspring.cloud:spring-cloud-aws-starter-s3"
+	implementation platform('software.amazon.awssdk:bom:2.47.5')
+	implementation 'software.amazon.awssdk:s3'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.13.0'
 	runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.13.0'
