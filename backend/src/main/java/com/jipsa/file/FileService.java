@@ -30,7 +30,7 @@ public class FileService {
     @Transactional(readOnly = true)
     public FileListResponse list(Long userId, Long folderId, String keyword, String docType, int page) {
         Pageable pageable = PageRequest.of(page, PAGE_SIZE, Sort.by(Sort.Direction.DESC, "createdAt"));
-        Page<File> result = fileRepository.search(userId, folderId, keyword, docType, pageable);
+        Page<File> result = fileRepository.search(userId, folderId, escapeLike(keyword), docType, pageable);
         List<FileListItem> items = result.getContent().stream()
                 .map(this::toListItem)
                 .toList();
@@ -97,5 +97,12 @@ public class FileService {
                 file.getStatus(),
                 file.isStar(),
                 file.getUpdatedAt());
+    }
+
+    private String escapeLike(String keyword) {
+        if (keyword == null) {
+            return null;
+        }
+        return keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 }

@@ -10,7 +10,9 @@ import com.jipsa.file.S3Service;
 import com.jipsa.job.JobService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
@@ -30,52 +32,45 @@ public class UploadService {
     private final FileRepository fileRepository;
     private final S3Service s3Service;
     private final JobService jobService;
+    private final TransactionTemplate transactionTemplate;
     private final String bucket;
 
     public UploadService(UploadsRepository uploadsRepository,
                          FileRepository fileRepository,
                          S3Service s3Service,
                          JobService jobService,
+                         PlatformTransactionManager transactionManager,
                          @Value("${app.s3.bucket}") String bucket) {
         this.uploadsRepository = uploadsRepository;
         this.fileRepository = fileRepository;
         this.s3Service = s3Service;
         this.jobService = jobService;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.bucket = bucket;
     }
 
-    @Transactional
     public UploadResponse upload(Long userId, List<MultipartFile> files) {
         validate(files);
 
-        Uploads uploads = new Uploads();
-        uploads.setUsersId(userId);
-        uploads.setStatus(UploadStatus.UPLOADING);
-        uploads.setTotal(files.size());
-        uploadsRepository.save(uploads);
+        Long uploadsId = transactionTemplate.execute(status -> createBatch(userId, files.size()));
 
-        List<Long> fileIds = new ArrayList<>();
-        for (MultipartFile file : files) {
-            String key = s3Service.upload(bucket, file);
-
-            File entity = new File();
-            entity.setUsersId(userId);
-            entity.setFolderId(null);
-            entity.setUploadsId(uploads.getId());
-            entity.setName(file.getOriginalFilename());
-            entity.setS3Key(key);
-            entity.setFileType(extensionOf(file.getOriginalFilename()));
-            entity.setSizeBytes(file.getSize());
-            fileRepository.save(entity);
-
-            jobService.enqueueIngest(entity.getId(), uploads.getId());
-            fileIds.add(entity.getId());
+        List<UploadedFile> uploaded = new ArrayList<>();
+        try {
+            for (MultipartFile file : files) {
+                String key = s3Service.upload(bucket, file);
+                uploaded.add(new UploadedFile(file.getOriginalFilename(), key,
+                        extensionOf(file.getOriginalFilename()), file.getSize()));
+            }
+            List<Long> fileIds = transactionTemplate.execute(status ->
+                    persistFiles(userId, uploadsId, uploaded));
+            return new UploadResponse(uploadsId, fileIds);
+        } catch (RuntimeException e) {
+            for (UploadedFile file : uploaded) {
+                deleteQuietly(file.key());
+            }
+            transactionTemplate.executeWithoutResult(status -> markFailed(uploadsId));
+            throw e;
         }
-
-        uploads.setStatus(UploadStatus.COMPLETED);
-        uploads.setFinishedAt(LocalDateTime.now());
-
-        return new UploadResponse(uploads.getId(), fileIds);
     }
 
     @Transactional(readOnly = true)
@@ -90,6 +85,51 @@ public class UploadService {
                 uploads.getTotal(),
                 uploads.getCreatedAt(),
                 uploads.getFinishedAt());
+    }
+
+    private Long createBatch(Long userId, int total) {
+        Uploads uploads = new Uploads();
+        uploads.setUsersId(userId);
+        uploads.setStatus(UploadStatus.UPLOADING);
+        uploads.setTotal(total);
+        uploadsRepository.save(uploads);
+        return uploads.getId();
+    }
+
+    private List<Long> persistFiles(Long userId, Long uploadsId, List<UploadedFile> uploaded) {
+        List<Long> fileIds = new ArrayList<>();
+        for (UploadedFile file : uploaded) {
+            File entity = new File();
+            entity.setUsersId(userId);
+            entity.setFolderId(null);
+            entity.setUploadsId(uploadsId);
+            entity.setName(file.name());
+            entity.setS3Key(file.key());
+            entity.setFileType(file.extension());
+            entity.setSizeBytes(file.size());
+            fileRepository.save(entity);
+            jobService.enqueueIngest(entity.getId(), uploadsId);
+            fileIds.add(entity.getId());
+        }
+        Uploads uploads = uploadsRepository.findById(uploadsId)
+                .orElseThrow(() -> new FileNotFoundException("업로드 배치를 찾을 수 없습니다: " + uploadsId));
+        uploads.setStatus(UploadStatus.COMPLETED);
+        uploads.setFinishedAt(LocalDateTime.now());
+        return fileIds;
+    }
+
+    private void markFailed(Long uploadsId) {
+        uploadsRepository.findById(uploadsId).ifPresent(uploads -> {
+            uploads.setStatus(UploadStatus.FAILED);
+            uploads.setFinishedAt(LocalDateTime.now());
+        });
+    }
+
+    private void deleteQuietly(String key) {
+        try {
+            s3Service.delete(bucket, key);
+        } catch (RuntimeException ignored) {
+        }
     }
 
     private void validate(List<MultipartFile> files) {
@@ -125,5 +165,8 @@ public class UploadService {
             return "";
         }
         return filename.substring(dot + 1).toLowerCase();
+    }
+
+    private record UploadedFile(String name, String key, String extension, long size) {
     }
 }
