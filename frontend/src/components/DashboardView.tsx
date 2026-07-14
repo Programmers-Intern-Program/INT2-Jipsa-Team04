@@ -1,15 +1,15 @@
 import { useState } from "react";
 import { motion } from "motion/react";
-import { 
-  Sparkles, 
-  ArrowRight, 
-  Folder, 
-  FileText, 
-  TrendingUp, 
-  FileSpreadsheet, 
-  AlertCircle, 
-  Check, 
-  Merge 
+import {
+  Sparkles,
+  ArrowRight,
+  Folder,
+  FileText,
+  TrendingUp,
+  FileSpreadsheet,
+  Check,
+  Merge,
+  Highlighter
 } from "lucide-react";
 import type { Document } from "../types";
 import { formatBytes } from "../utils/formatBytes";
@@ -42,12 +42,12 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
     }, 1500);
   };
 
-  const handleSecurityReview = (id: string) => {
+  const handleApplyHighlight = (id: string) => {
     setLoadingAction(id);
     setTimeout(() => {
       setLoadingAction(null);
       setCompletedActions([...completedActions, id]);
-      alert("보안 스캔이 완료되었습니다. '파트너사 협약서_최종.docx'에 기재된 주민등록번호(1개) 및 개인 휴대폰 번호(2개)를 마스킹 처리하였고, 문서 보안 등급을 '기밀'로 상향했습니다.");
+      alert("AI가 '5월 예산 집행 현황.xlsx' 문서에서 핵심 수치를 자동 하이라이트했습니다.\n\n하이라이트된 항목:\n- 글로벌 마케팅 예산 약 15%(1억 2천만 원) 부족\n- 클라우드 인프라 12억 원 전액 집행 완료");
     }, 1500);
   };
 
@@ -177,34 +177,34 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
             </button>
           </div>
 
-          {/* Card 2: Masking PII */}
-          <div className="bg-white/80 backdrop-blur-md p-6 rounded-3xl border-l-4 border-l-primary border border-outline-variant/50 flex flex-col hover:scale-[1.01] transition-all shadow-sm hover:shadow-md relative overflow-hidden group" id="recomm-card-masking">
-            <div className="absolute right-2 top-2 w-16 h-16 bg-primary/5 blur-xl rounded-full"></div>
-            <div className="flex items-center gap-2 text-primary mb-3">
-              <AlertCircle className="w-4 h-4" />
-              <span className="font-bold text-xs uppercase tracking-wider">민감 정보 감지</span>
+          {/* Card 2: Auto Highlight */}
+          <div className="bg-white/80 backdrop-blur-md p-6 rounded-3xl border-l-4 border-l-amber-500 border border-outline-variant/50 flex flex-col hover:scale-[1.01] transition-all shadow-sm hover:shadow-md relative overflow-hidden group" id="recomm-card-highlight">
+            <div className="absolute right-2 top-2 w-16 h-16 bg-amber-500/5 blur-xl rounded-full"></div>
+            <div className="flex items-center gap-2 text-amber-600 mb-3">
+              <Highlighter className="w-4 h-4" />
+              <span className="font-bold text-xs uppercase tracking-wider">핵심 내용 하이라이트</span>
             </div>
-            <h4 className="font-bold text-body-lg text-on-surface mb-2 group-hover:text-primary transition-colors">2025 비밀 유지 계약서_v2.pdf</h4>
-            <p className="text-body-sm text-on-surface-variant flex-1 leading-relaxed">계약자 개인연락처 및 이메일 인적 정보가 노출되었습니다. 보안을 상향하고 마스킹 조치하는 것을 권장합니다.</p>
-            
-            <button 
-              disabled={completedActions.includes("masking") || loadingAction === "masking"}
-              onClick={() => handleSecurityReview("masking")}
+            <h4 className="font-bold text-body-lg text-on-surface mb-2 group-hover:text-amber-600 transition-colors">5월 예산 집행 현황.xlsx</h4>
+            <p className="text-body-sm text-on-surface-variant flex-1 leading-relaxed">예산 초과/부족 등 핵심 수치가 담긴 문서입니다. AI가 중요 항목을 자동으로 하이라이트할 준비가 되었습니다.</p>
+
+            <button
+              disabled={completedActions.includes("highlight") || loadingAction === "highlight"}
+              onClick={() => handleApplyHighlight("highlight")}
               className={`mt-4 py-2.5 px-4 rounded-xl font-semibold text-label-md text-center transition-all cursor-pointer w-full ${
-                completedActions.includes("masking") 
+                completedActions.includes("highlight")
                   ? "bg-emerald-100 text-emerald-700 border border-emerald-200"
-                  : loadingAction === "masking"
-                  ? "bg-primary/20 text-primary cursor-wait animate-pulse"
-                  : "bg-primary text-white hover:bg-opacity-95 shadow-md shadow-primary/15"
+                  : loadingAction === "highlight"
+                  ? "bg-amber-500/20 text-amber-600 cursor-wait animate-pulse"
+                  : "bg-amber-500 text-white hover:bg-opacity-95 shadow-md shadow-amber-500/15"
               }`}
-              id="btn-run-masking-recomm"
+              id="btn-run-highlight-recomm"
             >
-              {completedActions.includes("masking") ? (
-                <span className="flex items-center justify-center gap-1"><Check className="w-4 h-4" /> 안전 조치 완료</span>
-              ) : loadingAction === "masking" ? (
-                "보안 가림 처리 중..."
+              {completedActions.includes("highlight") ? (
+                <span className="flex items-center justify-center gap-1"><Check className="w-4 h-4" /> 하이라이트 완료</span>
+              ) : loadingAction === "highlight" ? (
+                "하이라이트 처리 중..."
               ) : (
-                "개인정보 가림 및 보안 조치"
+                "자동 하이라이트 적용"
               )}
             </button>
           </div>
