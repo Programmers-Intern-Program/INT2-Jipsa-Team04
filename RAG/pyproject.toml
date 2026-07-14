@@ -1,21 +1,22 @@
 [project]
 name = "jipsa-rag"
 version = "0.1.0"
-description = "Add your description here"
+description = "FastAPI service for the Jipsa Local RAG pipeline."
 readme = "README.md"
 authors = [
     { name = "안수현", email = "soxyxs4996@gmail.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "alembic>=1.18.5",
-    "asyncmy>=0.2.11",
+    "asyncmy>=0.2,<1.0",
     "boto3>=1.43.46",
     "fastapi[standard]>=0.139.0",
     "pydantic-settings>=2.14.2",
     "python-json-logger>=4.1.0",
-    "sqlalchemy>=2.0.51",
+    "sqlalchemy[asyncio]>=2.0,<2.1",
     "tenacity>=9.1.4",
+    "uvicorn[standard]>=0.35,<1.0",
 ]
 
 [project.scripts]
@@ -29,6 +30,7 @@ build-backend = "uv_build"
 dev = [
     "boto3-stubs[s3]>=1.43.46",
     "httpx>=0.28.1",
+    "httpx2>=2.0.0",
     "mypy>=2.2.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
@@ -38,6 +40,7 @@ dev = [
 
 [tool.pytest.ini_options]
 addopts = "-ra -q --strict-config --strict-markers"
+asyncio_mode = "strict"
 testpaths = ["tests"]
 pythonpath = ["src"]
 
