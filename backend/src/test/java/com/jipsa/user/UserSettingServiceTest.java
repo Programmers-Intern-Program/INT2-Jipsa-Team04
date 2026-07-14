@@ -1,5 +1,6 @@
 package com.jipsa.user;
 
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -30,6 +31,9 @@ class UserSettingServiceTest {
 
     @Autowired
     private UserSettingRepository userSettingRepository;
+
+    @Autowired
+    private EntityManager entityManager;
 
     private static final AtomicLong ID_SEQ = new AtomicLong(1_000_000L);
 
@@ -126,6 +130,12 @@ class UserSettingServiceTest {
      * Persistable<Long> 회귀 테스트 — 이게 깨지면 save()가 다시 merge()(SELECT 한 번 더)를
      * 타게 된다. 직접 쿼리 횟수를 세진 않고, isNew()가 의도한 시점마다 맞는 값을 주는지만
      * 확인한다(new면 true, 저장/재조회 후엔 false).
+     *
+     * Users_IDX는 @GeneratedValue가 없는(수동 할당) PK라 save()가 persist()를 호출해도
+     * Hibernate가 INSERT를 바로 실행하지 않는다 — flush 시점까지 미뤄지고, @PostPersist도
+     * 그때 실행된다. 그래서 save() 직후 바로 isNew()를 확인하려면 saveAndFlush()로 강제
+     * flush해야 하고, findById가 진짜로 DB를 다시 읽어서 @PostLoad를 타는지 보려면
+     * entityManager.clear()로 영속성 컨텍스트를 비워서 1차 캐시 히트를 막아야 한다.
      */
     @Test
     void isNew_새로생성한_인스턴스만_true다() {
@@ -133,9 +143,10 @@ class UserSettingServiceTest {
         UserSetting fresh = new UserSetting(user);
         assertThat(fresh.isNew()).isTrue();
 
-        UserSetting saved = userSettingRepository.save(fresh);
+        UserSetting saved = userSettingRepository.saveAndFlush(fresh);
         assertThat(saved.isNew()).isFalse();
 
+        entityManager.clear();
         UserSetting reloaded = userSettingRepository.findById(user).orElseThrow();
         assertThat(reloaded.isNew()).isFalse();
     }
