@@ -274,17 +274,17 @@ export default function SettingsView({ user, committedSettings, onSaveSettings }
                   </label>
                 </div>
 
-                {/* Auto PII Masking */}
+                {/* Auto Highlight */}
                 <div className="flex justify-between items-center gap-4">
                   <div>
-                    <p className="font-bold text-label-md text-on-surface">개인정보 자동 마스킹</p>
-                    <p className="text-xs text-outline mt-0.5">민감 인적 정보를 식별하여 문서를 자동으로 검열합니다.</p>
+                    <p className="font-bold text-label-md text-on-surface">자동 하이라이트</p>
+                    <p className="text-xs text-outline mt-0.5">문서 내 핵심 정보를 AI가 자동으로 강조 표시합니다.</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
-                    <input 
+                    <input
                       type="checkbox"
-                      checked={localSettings.autoMasking}
-                      onChange={() => handleToggle("autoMasking")}
+                      checked={localSettings.autoHighlight}
+                      onChange={() => handleToggle("autoHighlight")}
                       className="sr-only peer"
                     />
                     <div className="w-11 h-6 bg-outline-variant/40 rounded-full peer peer-focus:ring-2 peer-focus:ring-secondary/20 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-secondary"></div>

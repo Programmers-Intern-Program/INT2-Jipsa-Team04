@@ -35,6 +35,7 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       EMBEDDING_URL: http://embedding:8000
+      S3_BUCKET: ${S3_BUCKET}
     ports: ["8080:8080"]
   frontend:
     build: ./frontend
