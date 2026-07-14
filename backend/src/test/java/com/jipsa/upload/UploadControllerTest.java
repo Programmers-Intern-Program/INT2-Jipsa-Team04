@@ -47,10 +47,8 @@ class UploadControllerTest {
 
         mockMvc.perform(multipart("/api/v1/uploads").file(file))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.uploadId").value(10))
-                .andExpect(jsonPath("$.data.fileIds[0]").value(100))
-                .andExpect(jsonPath("$.error").isEmpty());
+                .andExpect(jsonPath("$.uploadId").value(10))
+                .andExpect(jsonPath("$.fileIds[0]").value(100));
     }
 
     @Test

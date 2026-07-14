@@ -1,6 +1,5 @@
 package com.jipsa.upload;
 
-import com.jipsa.common.ApiResponse;
 import com.jipsa.common.CurrentUserProvider;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,15 +28,15 @@ public class UploadController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public ApiResponse<UploadResponse> upload(
+    public UploadResponse upload(
             @RequestParam(value = "files", required = false) List<MultipartFile> files) {
         Long userId = currentUserProvider.requireUserId();
-        return ApiResponse.ok(uploadService.upload(userId, files));
+        return uploadService.upload(userId, files);
     }
 
     @GetMapping("/{id}/status")
-    public ApiResponse<UploadStatusResponse> status(@PathVariable Long id) {
+    public UploadStatusResponse status(@PathVariable Long id) {
         Long userId = currentUserProvider.requireUserId();
-        return ApiResponse.ok(uploadService.getStatus(userId, id));
+        return uploadService.getStatus(userId, id);
     }
 }
