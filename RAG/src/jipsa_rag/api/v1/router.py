@@ -4,7 +4,6 @@ from fastapi import APIRouter
 
 from jipsa_rag.api.v1.endpoints.health import router as health_router
 
-
 # main.py에 등록할 API v1 통합 라우터이다.
 router = APIRouter()
 

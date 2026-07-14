@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends
 from jipsa_rag.core.config import Settings, get_settings
 from jipsa_rag.schemas.health import HealthResponse
 
-
 # Health API에 공통으로 적용할 URL prefix와 OpenAPI 태그를 설정한다.
 router = APIRouter(
     prefix="/health",

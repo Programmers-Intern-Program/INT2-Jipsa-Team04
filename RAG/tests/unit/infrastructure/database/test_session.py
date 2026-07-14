@@ -52,9 +52,7 @@ def test_check_database_connection_executes_select_one(
         fake_engine,
     )
 
-    asyncio.run(
-        database_session.check_database_connection()
-    )
+    asyncio.run(database_session.check_database_connection())
 
     execute.assert_awaited_once()
 
@@ -125,9 +123,7 @@ def test_get_db_session_rolls_back_when_request_fails(
             RuntimeError,
             match="request failed",
         ):
-            await session_generator.athrow(
-                RuntimeError("request failed")
-            )
+            await session_generator.athrow(RuntimeError("request failed"))
 
     asyncio.run(run_test())
 
@@ -150,8 +146,6 @@ def test_close_database_disposes_engine(
         fake_engine,
     )
 
-    asyncio.run(
-        database_session.close_database()
-    )
+    asyncio.run(database_session.close_database())
 
     dispose.assert_awaited_once_with()

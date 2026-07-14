@@ -10,7 +10,6 @@ from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
 
-
 # RAG는 로컬에서만 실행하며 세 가지 설정 프로필을 사용한다.
 AppEnvironment = Literal[
     "local",
@@ -52,18 +51,19 @@ def resolve_environment() -> AppEnvironment:
     JIPSA_RAG_APP_ENV가 없으면 local 환경을 기본값으로 사용한다.
     """
 
-    environment = os.getenv(
-        "JIPSA_RAG_APP_ENV",
-        "local",
-    ).strip().lower()
+    environment = (
+        os.getenv(
+            "JIPSA_RAG_APP_ENV",
+            "local",
+        )
+        .strip()
+        .lower()
+    )
 
     if environment not in SUPPORTED_ENVIRONMENTS:
         supported = ", ".join(sorted(SUPPORTED_ENVIRONMENTS))
 
-        raise ValueError(
-            f"지원하지 않는 실행 환경입니다: {environment}. "
-            f"지원 환경: {supported}"
-        )
+        raise ValueError(f"지원하지 않는 실행 환경입니다: {environment}. 지원 환경: {supported}")
 
     return cast(AppEnvironment, environment)
 
@@ -222,14 +222,11 @@ class Settings(BaseSettings):
         # app_server_base_url
         # -> JIPSA_RAG_APP_SERVER_BASE_URL
         env_prefix="JIPSA_RAG_",
-
         # Windows와 Linux의 환경 변수 대소문자 처리 차이를 줄인다.
         case_sensitive=False,
-
         # 아직 코드에 반영하지 않은 환경 변수가 dotenv에 있더라도
         # 설정 객체 생성을 실패시키지 않는다.
         extra="ignore",
-
         # dotenv 파일을 UTF-8로 읽는다.
         env_file_encoding="utf-8",
     )
@@ -281,45 +278,31 @@ class Settings(BaseSettings):
         """애플리케이션 서버 기본 URL의 형식을 검증한다."""
 
         if value.endswith("/"):
-            raise ValueError(
-                "애플리케이션 서버 기본 URL은 '/'로 끝날 수 없습니다."
-            )
+            raise ValueError("애플리케이션 서버 기본 URL은 '/'로 끝날 수 없습니다.")
 
         parsed = urlsplit(value)
 
         if parsed.scheme not in {"http", "https"}:
-            raise ValueError(
-                "애플리케이션 서버 기본 URL은 "
-                "http 또는 https 스킴을 사용해야 합니다."
-            )
+            raise ValueError("애플리케이션 서버 기본 URL은 http 또는 https 스킴을 사용해야 합니다.")
 
         if not parsed.netloc:
-            raise ValueError(
-                "애플리케이션 서버 기본 URL에는 호스트가 필요합니다."
-            )
+            raise ValueError("애플리케이션 서버 기본 URL에는 호스트가 필요합니다.")
 
         if parsed.username is not None or parsed.password is not None:
-            raise ValueError(
-                "애플리케이션 서버 기본 URL에 인증 정보를 포함할 수 없습니다."
-            )
+            raise ValueError("애플리케이션 서버 기본 URL에 인증 정보를 포함할 수 없습니다.")
 
         if parsed.query or parsed.fragment:
             raise ValueError(
-                "애플리케이션 서버 기본 URL에 "
-                "query 또는 fragment를 포함할 수 없습니다."
+                "애플리케이션 서버 기본 URL에 query 또는 fragment를 포함할 수 없습니다."
             )
 
         try:
             parsed_port = parsed.port
         except ValueError as error:
-            raise ValueError(
-                "애플리케이션 서버 기본 URL의 포트가 올바르지 않습니다."
-            ) from error
+            raise ValueError("애플리케이션 서버 기본 URL의 포트가 올바르지 않습니다.") from error
 
         if parsed_port is not None and not 1 <= parsed_port <= 65535:
-            raise ValueError(
-                "애플리케이션 서버 포트는 1부터 65535 사이여야 합니다."
-            )
+            raise ValueError("애플리케이션 서버 포트는 1부터 65535 사이여야 합니다.")
 
         return value
 
@@ -343,10 +326,7 @@ class Settings(BaseSettings):
     def app_server_api_base_url(self) -> str:
         """애플리케이션 서버의 API v1 기본 URL을 반환한다."""
 
-        return (
-            f"{self.app_server_base_url}"
-            f"{self.app_server_api_v1_prefix}"
-        )
+        return f"{self.app_server_base_url}{self.app_server_api_v1_prefix}"
 
 
 @lru_cache(maxsize=1)
@@ -361,7 +341,6 @@ def get_settings() -> Settings:
     return Settings(
         # OS 환경 변수로 결정한 실행 환경을 명시적으로 전달한다.
         app_env=environment,
-
         # local, development, test에 대응하는 dotenv 파일을 전달한다.
         # 파일이 없으면 OS 환경 변수만 사용한다.
         _env_file=env_file,

@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import (
 
 from jipsa_rag.core.config import get_settings
 
-
 # 현재 애플리케이션 환경에 해당하는 데이터베이스 연결 설정을 불러온다.
 _settings = get_settings()
 

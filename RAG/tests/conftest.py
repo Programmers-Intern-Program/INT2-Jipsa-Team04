@@ -6,7 +6,6 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-
 # 테스트가 .env.local이나 .env.development를 실수로 사용하는 것을 방지한다.
 #
 # jipsa_rag.main을 import하면 Settings가 로드되고 SQLAlchemy 엔진이

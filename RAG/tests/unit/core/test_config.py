@@ -12,7 +12,6 @@ from jipsa_rag.core.config import (
     resolve_environment,
 )
 
-
 # dotenv 파일 또는 OS 환경 변수에 동일한 이름의 값이 남아 있어도
 # 단위 테스트 결과에 영향을 주지 않도록 제거할 환경 변수 목록이다.
 _SETTING_ENVIRONMENT_VARIABLES = (
@@ -76,19 +75,10 @@ def _write_test_env_file(
                 "JIPSA_RAG_DATABASE_ECHO=false",
                 "JIPSA_RAG_DATABASE_CHECK_ON_STARTUP=false",
                 "JIPSA_RAG_S3_ALLOWED_KEY_PREFIX=files/",
-                (
-                    "JIPSA_RAG_APP_SERVER_BASE_URL="
-                    "http://127.0.0.1:8080"
-                ),
+                ("JIPSA_RAG_APP_SERVER_BASE_URL=http://127.0.0.1:8080"),
                 "JIPSA_RAG_APP_SERVER_API_V1_PREFIX=/api/v1",
-                (
-                    "JIPSA_RAG_APP_SERVER_CONNECT_TIMEOUT_SECONDS="
-                    "5.0"
-                ),
-                (
-                    "JIPSA_RAG_APP_SERVER_READ_TIMEOUT_SECONDS="
-                    "30.0"
-                ),
+                ("JIPSA_RAG_APP_SERVER_CONNECT_TIMEOUT_SECONDS=5.0"),
+                ("JIPSA_RAG_APP_SERVER_READ_TIMEOUT_SECONDS=30.0"),
             ]
         )
         + "\n",
@@ -265,20 +255,14 @@ def test_settings_loads_selected_env_file(
     assert settings.database_port == 3306
     assert settings.database_name == "Jipsa_Local_RAG"
     assert settings.database_user == "test_user"
-    assert (
-        settings.database_password.get_secret_value()
-        == "test_password"
-    )
+    assert settings.database_password.get_secret_value() == "test_password"
     assert settings.database_charset == "utf8mb4"
     assert settings.database_echo is False
     assert settings.database_check_on_startup is False
 
     assert settings.s3_allowed_key_prefix == "files/"
 
-    assert (
-        settings.app_server_base_url
-        == "http://127.0.0.1:8080"
-    )
+    assert settings.app_server_base_url == "http://127.0.0.1:8080"
     assert settings.app_server_api_v1_prefix == "/api/v1"
     assert settings.app_server_connect_timeout_seconds == 5.0
     assert settings.app_server_read_timeout_seconds == 30.0
@@ -301,10 +285,7 @@ def test_settings_strips_non_secret_text() -> None:
     assert settings.database_name == "Jipsa_Local_RAG"
     assert settings.database_user == "test_user"
     assert settings.s3_allowed_key_prefix == "files/"
-    assert (
-        settings.app_server_base_url
-        == "http://127.0.0.1:8080"
-    )
+    assert settings.app_server_base_url == "http://127.0.0.1:8080"
 
 
 def test_settings_creates_asyncmy_database_url() -> None:
@@ -331,10 +312,7 @@ def test_settings_builds_application_server_api_base_url() -> None:
         app_server_api_v1_prefix="/api/v1",
     )
 
-    assert (
-        settings.app_server_api_base_url
-        == "http://127.0.0.1:8080/api/v1"
-    )
+    assert settings.app_server_api_base_url == "http://127.0.0.1:8080/api/v1"
 
 
 @pytest.mark.parametrize(
@@ -413,10 +391,7 @@ def test_application_server_base_url_accepts_https() -> None:
         app_server_base_url="https://development.example.com",
     )
 
-    assert (
-        settings.app_server_base_url
-        == "https://development.example.com"
-    )
+    assert settings.app_server_base_url == "https://development.example.com"
 
 
 def test_application_server_base_url_must_not_end_with_slash() -> None:
@@ -463,9 +438,7 @@ def test_application_server_base_url_rejects_credentials() -> None:
         match="인증 정보를 포함할 수 없습니다",
     ):
         _create_settings(
-            app_server_base_url=(
-                "http://user:password@127.0.0.1:8080"
-            ),
+            app_server_base_url=("http://user:password@127.0.0.1:8080"),
         )
 
 

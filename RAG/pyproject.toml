@@ -1,49 +1,120 @@
 [project]
 name = "jipsa-rag"
 version = "0.1.0"
-description = "FastAPI service for the Jipsa Local RAG pipeline."
+description = "FastAPI-based document processing and RAG service for Jipsa."
 readme = "README.md"
 authors = [
     { name = "안수현", email = "soxyxs4996@gmail.com" }
 ]
 requires-python = ">=3.12,<3.13"
+
 dependencies = [
-    "alembic>=1.18.5",
+    # =========================================================
+    # [Database]
+    # - Local RAG MySQL 데이터베이스 비동기 연결
+    # - SQLAlchemy ORM 및 Alembic 마이그레이션 관리
+    # =========================================================
+    "alembic>=1.18.5,<2.0",
     "asyncmy>=0.2,<1.0",
-    "boto3>=1.43.46",
-    "fastapi[standard]>=0.139.0",
-    "pydantic-settings>=2.14.2",
-    "python-json-logger>=4.1.0",
     "sqlalchemy[asyncio]>=2.0,<2.1",
-    "tenacity>=9.1.4",
+
+    # =========================================================
+    # [AWS S3]
+    # - 로컬 AWS 자격 증명 또는 EC2 IAM Role을 통한 S3 접근
+    # - S3 객체 조회, 다운로드 및 메타데이터 확인
+    # =========================================================
+    "boto3>=1.43.46,<2.0",
+
+    # =========================================================
+    # [Web API]
+    # - FastAPI 애플리케이션 구성
+    # - Uvicorn ASGI 서버 실행
+    # =========================================================
+    "fastapi>=0.139.0,<1.0",
     "uvicorn[standard]>=0.35,<1.0",
+
+    # =========================================================
+    # [HTTP Client]
+    # - AWS 애플리케이션 서버와의 비동기 HTTP 통신
+    # - Starlette/FastAPI TestClient 내부 HTTP 클라이언트
+    # - 기존 httpx 대신 Pydantic에서 관리하는 HTTPX2 사용
+    # =========================================================
+    "httpx2>=2.5.0,<3.0",
+
+    # =========================================================
+    # [Configuration]
+    # - 환경별 dotenv 파일과 타입 안전한 환경 변수 관리
+    # =========================================================
+    "pydantic-settings>=2.14.2,<3.0",
+
+    # =========================================================
+    # [Logging]
+    # - 운영 환경의 구조화된 JSON 로그 출력
+    # =========================================================
+    "python-json-logger>=4.1.0,<5.0",
+
+    # =========================================================
+    # [Retry]
+    # - S3 및 애플리케이션 서버 일시적 통신 실패 재시도
+    # =========================================================
+    "tenacity>=9.1.4,<10.0",
 ]
 
+
+# =============================================================
+# 실행 명령
+# =============================================================
 [project.scripts]
 jipsa-rag = "jipsa_rag:main"
 
+
+# =============================================================
+# Build System
+# =============================================================
 [build-system]
 requires = ["uv_build>=0.11.28,<0.12.0"]
 build-backend = "uv_build"
 
+
+# =============================================================
+# 개발 및 테스트 전용 의존성
+# =============================================================
 [dependency-groups]
 dev = [
-    "boto3-stubs[s3]>=1.43.46",
-    "httpx>=0.28.1",
-    "httpx2>=2.0.0",
-    "mypy>=2.2.0",
-    "pytest>=9.1.1",
-    "pytest-asyncio>=1.4.0",
-    "pytest-cov>=7.1.0",
-    "ruff>=0.15.21",
+    # boto3 S3 Client 정적 타입 검사 지원
+    "boto3-stubs[s3]>=1.43.46,<2.0",
+
+    # 정적 타입 검사
+    "mypy>=2.2.0,<3.0",
+
+    # 테스트 및 비동기 테스트
+    "pytest>=9.1.1,<10.0",
+    "pytest-asyncio>=1.4.0,<2.0",
+    "pytest-cov>=7.1.0,<8.0",
+
+    # 코드 포맷 및 린트
+    "ruff>=0.15.21,<1.0",
 ]
 
+
+# =============================================================
+# Pytest
+# =============================================================
 [tool.pytest.ini_options]
 addopts = "-ra -q --strict-config --strict-markers"
-asyncio_mode = "strict"
 testpaths = ["tests"]
 pythonpath = ["src"]
 
+# 비동기 테스트 및 fixture가 각각 독립된 이벤트 루프를 사용하도록
+# 기본 이벤트 루프 범위를 테스트 함수 단위로 명시한다.
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"
+
+
+# =============================================================
+# Ruff
+# =============================================================
 [tool.ruff]
 target-version = "py312"
 line-length = 100
@@ -51,12 +122,23 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = [
+    # 기본 Python 오류 및 스타일 검사
     "E",
     "F",
+
+    # import 정렬
     "I",
+
+    # 일반적인 버그 가능성 검사
     "B",
+
+    # 최신 Python 문법 사용
     "UP",
+
+    # 불필요하게 복잡한 코드 단순화
     "SIM",
+
+    # Ruff 전용 검사
     "RUF",
 ]
 
@@ -65,10 +147,15 @@ quote-style = "double"
 indent-style = "space"
 line-ending = "auto"
 
+
+# =============================================================
+# Mypy
+# =============================================================
 [tool.mypy]
 python_version = "3.12"
 plugins = ["pydantic.mypy"]
 mypy_path = "src"
 strict = true
+warn_unused_configs = true
 show_error_codes = true
 pretty = true
