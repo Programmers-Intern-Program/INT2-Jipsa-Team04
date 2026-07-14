@@ -5,6 +5,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
@@ -93,6 +94,12 @@ public class FolderService {
         // 1차 캐시에 남아있는 stale 엔티티가 그대로 반환되는 문제가 있었다(테스트에서 발견).
         // deleteAllById()는 각 엔티티를 로드해서 EntityManager.remove()로 지우기 때문에
         // 영속성 컨텍스트가 즉시 갱신되어 이후 조회에서 정상적으로 빠진다.
+        //
+        // 삭제 순서도 중요하다: DDL의 FK_Folder_ParentFolder(자기참조 FK)에 ON DELETE CASCADE가
+        // 없어서, 자식이 아직 참조 중인 부모를 먼저 지우면 FK 제약 위반이 난다. collectSubtreeIds는
+        // BFS라 항상 부모가 자식보다 앞에 오므로(깊이 비내림차순), 리스트를 뒤집으면 깊이 내림차순이
+        // 되어 모든 부모-자식 쌍에서 자식이 부모보다 항상 먼저 삭제된다.
+        Collections.reverse(subtreeIds);
         folderRepository.deleteAllById(subtreeIds);
     }
 
