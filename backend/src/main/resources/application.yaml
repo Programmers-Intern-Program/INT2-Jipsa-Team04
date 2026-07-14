@@ -1,6 +1,10 @@
 spring:
   application:
     name: backend
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 128MB
   # OAuth2 Google login — DEFERRED until GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET
   # are real values in .env (Spring rejects an empty client-id at startup).
   # Re-enable this whole block then.
@@ -18,3 +22,8 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
+app:
+  s3:
+    bucket: ${S3_BUCKET}
+  aws:
+    region: ${AWS_REGION:ap-northeast-2}
