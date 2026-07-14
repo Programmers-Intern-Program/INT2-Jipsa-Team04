@@ -25,6 +25,9 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'
 	implementation 'io.jsonwebtoken:jjwt-api:0.13.0'
+	// Google id_token verification (signature/iss/aud/exp against Google's JWKS).
+	// Verifying Google OAuth id_tokens only — NOT spring-security oauth2Login().
+	implementation 'com.google.api-client:google-api-client:2.9.0'
 	implementation 'com.anthropic:anthropic-java:2.48.0'
 	implementation platform('software.amazon.awssdk:bom:2.47.5')
 	implementation 'software.amazon.awssdk:s3'

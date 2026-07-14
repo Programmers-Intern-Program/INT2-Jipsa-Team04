@@ -27,3 +27,13 @@ app:
     bucket: ${S3_BUCKET}
   aws:
     region: ${AWS_REGION:ap-northeast-2}
+
+# Google OAuth (authorization-code flow, backend-side token exchange).
+# Values come from env vars; empty defaults let the app start without .env
+# (the JwtService uses the same ${VAR:default} tolerance pattern).
+google:
+  oauth:
+    client-id: ${GOOGLE_CLIENT_ID:}
+    client-secret: ${GOOGLE_CLIENT_SECRET:}
+    redirect-uri: ${GOOGLE_REDIRECT_URI:}
+    token-uri: ${GOOGLE_TOKEN_URI:https://oauth2.googleapis.com/token}
