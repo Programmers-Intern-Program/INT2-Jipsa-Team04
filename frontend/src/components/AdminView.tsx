@@ -14,7 +14,10 @@ import {
 } from "../api/admin";
 import { getCurrentUserId } from "../api/client";
 
-const SANCTION_TYPES = ["WARNING", "TEMP_SUSPEND", "PERMANENT_SUSPEND", "UPLOAD_LIMIT", "LOGIN_BLOCK"] as const;
+// suspend 엔드포인트는 실제로 계정을 잠그는(Status=SUSPENDED) 의미가 있는 타입만 받는다.
+// WARNING/UPLOAD_LIMIT/LOGIN_BLOCK은 Sanction_Type엔 있어도 "계정 정지"가 아니라서 제외
+// (backend AdminService.SUSPENDABLE_TYPES와 동일).
+const SANCTION_TYPES = ["TEMP_SUSPEND", "PERMANENT_SUSPEND"] as const;
 const PAGE_SIZE = 20;
 
 type ModalState =
