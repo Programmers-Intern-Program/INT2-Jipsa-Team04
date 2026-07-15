@@ -91,11 +91,7 @@ public class AdminService {
         target.setStatus(restoreTo);
     }
 
-    /**
-     * DELETE /api/v1/admin/users/{id} — 소프트 삭제(Del=true) + 제재 이력 기록.
-     * User_Sanctions.Sanction_Type엔 계정 삭제 전용 값이 없어(DDL 담당자 확인 필요)
-     * 일단 가장 가까운 PERMANENT_SUSPEND로 기록한다.
-     */
+    /** DELETE /api/v1/admin/users/{id} — 소프트 삭제(Del=true) + 제재 이력(ACCOUNT_DELETE) 기록. */
     @Transactional
     public void delete(Long actingAdminId, Long targetUserId, DeleteUserRequest request) {
         requireAdmin(actingAdminId);
@@ -103,7 +99,7 @@ public class AdminService {
         Users target = requireUser(targetUserId);
 
         UserSanction sanction = new UserSanction(
-                targetUserId, actingAdminId, SanctionType.PERMANENT_SUSPEND,
+                targetUserId, actingAdminId, SanctionType.ACCOUNT_DELETE,
                 requireNonBlank(request.reason(), "reason"), null, null);
         userSanctionRepository.save(sanction);
 

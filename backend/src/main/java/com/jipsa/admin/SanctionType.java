@@ -6,5 +6,6 @@ public enum SanctionType {
     TEMP_SUSPEND,
     PERMANENT_SUSPEND,
     UPLOAD_LIMIT,
-    LOGIN_BLOCK
+    LOGIN_BLOCK,
+    ACCOUNT_DELETE
 }

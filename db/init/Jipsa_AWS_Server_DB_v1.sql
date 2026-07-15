@@ -218,7 +218,7 @@ CREATE TABLE `User_Sanctions` (
         FOREIGN KEY (`Lifted_By_Users_IDX`)
         REFERENCES `Users` (`Users_IDX`),
     CONSTRAINT `CK_UserSanctions_Type`
-        CHECK (`Sanction_Type` IN ('WARNING', 'TEMP_SUSPEND', 'PERMANENT_SUSPEND', 'UPLOAD_LIMIT', 'LOGIN_BLOCK')),
+        CHECK (`Sanction_Type` IN ('WARNING', 'TEMP_SUSPEND', 'PERMANENT_SUSPEND', 'UPLOAD_LIMIT', 'LOGIN_BLOCK', 'ACCOUNT_DELETE')),
     CONSTRAINT `CK_UserSanctions_Status`
         CHECK (`Sanction_Status` IN ('ACTIVE', 'EXPIRED', 'LIFTED', 'CANCELLED')),
     CONSTRAINT `CK_UserSanctions_TimeRange`
