@@ -1,10 +1,15 @@
 package com.jipsa.file;
 
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.IOException;
@@ -37,5 +42,15 @@ public class S3Service {
 
     public void delete(String bucket, String key) {
         s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
+    }
+
+    public Content download(String bucket, String key) {
+        ResponseInputStream<GetObjectResponse> object =
+                s3Client.getObject(GetObjectRequest.builder().bucket(bucket).key(key).build());
+        GetObjectResponse metadata = object.response();
+        return new Content(new InputStreamResource(object), metadata.contentType(), metadata.contentLength());
+    }
+
+    public record Content(Resource resource, String contentType, long contentLength) {
     }
 }
