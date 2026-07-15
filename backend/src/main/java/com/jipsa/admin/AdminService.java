@@ -24,6 +24,10 @@ public class AdminService {
     private static final int DEFAULT_PAGE_SIZE = 20;
     private static final Set<String> VALID_ROLES = Set.of("ADMIN", "USERS");
     private static final String DEFAULT_RESTORE_STATUS = "ACTIVE";
+    // suspend 엔드포인트에서 실제로 계정을 잠그는(Status=SUSPENDED) 의미를 가지는 타입만 받는다.
+    // WARNING/UPLOAD_LIMIT/LOGIN_BLOCK은 Sanction_Type엔 있어도 "계정 정지"를 뜻하지 않아 제외.
+    private static final Set<SanctionType> SUSPENDABLE_TYPES =
+            Set.of(SanctionType.TEMP_SUSPEND, SanctionType.PERMANENT_SUSPEND);
 
     private final UsersRepository usersRepository;
     private final UserSanctionRepository userSanctionRepository;
@@ -58,7 +62,17 @@ public class AdminService {
         requireNotSelf(actingAdminId, targetUserId);
         Users target = requireUser(targetUserId);
 
-        SanctionType sanctionType = parseSanctionType(request.sanctionType());
+        // 이미 정지/삭제된 사용자를 또 정지시키면 restoreUserStatus가 "SUSPENDED"로 찍혀서
+        // 나중에 해제해도 ACTIVE로 안 돌아가고, 이전 ACTIVE 제재 이력도 영영 안 풀리는
+        // 문제가 있어 미리 막는다.
+        if (target.isDel()) {
+            throw new AdminActionConflictException("이미 삭제된 사용자입니다: " + targetUserId);
+        }
+        if ("SUSPENDED".equals(target.getStatus())) {
+            throw new AdminActionConflictException("이미 정지된 사용자입니다: " + targetUserId);
+        }
+
+        SanctionType sanctionType = parseSuspendSanctionType(request.sanctionType());
         String restoreStatus = target.getStatus(); // 정지 직전 상태를 해제 시 복원용으로 스냅샷
 
         UserSanction sanction = new UserSanction(
@@ -97,6 +111,10 @@ public class AdminService {
         requireAdmin(actingAdminId);
         requireNotSelf(actingAdminId, targetUserId);
         Users target = requireUser(targetUserId);
+
+        if (target.isDel()) {
+            throw new AdminActionConflictException("이미 삭제된 사용자입니다: " + targetUserId);
+        }
 
         UserSanction sanction = new UserSanction(
                 targetUserId, actingAdminId, SanctionType.ACCOUNT_DELETE,
@@ -160,6 +178,16 @@ public class AdminService {
         } catch (IllegalArgumentException | NullPointerException e) {
             throw new IllegalArgumentException("유효하지 않은 sanctionType입니다: " + value);
         }
+    }
+
+    /** suspend 엔드포인트 전용: SUSPENDABLE_TYPES(TEMP_SUSPEND/PERMANENT_SUSPEND)만 허용. */
+    private SanctionType parseSuspendSanctionType(String value) {
+        SanctionType type = parseSanctionType(value);
+        if (!SUSPENDABLE_TYPES.contains(type)) {
+            throw new IllegalArgumentException(
+                    "suspend 엔드포인트에서는 TEMP_SUSPEND 또는 PERMANENT_SUSPEND만 사용할 수 있습니다: " + value);
+        }
+        return type;
     }
 
     private String requireNonBlank(String value, String fieldName) {
