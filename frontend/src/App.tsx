@@ -11,7 +11,8 @@ import {
   Bell,
   Grid,
   Plus,
-  HardDrive
+  HardDrive,
+  ShieldCheck
 } from "lucide-react";
 
 // Import custom components
@@ -20,6 +21,7 @@ import MyDocumentsView from "./components/MyDocumentsView";
 import AIChatView from "./components/AIChatView";
 import SettingsView from "./components/SettingsView";
 import LandingView from "./components/LandingView";
+import AdminView from "./components/AdminView";
 
 // Import types
 import type { Document, AISettings, ChatMessage, ChatSession } from "./types";
@@ -312,6 +314,23 @@ export default function App() {
             <Settings className="w-5 h-5" />
             설정
           </button>
+
+          {/* role이 ADMIN일 때만 노출 (Req.5~12). 지금은 로그인이 mock이라 role이 항상
+              고정값이라 실제로 보이려면 로컬에서 role을 "ADMIN"으로 바꿔 테스트해야 한다 —
+              실 OAuth+role 연동은 별도 이슈. */}
+          {user?.role === "ADMIN" && (
+            <button
+              onClick={() => setActiveTab("admin")}
+              className={`flex items-center gap-3.5 px-4 py-3.5 rounded-xl font-semibold text-label-md transition-all cursor-pointer ${
+                activeTab === "admin"
+                  ? "bg-surface-variant text-primary border-l-4 border-secondary shadow-sm"
+                  : "text-on-surface-variant hover:bg-surface-container-low"
+              }`}
+            >
+              <ShieldCheck className="w-5 h-5" />
+              관리자
+            </button>
+          )}
         </nav>
 
         {/* Sidebar Footer */}
@@ -460,6 +479,18 @@ export default function App() {
                   committedSettings={committedSettings}
                   onSaveSettings={handleSaveSettings}
                 />
+              </motion.div>
+            )}
+
+            {activeTab === "admin" && user?.role === "ADMIN" && (
+              <motion.div
+                key="admin"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                transition={{ duration: 0.25 }}
+              >
+                <AdminView />
               </motion.div>
             )}
           </AnimatePresence>
