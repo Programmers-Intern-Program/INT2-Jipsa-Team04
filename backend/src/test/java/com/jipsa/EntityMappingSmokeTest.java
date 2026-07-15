@@ -1,5 +1,9 @@
 package com.jipsa;
 
+import com.jipsa.admin.SanctionStatus;
+import com.jipsa.admin.SanctionType;
+import com.jipsa.admin.UserSanction;
+import com.jipsa.admin.UserSanctionRepository;
 import com.jipsa.file.File;
 import com.jipsa.file.FileRepository;
 import com.jipsa.file.FileStatus;
@@ -10,6 +14,8 @@ import com.jipsa.job.JobType;
 import com.jipsa.upload.UploadStatus;
 import com.jipsa.upload.Uploads;
 import com.jipsa.upload.UploadsRepository;
+import com.jipsa.user.Users;
+import com.jipsa.user.UsersRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
@@ -27,6 +33,12 @@ class EntityMappingSmokeTest {
 
     @Autowired
     private JobRepository jobRepository;
+
+    @Autowired
+    private UsersRepository usersRepository;
+
+    @Autowired
+    private UserSanctionRepository userSanctionRepository;
 
     @Test
     void uploadsPersistsWithDefaults() {
@@ -86,5 +98,22 @@ class EntityMappingSmokeTest {
                 .get()
                 .extracting(Job::getAttempts)
                 .isEqualTo(0);
+    }
+
+    @Test
+    void userSanctionPersistsWithDefaults() {
+        Users target = usersRepository.save(new Users());
+        Users admin = usersRepository.save(new Users());
+
+        UserSanction sanction = new UserSanction(
+                target.getId(), admin.getId(), SanctionType.TEMP_SUSPEND,
+                "약관 위반 신고 누적", "ACTIVE", null);
+
+        UserSanction saved = userSanctionRepository.save(sanction);
+
+        assertThat(saved.getId()).isNotNull();
+        assertThat(saved.getSanctionStatus()).isEqualTo(SanctionStatus.ACTIVE);
+        assertThat(saved.getStartedAt()).isNotNull();
+        assertThat(saved.getLiftedAt()).isNull();
     }
 }
