@@ -72,3 +72,28 @@ export interface ChatSession {
   chatHistory: ChatMessage[];
   selectedDocIds: string[];
 }
+
+/** GET /api/v1/admin/users 목록 항목. 필드명은 backend AdminUserListItem과 1:1. */
+export interface AdminUser {
+  userId: number;
+  role: string;
+  status: "ACTIVE" | "LOCKED" | "SUSPENDED" | "WITHDRAWN" | string;
+  del: boolean;
+  createdAt: string | null;
+  documentCount: number;
+  /** Refresh_Tokens 엔티티가 아직 백엔드에 없어 항상 null (별도 이슈). */
+  lastLoginAt: string | null;
+}
+
+/** GET /api/v1/admin/users/{id}/sanctions 항목. 필드명은 backend SanctionItem과 1:1. */
+export interface AdminSanction {
+  sanctionType: string;
+  sanctionStatus: string;
+  reason: string;
+  restoreUserStatus: string | null;
+  createdAt: string | null;
+  expiresAt: string | null;
+  liftedByAdminId: number | null;
+  liftedAt: string | null;
+  liftedReason: string | null;
+}
