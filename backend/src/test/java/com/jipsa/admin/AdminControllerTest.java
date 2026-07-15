@@ -103,6 +103,19 @@ class AdminControllerTest {
     }
 
     @Test
+    void suspend_이미정지된사용자면_409() throws Exception {
+        when(currentUserProvider.requireUserId()).thenReturn(ADMIN_ID);
+        doThrow(new AdminActionConflictException("이미 정지된 사용자입니다: " + TARGET_ID))
+                .when(adminService).suspend(eq(ADMIN_ID), eq(TARGET_ID), any(SuspendUserRequest.class));
+
+        mockMvc.perform(post("/api/v1/admin/users/{id}/suspend", TARGET_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sanctionType\":\"TEMP_SUSPEND\",\"reason\":\"사유\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("ADMIN_ACTION_CONFLICT"));
+    }
+
+    @Test
     void unsuspend_성공시_success_true() throws Exception {
         when(currentUserProvider.requireUserId()).thenReturn(ADMIN_ID);
 

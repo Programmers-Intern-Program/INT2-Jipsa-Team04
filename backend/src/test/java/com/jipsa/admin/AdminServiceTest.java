@@ -123,6 +123,44 @@ class AdminServiceTest {
     }
 
     @Test
+    void suspend_계정정지가아닌sanctionType이면_400() {
+        // WARNING은 SanctionType엔 있지만 "계정 정지"를 뜻하지 않아 suspend 엔드포인트에서 거부해야 함
+        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
+        when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(userWithRole(TARGET_ID, "USERS")));
+
+        SuspendUserRequest request = new SuspendUserRequest("WARNING", "사유", null);
+
+        assertThatThrownBy(() -> adminService.suspend(ADMIN_ID, TARGET_ID, request))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void suspend_이미정지된사용자면_409() {
+        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
+        Users target = userWithRole(TARGET_ID, "USERS");
+        target.setStatus("SUSPENDED");
+        when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(target));
+
+        SuspendUserRequest request = new SuspendUserRequest("TEMP_SUSPEND", "사유", null);
+
+        assertThatThrownBy(() -> adminService.suspend(ADMIN_ID, TARGET_ID, request))
+                .isInstanceOf(AdminActionConflictException.class);
+    }
+
+    @Test
+    void suspend_이미삭제된사용자면_409() {
+        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
+        Users target = userWithRole(TARGET_ID, "USERS");
+        target.setDel(true);
+        when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(target));
+
+        SuspendUserRequest request = new SuspendUserRequest("TEMP_SUSPEND", "사유", null);
+
+        assertThatThrownBy(() -> adminService.suspend(ADMIN_ID, TARGET_ID, request))
+                .isInstanceOf(AdminActionConflictException.class);
+    }
+
+    @Test
     void unsuspend_활성제재이력이없으면_404() {
         when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
         when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(userWithRole(TARGET_ID, "USERS")));
@@ -166,6 +204,17 @@ class AdminServiceTest {
         ArgumentCaptor<UserSanction> captor = ArgumentCaptor.forClass(UserSanction.class);
         verify(userSanctionRepository).save(captor.capture());
         assertThat(captor.getValue().getSanctionType()).isEqualTo(SanctionType.ACCOUNT_DELETE);
+    }
+
+    @Test
+    void delete_이미삭제된사용자면_409() {
+        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
+        Users target = userWithRole(TARGET_ID, "USERS");
+        target.setDel(true);
+        when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(target));
+
+        assertThatThrownBy(() -> adminService.delete(ADMIN_ID, TARGET_ID, new DeleteUserRequest("사유")))
+                .isInstanceOf(AdminActionConflictException.class);
     }
 
     @Test
