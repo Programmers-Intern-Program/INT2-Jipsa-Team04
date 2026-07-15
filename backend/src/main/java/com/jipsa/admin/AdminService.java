@@ -90,8 +90,16 @@ public class AdminService {
         requireNotSelf(actingAdminId, targetUserId);
         Users target = requireUser(targetUserId);
 
+        // 삭제된 사용자는 정지 해제 대상이 아니다 — 삭제(ACCOUNT_DELETE)도 Sanction_Status가
+        // 기본 ACTIVE라서, 이 가드가 없으면 아래 조회에서 SUSPENDABLE_TYPES로 걸러지긴 하지만
+        // 애초에 "삭제된 계정을 해제한다"는 요청 자체가 의미가 없어 명시적으로 막는다.
+        if (target.isDel()) {
+            throw new AdminActionConflictException("이미 삭제된 사용자입니다: " + targetUserId);
+        }
+
         UserSanction sanction = userSanctionRepository
-                .findFirstByUsersIdAndSanctionStatusOrderByStartedAtDesc(targetUserId, SanctionStatus.ACTIVE)
+                .findFirstByUsersIdAndSanctionTypeInAndSanctionStatusOrderByStartedAtDesc(
+                        targetUserId, SUSPENDABLE_TYPES, SanctionStatus.ACTIVE)
                 .orElseThrow(() -> new NoActiveSanctionException(targetUserId));
 
         sanction.setSanctionStatus(SanctionStatus.LIFTED);
