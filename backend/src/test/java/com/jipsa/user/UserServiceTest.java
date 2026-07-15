@@ -177,17 +177,34 @@ class UserServiceTest {
     }
 
     @Test
-    void 경합_재조회에도_없으면_명시적_예외() {
+    void 재조회에_승자가_없으면_원래_DataIntegrityViolation을_그대로_던진다() {
+        // 무조건 경합으로 단정하지 않는다: 승자가 없으면 다른 DB 무결성 오류일 수 있으므로
+        // 원래 예외를 그대로 보존해 던진다(IllegalStateException으로 바꾸지 않음).
+        DataIntegrityViolationException original = new DataIntegrityViolationException("FK 위반 등 실제 DB 오류");
         when(oauthRepository.findByProviderAndProviderUserIdAndDelFalse("GOOGLE", "google-sub-123"))
                 .thenReturn(Optional.empty())      // step 1
                 .thenReturn(Optional.empty());     // catch 재조회도 없음
         when(oauthRepository.existsByProviderAndProviderUserId("GOOGLE", "google-sub-123"))
                 .thenReturn(false);
-        when(userRegistrationService.register(google, "GOOGLE"))
-                .thenThrow(new DataIntegrityViolationException("duplicate"));
+        when(userRegistrationService.register(google, "GOOGLE")).thenThrow(original);
 
         assertThatThrownBy(() -> userService.findOrCreate(google))
-                .isInstanceOf(IllegalStateException.class);   // null을 반환하지 않고 예외
+                .isSameAs(original);   // 원래 원인 보존
+    }
+
+    @Test
+    void 탈퇴이력_계정은_이름이_blank여도_403으로_차단된다() {
+        // 필수 수정 1: 삭제 이력 검사가 name 검사보다 먼저 → blank name이어도 GoogleAuth(401)이 아니라 403
+        GoogleUserInfo blankName = new GoogleUserInfo("google-sub-123", "u@example.com", true, "  ", null);
+        when(oauthRepository.findByProviderAndProviderUserIdAndDelFalse("GOOGLE", "google-sub-123"))
+                .thenReturn(Optional.empty());
+        when(oauthRepository.existsByProviderAndProviderUserId("GOOGLE", "google-sub-123"))
+                .thenReturn(true);   // 탈퇴(del=true) 이력 존재
+
+        assertThatThrownBy(() -> userService.findOrCreate(blankName))
+                .isInstanceOf(AccountLoginBlockedException.class);   // GoogleAuthException 아님
+
+        verify(userRegistrationService, never()).register(any(), any());
     }
 
     @Test
