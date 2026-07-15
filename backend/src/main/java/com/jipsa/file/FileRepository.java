@@ -14,7 +14,7 @@ public interface FileRepository extends JpaRepository<File, Long> {
 
     @Query("select f from File f where f.usersId = :userId and f.deletedAt is null " +
             "and (:folderId is null or f.folderId = :folderId) " +
-            "and (:keyword is null or f.name like concat('%', :keyword, '%')) " +
+            "and (:keyword is null or f.name like concat('%', :keyword, '%') escape '\\') " +
             "and (:docType is null or f.fileType = :docType)")
     Page<File> search(@Param("userId") Long userId,
                       @Param("folderId") Long folderId,

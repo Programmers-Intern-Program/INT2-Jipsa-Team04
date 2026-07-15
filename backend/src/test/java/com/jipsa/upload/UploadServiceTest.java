@@ -14,9 +14,11 @@ import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -37,13 +39,15 @@ class UploadServiceTest {
     private S3Service s3Service;
     @Mock
     private JobService jobService;
+    @Mock
+    private PlatformTransactionManager transactionManager;
 
     private UploadService uploadService;
 
     @BeforeEach
     void setUp() {
         uploadService = new UploadService(uploadsRepository, fileRepository,
-                s3Service, jobService, "test-bucket");
+                s3Service, jobService, transactionManager, "test-bucket");
     }
 
     private MockMultipartFile pdf(String name) {
@@ -57,6 +61,7 @@ class UploadServiceTest {
             u.setId(10L);
             return u;
         });
+        when(uploadsRepository.findById(10L)).thenReturn(Optional.of(new Uploads()));
         when(fileRepository.save(any(File.class))).thenAnswer(inv -> {
             File f = inv.getArgument(0);
             f.setId(100L);

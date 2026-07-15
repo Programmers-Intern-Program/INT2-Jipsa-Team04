@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Sparkles,
@@ -24,8 +24,11 @@ import LandingView from "./components/LandingView";
 // Import types
 import type { Document, AISettings, ChatMessage, ChatSession } from "./types";
 
-// 정적 mock 데이터 (백엔드 API 연동은 별도 이슈에서 처리)
+// mockDocuments: 정적 mock 데이터, 백엔드 API 연동은 별도 이슈에서 처리.
+// mockAISettings: 최초 렌더링용 fallback 초기값일 뿐 — 실제 값은 아래 useEffect가
+// GET /api/v1/users/me/settings로 즉시 덮어쓴다(로그인 연동 전이면 실패하고 이 값 유지).
 import { mockDocuments, mockAISettings } from "./mocks/mockData";
+import { getUserSettings, updateUserSettings } from "./api/userSettings";
 
 function getInitialSelectedDocIds(docs: Document[]): string[] {
   if (docs.length > 2) {
@@ -62,6 +65,16 @@ export default function App() {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
+
+  // 실제 설정 조회 시도 — 로그인 연동 전(토큰 없음)이면 401로 실패하는 게 정상이고,
+  // 그 경우 위에서 초기화한 mockAISettings를 그대로 유지한다(Folder와 동일 패턴).
+  useEffect(() => {
+    getUserSettings()
+      .then(setCommittedSettings)
+      .catch((err) => {
+        console.warn("[settings] GET /api/v1/users/me/settings 실패 - mock 데이터 유지(로그인 연동 전이면 정상):", err);
+      });
+  }, []);
 
   // Sync global search into documents tab
   const handleGlobalSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -155,9 +168,16 @@ export default function App() {
     setIsLoadingChat(false);
   };
 
-  // Save Settings (mock: 로컬 상태에만 반영)
+  // Save Settings — 로컬 상태 먼저 반영(데모 흐름 유지) 후 실제 API 호출 시도.
+  // 로그인 연동 전(토큰 없음)이면 PATCH가 401로 실패하는 게 정상이며, 그 경우
+  // 로컬 상태만 갱신된 채로 남는다(Folder의 create/delete와 동일한 폴백 패턴).
   const handleSaveSettings = async (newSettings: AISettings) => {
     setCommittedSettings(newSettings);
+    try {
+      await updateUserSettings(newSettings);
+    } catch (err) {
+      console.warn("[settings] PATCH /api/v1/users/me/settings 실패 - 로컬 상태만 갱신됨(로그인 연동 전이면 정상):", err);
+    }
   };
 
   // Smart navigation from Dashboard/Documents: 지정 문서로 새 채팅 탭을 열어 이동

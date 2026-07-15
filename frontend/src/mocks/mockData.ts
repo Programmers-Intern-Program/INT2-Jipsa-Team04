@@ -185,7 +185,7 @@ export const mockAISettings: AISettings = {
   voiceModel: "Nova (명확하고 신뢰감 있는)",
   responseStyle: "간결형",
   instantSummary: true,
-  autoMasking: false,
+  autoHighlight: false,
   pushNotification: true
 };
 

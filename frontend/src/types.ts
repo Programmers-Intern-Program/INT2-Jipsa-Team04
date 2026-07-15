@@ -46,7 +46,7 @@ export interface AISettings {
   voiceModel: string;
   responseStyle: "간결형" | "상세형" | "전문가용";
   instantSummary: boolean;
-  autoMasking: boolean;
+  autoHighlight: boolean;
   pushNotification: boolean;
 }
 
