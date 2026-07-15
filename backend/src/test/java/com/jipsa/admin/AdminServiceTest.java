@@ -15,6 +15,7 @@ import org.springframework.data.domain.Pageable;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -27,6 +28,10 @@ class AdminServiceTest {
 
     private static final Long ADMIN_ID = 1L;
     private static final Long TARGET_ID = 2L;
+    // AdminService.SUSPENDABLE_TYPES는 private라 테스트에서 직접 못 써서 값만 그대로 복제.
+    // 리포지토리 mock의 인자 매칭용이라 AdminService 쪽 값이 바뀌면 이 상수도 같이 바꿔야 한다.
+    private static final Set<SanctionType> SUSPENDABLE_TYPES_FOR_TEST =
+            Set.of(SanctionType.TEMP_SUSPEND, SanctionType.PERMANENT_SUSPEND);
 
     @Mock
     private UsersRepository usersRepository;
@@ -164,11 +169,23 @@ class AdminServiceTest {
     void unsuspend_활성제재이력이없으면_404() {
         when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
         when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(userWithRole(TARGET_ID, "USERS")));
-        when(userSanctionRepository.findFirstByUsersIdAndSanctionStatusOrderByStartedAtDesc(TARGET_ID, SanctionStatus.ACTIVE))
+        when(userSanctionRepository.findFirstByUsersIdAndSanctionTypeInAndSanctionStatusOrderByStartedAtDesc(
+                        TARGET_ID, SUSPENDABLE_TYPES_FOR_TEST, SanctionStatus.ACTIVE))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> adminService.unsuspend(ADMIN_ID, TARGET_ID, new UnsuspendUserRequest("오제재 확인됨")))
                 .isInstanceOf(NoActiveSanctionException.class);
+    }
+
+    @Test
+    void unsuspend_이미삭제된사용자면_409() {
+        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
+        Users target = userWithRole(TARGET_ID, "USERS");
+        target.setDel(true);
+        when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(target));
+
+        assertThatThrownBy(() -> adminService.unsuspend(ADMIN_ID, TARGET_ID, new UnsuspendUserRequest("사유")))
+                .isInstanceOf(AdminActionConflictException.class);
     }
 
     @Test
@@ -180,7 +197,8 @@ class AdminServiceTest {
 
         UserSanction activeSanction = new UserSanction(
                 TARGET_ID, ADMIN_ID, SanctionType.TEMP_SUSPEND, "약관 위반", "ACTIVE", null);
-        when(userSanctionRepository.findFirstByUsersIdAndSanctionStatusOrderByStartedAtDesc(TARGET_ID, SanctionStatus.ACTIVE))
+        when(userSanctionRepository.findFirstByUsersIdAndSanctionTypeInAndSanctionStatusOrderByStartedAtDesc(
+                        TARGET_ID, SUSPENDABLE_TYPES_FOR_TEST, SanctionStatus.ACTIVE))
                 .thenReturn(Optional.of(activeSanction));
 
         adminService.unsuspend(ADMIN_ID, TARGET_ID, new UnsuspendUserRequest("오제재 확인됨"));
