@@ -109,6 +109,7 @@ class Settings(BaseSettings):
     )
 
     # 현재 로컬 실행 환경이다.
+    #
     # get_settings()가 JIPSA_RAG_APP_ENV를 기준으로 값을 주입한다.
     app_env: AppEnvironment = "local"
 
@@ -179,9 +180,53 @@ class Settings(BaseSettings):
     # =========================================================
 
     # RAG는 S3에 직접 인증하지 않는다.
+    #
     # 애플리케이션 서버가 전달한 Object Key가 files/{uuid}
     # 경로에 속하는지 검증할 때만 이 값을 사용한다.
     s3_allowed_key_prefix: S3AllowedKeyPrefix = "files/"
+
+    # =========================================================
+    # File Download
+    # =========================================================
+
+    # Presigned GET URL에서 허용할 호스트 suffix 목록이다.
+    #
+    # 쉼표로 여러 도메인을 구분할 수 있으며, 내부에서는 모두
+    # ".example.com" 형식으로 정규화하여 비교한다.
+    #
+    # 다운로드 URL의 호스트를 제한하여 임의의 내부 서버나
+    # 허용되지 않은 외부 서버로 요청하는 것을 차단한다.
+    file_download_allowed_host_suffixes: str = Field(
+        default=".amazonaws.com",
+        min_length=1,
+    )
+
+    # Presigned GET URL 서버와 TCP 연결을 수립할 때
+    # 기다리는 최대 시간이다.
+    file_download_connect_timeout_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        le=300,
+    )
+
+    # 연결 이후 파일 데이터 청크를 기다리는 최대 시간이다.
+    #
+    # 전체 다운로드 제한 시간이 아니라 연속된 데이터 청크 사이에
+    # 허용되는 최대 대기 시간이다.
+    file_download_read_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        le=600,
+    )
+
+    # 다운로드할 수 있는 단일 파일의 최대 크기이다.
+    #
+    # 기본값은 50 MiB이며 최대 1 GiB까지 설정할 수 있다.
+    file_download_max_size_bytes: int = Field(
+        default=50 * 1024 * 1024,
+        gt=0,
+        le=1024 * 1024 * 1024,
+    )
 
     # =========================================================
     # Application Server
@@ -202,13 +247,13 @@ class Settings(BaseSettings):
         min_length=1,
     )
 
-    # 애플리케이션 서버와 연결을 수립할 때 기다리는 최대 시간(초)이다.
+    # 애플리케이션 서버와 연결을 수립할 때 기다리는 최대 시간이다.
     app_server_connect_timeout_seconds: float = Field(
         default=5.0,
         gt=0,
     )
 
-    # 연결 후 애플리케이션 서버 응답을 기다리는 최대 시간(초)이다.
+    # 연결 후 애플리케이션 서버 응답을 기다리는 최대 시간이다.
     app_server_read_timeout_seconds: float = Field(
         default=30.0,
         gt=0,
@@ -218,6 +263,9 @@ class Settings(BaseSettings):
         # 예:
         # database_host
         # -> JIPSA_RAG_DATABASE_HOST
+        #
+        # file_download_max_size_bytes
+        # -> JIPSA_RAG_FILE_DOWNLOAD_MAX_SIZE_BYTES
         #
         # app_server_base_url
         # -> JIPSA_RAG_APP_SERVER_BASE_URL
@@ -240,12 +288,16 @@ class Settings(BaseSettings):
         "database_name",
         "database_user",
         "s3_allowed_key_prefix",
+        "file_download_allowed_host_suffixes",
         "app_server_base_url",
         "app_server_api_v1_prefix",
         mode="before",
     )
     @classmethod
-    def strip_non_secret_text(cls, value: object) -> object:
+    def strip_non_secret_text(
+        cls,
+        value: object,
+    ) -> object:
         """비밀값이 아닌 문자열 설정의 앞뒤 공백을 제거한다."""
 
         if isinstance(value, str):
@@ -258,7 +310,10 @@ class Settings(BaseSettings):
         "app_server_api_v1_prefix",
     )
     @classmethod
-    def validate_api_prefix(cls, value: str) -> str:
+    def validate_api_prefix(
+        cls,
+        value: str,
+    ) -> str:
         """FastAPI 및 애플리케이션 서버 API prefix 형식을 검증한다."""
 
         if not value.startswith("/"):
@@ -272,9 +327,71 @@ class Settings(BaseSettings):
 
         return value
 
+    @field_validator("file_download_allowed_host_suffixes")
+    @classmethod
+    def validate_file_download_allowed_host_suffixes(
+        cls,
+        value: str,
+    ) -> str:
+        """파일 다운로드에 허용할 호스트 suffix 목록을 정규화한다."""
+
+        normalized_suffixes: list[str] = []
+
+        for raw_suffix in value.split(","):
+            suffix = raw_suffix.strip().lower()
+
+            # 쉼표가 연속되거나 마지막에 쉼표가 있는 경우
+            # 생성되는 빈 값은 무시한다.
+            if not suffix:
+                continue
+
+            # "*.amazonaws.com" 입력은 ".amazonaws.com"으로 변환한다.
+            #
+            # 실제 호스트 비교는 문자열 suffix 비교로 수행하므로
+            # 별표 문자는 보관할 필요가 없다.
+            if suffix.startswith("*."):
+                suffix = suffix[1:]
+            elif not suffix.startswith("."):
+                suffix = f".{suffix}"
+
+            # 경로, 포트, 사용자 정보와 같은 값은 도메인 suffix로
+            # 사용할 수 없으므로 설정 단계에서 거부한다.
+            if any(
+                character in suffix
+                for character in (
+                    "/",
+                    "\\",
+                    ":",
+                    "?",
+                    "#",
+                    "@",
+                )
+            ):
+                raise ValueError(
+                    "파일 다운로드 허용 호스트에는 도메인 suffix만 사용할 수 있습니다."
+                )
+
+            # 시작 위치의 "*." 이외에 남아 있는 wildcard는
+            # 허용 호스트 범위를 불명확하게 만들 수 있으므로 거부한다.
+            if "*" in suffix:
+                raise ValueError(
+                    "파일 다운로드 허용 호스트에는 중간 wildcard를 사용할 수 없습니다."
+                )
+
+            normalized_suffixes.append(suffix)
+
+        if not normalized_suffixes:
+            raise ValueError("파일 다운로드 허용 호스트를 하나 이상 지정해야 합니다.")
+
+        # 중복 항목은 제거하되 관리자가 작성한 입력 순서는 유지한다.
+        return ",".join(dict.fromkeys(normalized_suffixes))
+
     @field_validator("app_server_base_url")
     @classmethod
-    def validate_app_server_base_url(cls, value: str) -> str:
+    def validate_app_server_base_url(
+        cls,
+        value: str,
+    ) -> str:
         """애플리케이션 서버 기본 URL의 형식을 검증한다."""
 
         if value.endswith("/"):
@@ -282,7 +399,10 @@ class Settings(BaseSettings):
 
         parsed = urlsplit(value)
 
-        if parsed.scheme not in {"http", "https"}:
+        if parsed.scheme not in {
+            "http",
+            "https",
+        }:
             raise ValueError("애플리케이션 서버 기본 URL은 http 또는 https 스킴을 사용해야 합니다.")
 
         if not parsed.netloc:
@@ -305,6 +425,14 @@ class Settings(BaseSettings):
             raise ValueError("애플리케이션 서버 포트는 1부터 65535 사이여야 합니다.")
 
         return value
+
+    @property
+    def parsed_file_download_allowed_host_suffixes(
+        self,
+    ) -> tuple[str, ...]:
+        """정규화된 파일 다운로드 허용 호스트 목록을 반환한다."""
+
+        return tuple(self.file_download_allowed_host_suffixes.split(","))
 
     @property
     def database_url(self) -> URL:

@@ -21,6 +21,12 @@ class ErrorCode(Enum):
         message="The request is invalid.",
     )
 
+    INVALID_FILE_URL = ErrorDefinition(
+        status_code=HTTPStatus.BAD_REQUEST,
+        code="INVALID_FILE_URL",
+        message="The file URL is invalid.",
+    )
+
     UNAUTHORIZED = ErrorDefinition(
         status_code=HTTPStatus.UNAUTHORIZED,
         code="UNAUTHORIZED",
@@ -51,10 +57,34 @@ class ErrorCode(Enum):
         message="The request conflicts with the current resource state.",
     )
 
+    FILE_TOO_LARGE = ErrorDefinition(
+        status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+        code="FILE_TOO_LARGE",
+        message="The file exceeds the maximum allowed size.",
+    )
+
     REQUEST_VALIDATION_FAILED = ErrorDefinition(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         code="REQUEST_VALIDATION_FAILED",
         message="Request validation failed.",
+    )
+
+    INVALID_FILE = ErrorDefinition(
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        code="INVALID_FILE",
+        message="The downloaded file is invalid.",
+    )
+
+    FILE_HASH_MISMATCH = ErrorDefinition(
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        code="FILE_HASH_MISMATCH",
+        message="The downloaded file hash does not match.",
+    )
+
+    UNSUPPORTED_FILE_MEDIA_TYPE = ErrorDefinition(
+        status_code=HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+        code="UNSUPPORTED_FILE_MEDIA_TYPE",
+        message="The downloaded file type is not supported.",
     )
 
     TOO_MANY_REQUESTS = ErrorDefinition(
@@ -63,16 +93,28 @@ class ErrorCode(Enum):
         message="Too many requests have been received.",
     )
 
-    INTERNAL_SERVER_ERROR = ErrorDefinition(
-        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-        code="INTERNAL_SERVER_ERROR",
-        message="An internal server error occurred.",
+    FILE_DOWNLOAD_FAILED = ErrorDefinition(
+        status_code=HTTPStatus.BAD_GATEWAY,
+        code="FILE_DOWNLOAD_FAILED",
+        message="The source file could not be downloaded.",
     )
 
     SERVICE_UNAVAILABLE = ErrorDefinition(
         status_code=HTTPStatus.SERVICE_UNAVAILABLE,
         code="SERVICE_UNAVAILABLE",
         message="The service is temporarily unavailable.",
+    )
+
+    FILE_DOWNLOAD_TIMEOUT = ErrorDefinition(
+        status_code=HTTPStatus.GATEWAY_TIMEOUT,
+        code="FILE_DOWNLOAD_TIMEOUT",
+        message="The source file download timed out.",
+    )
+
+    INTERNAL_SERVER_ERROR = ErrorDefinition(
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        code="INTERNAL_SERVER_ERROR",
+        message="An internal server error occurred.",
     )
 
     @property
