@@ -163,7 +163,9 @@ class AdminServiceTest {
 
         assertThat(target.isDel()).isTrue();
         assertThat(target.getStatus()).isEqualTo("WITHDRAWN");
-        verify(userSanctionRepository).save(any(UserSanction.class));
+        ArgumentCaptor<UserSanction> captor = ArgumentCaptor.forClass(UserSanction.class);
+        verify(userSanctionRepository).save(captor.capture());
+        assertThat(captor.getValue().getSanctionType()).isEqualTo(SanctionType.ACCOUNT_DELETE);
     }
 
     @Test
