@@ -90,6 +90,16 @@ class AdminControllerTest {
     }
 
     @Test
+    void suspend_만료일시가과거면_400() throws Exception {
+        when(currentUserProvider.requireUserId()).thenReturn(ADMIN_ID);
+
+        mockMvc.perform(post("/api/v1/admin/users/{id}/suspend", TARGET_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sanctionType\":\"TEMP_SUSPEND\",\"reason\":\"사유\",\"expiresAt\":\"2000-01-01T00:00:00\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void suspend_자기자신대상이면_400() throws Exception {
         when(currentUserProvider.requireUserId()).thenReturn(ADMIN_ID);
         doThrow(new SelfTargetNotAllowedException())
