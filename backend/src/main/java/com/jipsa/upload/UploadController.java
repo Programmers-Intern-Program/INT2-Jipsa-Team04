@@ -29,9 +29,10 @@ public class UploadController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public UploadResponse upload(
-            @RequestParam(value = "files", required = false) List<MultipartFile> files) {
+            @RequestParam(value = "files", required = false) List<MultipartFile> files,
+            @RequestParam(value = "folderId", required = false) Long folderId) {
         Long userId = currentUserProvider.requireUserId();
-        return uploadService.upload(userId, files);
+        return uploadService.upload(userId, files, folderId);
     }
 
     @GetMapping("/{id}/status")

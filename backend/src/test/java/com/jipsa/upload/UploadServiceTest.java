@@ -5,6 +5,9 @@ import com.jipsa.common.exception.UploadLimitExceededException;
 import com.jipsa.file.File;
 import com.jipsa.file.FileRepository;
 import com.jipsa.file.S3Service;
+import com.jipsa.folder.Folder;
+import com.jipsa.folder.FolderNotFoundException;
+import com.jipsa.folder.FolderRepository;
 import com.jipsa.job.JobService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,6 +39,8 @@ class UploadServiceTest {
     @Mock
     private FileRepository fileRepository;
     @Mock
+    private FolderRepository folderRepository;
+    @Mock
     private S3Service s3Service;
     @Mock
     private JobService jobService;
@@ -46,7 +51,7 @@ class UploadServiceTest {
 
     @BeforeEach
     void setUp() {
-        uploadService = new UploadService(uploadsRepository, fileRepository,
+        uploadService = new UploadService(uploadsRepository, fileRepository, folderRepository,
                 s3Service, jobService, transactionManager, "test-bucket");
     }
 
@@ -54,8 +59,7 @@ class UploadServiceTest {
         return new MockMultipartFile("files", name, "application/pdf", "content".getBytes());
     }
 
-    @Test
-    void uploadStoresFileAndEnqueuesJob() {
+    private void stubBatchAndFile() {
         when(uploadsRepository.save(any(Uploads.class))).thenAnswer(inv -> {
             Uploads u = inv.getArgument(0);
             u.setId(10L);
@@ -69,8 +73,13 @@ class UploadServiceTest {
         });
         when(s3Service.upload(eq("test-bucket"), any(MultipartFile.class)))
                 .thenReturn("files/generated-key");
+    }
 
-        UploadResponse response = uploadService.upload(1L, List.of(pdf("test.pdf")));
+    @Test
+    void uploadStoresFileAndEnqueuesJob() {
+        stubBatchAndFile();
+
+        UploadResponse response = uploadService.upload(1L, List.of(pdf("test.pdf")), null);
 
         assertThat(response.uploadId()).isEqualTo(10L);
         assertThat(response.fileIds()).containsExactly(100L);
@@ -88,12 +97,34 @@ class UploadServiceTest {
     }
 
     @Test
+    void uploadIntoFolderSetsFolderId() {
+        when(folderRepository.findByIdAndUsersId(7L, 1L)).thenReturn(Optional.of(new Folder()));
+        stubBatchAndFile();
+
+        uploadService.upload(1L, List.of(pdf("test.pdf")), 7L);
+
+        ArgumentCaptor<File> fileCaptor = ArgumentCaptor.forClass(File.class);
+        verify(fileRepository).save(fileCaptor.capture());
+        assertThat(fileCaptor.getValue().getFolderId()).isEqualTo(7L);
+    }
+
+    @Test
+    void rejectsUnknownFolder() {
+        when(folderRepository.findByIdAndUsersId(7L, 1L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> uploadService.upload(1L, List.of(pdf("test.pdf")), 7L))
+                .isInstanceOf(FolderNotFoundException.class);
+
+        verify(s3Service, never()).upload(any(), any());
+    }
+
+    @Test
     void rejectsMoreThanFiveFiles() {
         List<MultipartFile> files = List.of(
                 pdf("1.pdf"), pdf("2.pdf"), pdf("3.pdf"),
                 pdf("4.pdf"), pdf("5.pdf"), pdf("6.pdf"));
 
-        assertThatThrownBy(() -> uploadService.upload(1L, files))
+        assertThatThrownBy(() -> uploadService.upload(1L, files, null))
                 .isInstanceOf(UploadLimitExceededException.class);
 
         verify(s3Service, never()).upload(any(), any());
@@ -106,7 +137,7 @@ class UploadServiceTest {
         when(big.getSize()).thenReturn(21L * 1024 * 1024);
         when(big.getOriginalFilename()).thenReturn("big.pdf");
 
-        assertThatThrownBy(() -> uploadService.upload(1L, List.of(big)))
+        assertThatThrownBy(() -> uploadService.upload(1L, List.of(big), null))
                 .isInstanceOf(UploadLimitExceededException.class);
 
         verify(s3Service, never()).upload(any(), any());
@@ -114,7 +145,7 @@ class UploadServiceTest {
 
     @Test
     void rejectsUnsupportedType() {
-        assertThatThrownBy(() -> uploadService.upload(1L, List.of(pdf("malware.exe"))))
+        assertThatThrownBy(() -> uploadService.upload(1L, List.of(pdf("malware.exe")), null))
                 .isInstanceOf(UnsupportedFileTypeException.class);
 
         verify(s3Service, never()).upload(any(), any());

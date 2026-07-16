@@ -1,22 +1,17 @@
 package com.jipsa.user;
 
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
+import com.jipsa.auth.JwtService;
+import com.jipsa.common.CurrentUserProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
-import java.util.List;
 
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
@@ -27,8 +22,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * UserSettingController 웹 레이어 슬라이스 테스트. FolderControllerTest와 동일한 인증 주입 방식
- * (addFilters=false + SecurityContextHolder 직접 세팅)을 그대로 따른다.
+ * UserSettingController 웹 레이어 슬라이스 테스트. UploadControllerTest와 동일하게
+ * CurrentUserProvider를 mock으로 대체하고, 각 테스트에서 필요할 때 개별 스텁한다.
  */
 @WebMvcTest(UserSettingController.class)
 @AutoConfigureMockMvc(addFilters = false)
@@ -43,25 +38,17 @@ class UserSettingControllerTest {
     @MockitoBean
     private UserSettingService userSettingService;
 
+    @MockitoBean
+    private CurrentUserProvider currentUserProvider;
+
     // @WebMvcTest는 Filter 타입 빈도 슬라이스에 포함시켜 JwtAuthenticationFilter가 같이 뜬다.
     // addFilters=false라 실제 인증엔 안 쓰이지만, 컨텍스트를 띄우려면 빈 자체는 있어야 해서 mock으로 채운다.
     @MockitoBean
-    private com.jipsa.auth.JwtService jwtService;
-
-    @BeforeEach
-    void authenticateAsUser() {
-        Authentication auth = new UsernamePasswordAuthenticationToken(
-                USER_ID, null, List.of(new SimpleGrantedAuthority("ROLE_USER")));
-        SecurityContextHolder.getContext().setAuthentication(auth);
-    }
-
-    @AfterEach
-    void clearAuthentication() {
-        SecurityContextHolder.clearContext();
-    }
+    private JwtService jwtService;
 
     @Test
     void get_본인_설정을_반환한다() throws Exception {
+        given(currentUserProvider.requireUserId()).willReturn(USER_ID);
         UserSetting setting = new UserSetting(USER_ID);
         given(userSettingService.getOrCreate(USER_ID)).willReturn(setting);
 
@@ -77,6 +64,8 @@ class UserSettingControllerTest {
 
     @Test
     void update_일부필드만_보내면_나머지는_null로_전달된다() throws Exception {
+        given(currentUserProvider.requireUserId()).willReturn(USER_ID);
+
         mockMvc.perform(patch("/api/v1/users/me/settings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"sensitivity\": 0.8, \"pushNotification\": false}"))
@@ -90,6 +79,8 @@ class UserSettingControllerTest {
 
     @Test
     void update_빈body도_200() throws Exception {
+        given(currentUserProvider.requireUserId()).willReturn(USER_ID);
+
         mockMvc.perform(patch("/api/v1/users/me/settings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))

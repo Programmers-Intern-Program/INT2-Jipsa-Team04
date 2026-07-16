@@ -1,9 +1,13 @@
 package com.jipsa.file;
 
+import com.jipsa.common.BadRequestException;
 import com.jipsa.common.exception.FileNotFoundException;
 import com.jipsa.common.exception.ForbiddenException;
+import com.jipsa.folder.FolderNotFoundException;
+import com.jipsa.folder.FolderRepository;
 import com.jipsa.job.Job;
 import com.jipsa.job.JobRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -21,10 +25,20 @@ public class FileService {
 
     private final FileRepository fileRepository;
     private final JobRepository jobRepository;
+    private final FolderRepository folderRepository;
+    private final S3Service s3Service;
+    private final String bucket;
 
-    public FileService(FileRepository fileRepository, JobRepository jobRepository) {
+    public FileService(FileRepository fileRepository,
+                       JobRepository jobRepository,
+                       FolderRepository folderRepository,
+                       S3Service s3Service,
+                       @Value("${app.s3.bucket}") String bucket) {
         this.fileRepository = fileRepository;
         this.jobRepository = jobRepository;
+        this.folderRepository = folderRepository;
+        this.s3Service = s3Service;
+        this.bucket = bucket;
     }
 
     @Transactional(readOnly = true)
@@ -76,6 +90,38 @@ public class FileService {
         File file = requireOwnedFile(userId, fileId);
         file.setStatus(FileStatus.DELETED);
         file.setDeletedAt(LocalDateTime.now());
+    }
+
+    @Transactional
+    public void moveToFolder(Long userId, Long fileId, Long folderId) {
+        File file = requireOwnedFile(userId, fileId);
+        if (folderId != null) {
+            folderRepository.findByIdAndUsersId(folderId, userId)
+                    .orElseThrow(() -> new FolderNotFoundException(folderId));
+        }
+        file.setFolderId(folderId);
+    }
+
+    @Transactional
+    public void setStar(Long userId, Long fileId, boolean star) {
+        File file = requireOwnedFile(userId, fileId);
+        file.setStar(star);
+    }
+
+    @Transactional
+    public void rename(Long userId, Long fileId, String name) {
+        if (name == null || name.isBlank()) {
+            throw new BadRequestException("파일명은 비어 있을 수 없습니다.");
+        }
+        File file = requireOwnedFile(userId, fileId);
+        file.setName(name.trim());
+    }
+
+    public FileDownload download(Long userId, Long fileId) {
+        File file = requireOwnedFile(userId, fileId);
+        S3Service.Content content = s3Service.download(bucket, file.getS3Key());
+        String contentType = content.contentType() != null ? content.contentType() : "application/octet-stream";
+        return new FileDownload(content.resource(), file.getName(), contentType, content.contentLength());
     }
 
     private File requireOwnedFile(Long userId, Long fileId) {
