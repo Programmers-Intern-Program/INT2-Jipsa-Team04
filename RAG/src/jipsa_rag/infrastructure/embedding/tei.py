@@ -75,9 +75,7 @@ class TeiChunkEmbedder:
                     document.chunk_count,
                 )
 
-                chunk_batch = document.chunks[
-                    batch_start_index:batch_end_index
-                ]
+                chunk_batch = document.chunks[batch_start_index:batch_end_index]
 
                 embedding_batch = await self._request_embedding_batch(
                     client=client,
@@ -184,10 +182,7 @@ class TeiChunkEmbedder:
 
         if len(raw_vectors) != expected_count:
             raise InvalidEmbeddingResponseError(
-                reason=(
-                    f"expected {expected_count} vectors "
-                    f"but received {len(raw_vectors)}"
-                ),
+                reason=(f"expected {expected_count} vectors but received {len(raw_vectors)}"),
                 batch_start_index=batch_start_index,
             )
 
@@ -223,10 +218,7 @@ class TeiChunkEmbedder:
                     ),
                 ):
                     raise InvalidEmbeddingResponseError(
-                        reason=(
-                            f"vector {vector_offset} value "
-                            f"{value_offset} is not numeric"
-                        ),
+                        reason=(f"vector {vector_offset} value {value_offset} is not numeric"),
                         batch_start_index=batch_start_index,
                     )
 

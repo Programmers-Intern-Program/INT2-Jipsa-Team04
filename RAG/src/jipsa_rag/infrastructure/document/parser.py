@@ -17,8 +17,8 @@ class DocumentParser(Protocol):
 
     Protocol은 명시적인 상속보다 객체의 구조를 기준으로 타입을 판단한다.
     따라서 형식별 파서가 DocumentParser를 직접 상속하지 않더라도
-    file_type 속성과 parse() 메서드를 동일한 타입으로 구현하면
-    DocumentParser 구현체로 사용할 수 있다.
+    file_type, parser_type, parser_version 속성과 parse() 메서드를
+    동일한 타입으로 구현하면 DocumentParser 구현체로 사용할 수 있다.
 
     이 인터페이스를 통해 파일 처리 API와 서비스 계층은
     PdfDocumentParser, DocxDocumentParser와 같은 구체 클래스에
@@ -39,6 +39,30 @@ class DocumentParser(Protocol):
 
         Returns:
             현재 파서가 처리하는 공통 문서 형식이다.
+        """
+
+        ...
+
+    @property
+    def parser_type(self) -> str:
+        """Local RAG DB에 기록할 파서 종류를 반환한다.
+
+        Parser_Type은 단순한 파일 확장자가 아니라 실제 추출 방식을
+        구분할 수 있어야 한다.
+
+        예:
+            텍스트 레이어 기반 PDF 파서는 PDF_TEXT를 반환한다.
+            향후 OCR PDF 파서가 추가되면 PDF_OCR처럼 별도 값을 사용한다.
+        """
+
+        ...
+
+    @property
+    def parser_version(self) -> str:
+        """재파싱 여부 판단에 사용할 파서 구현 버전을 반환한다.
+
+        텍스트 정규화, 표 추출 또는 원본 위치 메타데이터 생성 규칙이
+        변경되어 기존 결과와 호환되지 않으면 이 버전도 증가시켜야 한다.
         """
 
         ...

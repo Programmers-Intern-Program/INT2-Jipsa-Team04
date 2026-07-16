@@ -360,4 +360,3 @@ def test_chunker_rejects_invalid_configuration(
             chunk_size_chars=chunk_size_chars,
             chunk_overlap_chars=chunk_overlap_chars,
         )
-  

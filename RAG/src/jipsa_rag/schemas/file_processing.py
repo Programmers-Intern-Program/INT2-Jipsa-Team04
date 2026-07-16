@@ -86,7 +86,12 @@ class FileProcessingRequest(BaseModel):
         cls,
         value: str,
     ) -> str:
-        """Presigned GET URL 원문을 유지하면서 기본 구조를 검증한다."""
+        """Presigned GET URL 원문을 유지하면서 기본 구조를 검증한다.
+
+        이 URL은 원본 파일을 다운로드하는 동안에만 사용한다.
+        Local RAG DB에는 URL 전체나 URL에서 추출한 S3_Key를 저장하지 않는다.
+        S3 객체 위치의 기준 데이터는 AWS 서버 DB의 File.S3_Key다.
+        """
 
         try:
             parsed = urlsplit(value)
@@ -168,11 +173,17 @@ class FileProcessingRequest(BaseModel):
 
 
 class FileProcessingAcceptedResponse(BaseModel):
-    """다운로드부터 청크 임베딩 생성까지 완료된 처리 결과."""
+    """다운로드부터 Local RAG DB 및 VectorDB 저장까지 완료된 처리 결과."""
 
     # 응답 스키마에 정의되지 않은 내부 데이터가
     # 외부 응답에 포함되지 않도록 제한한다.
     model_config = ConfigDict(extra="forbid")
+
+    rag_document_idx: int = Field(
+        gt=0,
+        description="Local RAG DB RAG_Document 식별자",
+        examples=[100],
+    )
 
     users_idx: int = Field(
         gt=0,
@@ -231,7 +242,7 @@ class FileProcessingAcceptedResponse(BaseModel):
 
     chunk_count: int = Field(
         gt=0,
-        description="문서 전체에서 생성된 검색 및 임베딩 대상 청크 수",
+        description="Local RAG DB와 VectorDB에 저장된 청크 수",
         examples=[42],
     )
 
@@ -248,8 +259,8 @@ class FileProcessingAcceptedResponse(BaseModel):
         examples=[1024],
     )
 
-    processing_status: Literal["EMBEDDED"] = Field(
-        default="EMBEDDED",
-        description="문서 청킹 및 청크별 임베딩 생성 완료 상태",
-        examples=["EMBEDDED"],
+    processing_status: Literal["INDEXED"] = Field(
+        default="INDEXED",
+        description="Local RAG DB와 VectorDB 저장 완료 상태",
+        examples=["INDEXED"],
     )

@@ -4,6 +4,7 @@ from http import HTTPStatus
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from jipsa_rag.core.config import Settings, get_settings
 from jipsa_rag.core.error_codes import ErrorCode
@@ -15,6 +16,7 @@ from jipsa_rag.infrastructure.chunking.exceptions import (
     NoDocumentChunksError,
 )
 from jipsa_rag.infrastructure.chunking.models import ChunkingContext
+from jipsa_rag.infrastructure.database.session import get_db_session
 from jipsa_rag.infrastructure.document.exceptions import (
     DocumentFileNotFoundError,
     DocumentParserError,
@@ -39,6 +41,21 @@ from jipsa_rag.infrastructure.embedding.tei import TeiChunkEmbedder
 from jipsa_rag.infrastructure.file.downloader import (
     HttpFileDownloader,
 )
+from jipsa_rag.infrastructure.indexing.exceptions import (
+    LocalRagStorageError,
+    VectorCollectionConfigurationError,
+    VectorDatabaseError,
+    VectorDatabaseRejectedError,
+    VectorDatabaseUnavailableError,
+)
+from jipsa_rag.infrastructure.indexing.local_repository import (
+    LocalRagIndexRepository,
+)
+from jipsa_rag.infrastructure.indexing.models import DocumentIndexMetadata
+from jipsa_rag.infrastructure.indexing.qdrant_store import (
+    QdrantChunkVectorStore,
+    get_qdrant_vector_store,
+)
 from jipsa_rag.schemas.common import (
     ApiResponse,
     ValidationErrorData,
@@ -47,6 +64,7 @@ from jipsa_rag.schemas.file_processing import (
     FileProcessingAcceptedResponse,
     FileProcessingRequest,
 )
+from jipsa_rag.services.file_indexing import FileIndexingService
 
 router = APIRouter(
     prefix="/files",
@@ -68,6 +86,16 @@ _DEFAULT_INDEX_VERSION: Final[int] = 1
 SettingsDependency = Annotated[
     Settings,
     Depends(get_settings),
+]
+
+
+# Local RAG DB 세션은 요청마다 독립적으로 생성한다.
+#
+# 실제 commit/rollback 경계는 LocalRagIndexRepository가 관리하고,
+# get_db_session()은 요청 종료 시 세션 생명주기를 정리한다.
+DatabaseSessionDependency = Annotated[
+    AsyncSession,
+    Depends(get_db_session),
 ]
 
 
@@ -145,6 +173,35 @@ def get_chunk_embedder(
 ChunkEmbedderDependency = Annotated[
     TeiChunkEmbedder,
     Depends(get_chunk_embedder),
+]
+
+
+# Qdrant 클라이언트는 애플리케이션 프로세스에서 재사용한다.
+#
+# 실제 연결 종료는 FastAPI lifespan 종료 처리에서 수행한다.
+QdrantVectorStoreDependency = Annotated[
+    QdrantChunkVectorStore,
+    Depends(get_qdrant_vector_store),
+]
+
+
+def get_file_indexing_service(
+    database_session: DatabaseSessionDependency,
+    vector_store: QdrantVectorStoreDependency,
+) -> FileIndexingService:
+    """Local RAG DB와 Qdrant 저장을 조정하는 파일 색인 서비스를 생성한다."""
+
+    return FileIndexingService(
+        local_repository=LocalRagIndexRepository(database_session),
+        vector_store=vector_store,
+    )
+
+
+# API 테스트에서는 이 의존성을 Stub으로 교체하여
+# 실제 Local RAG DB와 Qdrant 없이 저장 단계 연결을 검증한다.
+FileIndexingServiceDependency = Annotated[
+    FileIndexingService,
+    Depends(get_file_indexing_service),
 ]
 
 
@@ -314,6 +371,60 @@ def _convert_embedding_error(
     )
 
 
+def _convert_index_storage_error(
+    error: LocalRagStorageError | VectorDatabaseError,
+    *,
+    users_idx: int,
+    file_idx: int,
+) -> AppException:
+    """Local RAG DB와 Qdrant 저장 예외를 공통 API 오류로 변환한다.
+
+    SQL 문, DB 접속 정보, Qdrant 응답 본문, 청크 원문 및 임베딩 벡터는
+    외부 응답과 로그 컨텍스트에 포함하지 않는다.
+    """
+
+    log_context: dict[str, str | int] = {
+        "users_idx": users_idx,
+        "file_idx": file_idx,
+        "index_storage_error_type": type(error).__name__,
+        "storage_operation": error.operation,
+    }
+
+    if isinstance(error, LocalRagStorageError):
+        error_code = ErrorCode.LOCAL_RAG_STORAGE_FAILED
+
+    elif isinstance(error, VectorDatabaseUnavailableError):
+        if error.status_code is not None:
+            log_context["vector_status_code"] = error.status_code
+
+        error_code = ErrorCode.VECTOR_DATABASE_UNAVAILABLE
+
+    elif isinstance(
+        error,
+        (
+            VectorDatabaseRejectedError,
+            VectorCollectionConfigurationError,
+        ),
+    ):
+        if error.status_code is not None:
+            log_context["vector_status_code"] = error.status_code
+
+        error_code = ErrorCode.VECTOR_STORAGE_FAILED
+
+    else:
+        # 새 VectorDatabaseError 하위 예외가 추가되었지만
+        # 명시적인 분류가 없는 경우 일반 벡터 저장 실패로 처리한다.
+        if error.status_code is not None:
+            log_context["vector_status_code"] = error.status_code
+
+        error_code = ErrorCode.VECTOR_STORAGE_FAILED
+
+    return AppException(
+        error_code,
+        log_context=log_context,
+    )
+
+
 @router.post(
     "/process",
     status_code=HTTPStatus.ACCEPTED,
@@ -322,8 +433,8 @@ def _convert_embedding_error(
     description=(
         "애플리케이션 서버에서 파일 URL과 파일 정보를 전달받아 "
         "원본 PDF 파일을 다운로드하고 파일 형식과 SHA-256 해시를 "
-        "검증한 뒤 페이지별 텍스트 추출, 텍스트 청킹 및 "
-        "청크별 임베딩 생성을 수행한다."
+        "검증한 뒤 페이지별 텍스트 추출, 텍스트 청킹, 청크별 임베딩 생성, "
+        "Local RAG DB 저장 및 Qdrant 색인을 수행한다."
     ),
     responses={
         HTTPStatus.BAD_REQUEST: {
@@ -346,11 +457,11 @@ def _convert_embedding_error(
         },
         HTTPStatus.BAD_GATEWAY: {
             "model": ApiResponse[None],
-            "description": "원본 파일 다운로드 또는 임베딩 서비스 응답 실패",
+            "description": ("원본 파일 다운로드, 임베딩 서비스 응답 또는 VectorDB 저장 실패"),
         },
         HTTPStatus.SERVICE_UNAVAILABLE: {
             "model": ApiResponse[None],
-            "description": "임베딩 서비스 연결 실패 또는 일시적 사용 불가",
+            "description": "임베딩 서비스 또는 VectorDB 연결 실패 및 일시적 사용 불가",
         },
         HTTPStatus.GATEWAY_TIMEOUT: {
             "model": ApiResponse[None],
@@ -358,7 +469,7 @@ def _convert_embedding_error(
         },
         HTTPStatus.INTERNAL_SERVER_ERROR: {
             "model": ApiResponse[None],
-            "description": "문서 읽기, 청킹, 임베딩 또는 내부 처리 실패",
+            "description": ("문서 읽기, 청킹, 임베딩, Local RAG DB 저장 또는 내부 처리 실패"),
         },
     },
 )
@@ -368,8 +479,9 @@ async def accept_file_processing_request(
     document_parser_factory: DocumentParserFactoryDependency,
     document_chunker: DocumentChunkerDependency,
     chunk_embedder: ChunkEmbedderDependency,
+    file_indexing_service: FileIndexingServiceDependency,
 ) -> ApiResponse[FileProcessingAcceptedResponse]:
-    """원본 파일을 다운로드한 뒤 파싱, 청킹 및 임베딩을 수행한다."""
+    """원본 파일을 다운로드한 뒤 파싱, 청킹, 임베딩 및 저장을 수행한다."""
 
     try:
         # API는 PdfDocumentParser와 같은 구체 구현체를 직접 선택하지 않는다.
@@ -385,7 +497,10 @@ async def accept_file_processing_request(
 
         async with file_downloader.download_and_validate(
             # Presigned URL은 변환하거나 로그에 남기지 않고
-            # 애플리케이션 서버가 전달한 원문을 그대로 사용한다.
+            # 애플리케이션 서버가 전달한 원문을 다운로드에만 사용한다.
+            #
+            # S3 객체 위치는 AWS 서버 DB가 관리하므로 Local RAG DB에는
+            # Presigned URL 또는 S3_Key를 저장하지 않는다.
             file_url=request.file_url,
             expected_sha256=request.file_hash,
             users_idx=request.users_idx,
@@ -406,8 +521,8 @@ async def accept_file_processing_request(
 
         # 파싱이 완료되면 원본 임시 파일은 더 이상 필요하지 않다.
         #
-        # TEI 요청이 지연되더라도 임시 파일을 불필요하게 유지하지 않도록
-        # 청킹과 임베딩은 다운로드 context가 종료된 뒤 수행한다.
+        # TEI 요청과 DB 저장이 지연되더라도 임시 파일을 불필요하게
+        # 유지하지 않도록 후속 단계는 다운로드 context 종료 후 수행한다.
         chunked_document = await document_chunker.chunk(
             document=parsed_document,
             context=ChunkingContext(
@@ -422,11 +537,25 @@ async def accept_file_processing_request(
             document=chunked_document,
         )
 
-        # 현재 단계에서는 임베딩 결과를 DB 또는 Qdrant에 저장하지 않는다.
-        #
-        # 외부 응답에는 청크 원문과 벡터를 노출하지 않고
-        # 처리 결과를 확인할 수 있는 개수와 모델 메타데이터만 포함한다.
+        indexing_result = await file_indexing_service.index(
+            metadata=DocumentIndexMetadata(
+                users_idx=request.users_idx,
+                file_idx=request.file_idx,
+                folder_idx=request.folder_idx,
+                file_name=request.file_name,
+                file_type=parsed_document.file_type,
+                file_hash=request.file_hash,
+                index_version=_DEFAULT_INDEX_VERSION,
+                parser_type=document_parser.parser_type,
+                parser_version=document_parser.parser_version,
+            ),
+            embedded_document=embedded_document,
+        )
+
+        # 외부 응답에는 청크 원문과 임베딩 벡터를 노출하지 않는다.
+        # Local RAG 문서 식별자와 처리 개수·모델 메타데이터만 반환한다.
         response_data = FileProcessingAcceptedResponse(
+            rag_document_idx=indexing_result.rag_document_idx,
             users_idx=request.users_idx,
             file_idx=request.file_idx,
             folder_idx=request.folder_idx,
@@ -435,7 +564,7 @@ async def accept_file_processing_request(
             file_size_bytes=file_size_bytes,
             page_count=parsed_document.unit_count,
             text_unit_count=parsed_document.text_unit_count,
-            chunk_count=embedded_document.chunk_count,
+            chunk_count=indexing_result.chunk_count,
             embedding_model=embedded_document.embedding_model,
             embedding_dim=embedded_document.embedding_dim,
         )
@@ -467,11 +596,23 @@ async def accept_file_processing_request(
             file_idx=request.file_idx,
         ) from error
 
+    except (
+        LocalRagStorageError,
+        VectorDatabaseError,
+    ) as error:
+        # SQL 문, DB 연결 정보, Qdrant 응답 본문 및 임베딩 벡터를
+        # 외부로 노출하지 않고 저장 계층 오류를 공통 API 오류로 변환한다.
+        raise _convert_index_storage_error(
+            error,
+            users_idx=request.users_idx,
+            file_idx=request.file_idx,
+        ) from error
+
     # Presigned URL, 실제 파일 해시, 추출 텍스트, 청크 원문,
     # 임베딩 벡터 및 임시 파일 경로는 외부 응답에 포함하지 않는다.
     return ApiResponse[FileProcessingAcceptedResponse](
         success=True,
-        code="FILE_EMBEDDING_COMPLETED",
-        message="File download, parsing, chunking, and embedding completed.",
+        code="FILE_INDEXING_COMPLETED",
+        message=("File download, parsing, chunking, embedding, and indexing completed."),
         data=response_data,
     )

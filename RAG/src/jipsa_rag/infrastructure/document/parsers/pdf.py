@@ -23,6 +23,14 @@ from jipsa_rag.infrastructure.document.models import (
     ParsedDocumentUnit,
 )
 
+# Local RAG DB에서 파일 형식과 실제 파싱 방식을 구분하기 위한 값이다.
+# 향후 OCR 파서가 추가되면 PDF_OCR처럼 별도 Parser_Type을 사용한다.
+_PDF_PARSER_TYPE: Final[str] = "PDF_TEXT"
+
+# 파서 버전은 추출·정규화·원본 위치 메타데이터 규칙의 호환 버전이다.
+# 기존 문서의 재파싱이 필요할 정도로 결과 생성 규칙을 변경하면 증가시킨다.
+_PDF_PARSER_VERSION: Final[str] = "1.0.0"
+
 # PDF 텍스트 추출 결과에 세 줄 이상의 연속된 빈 줄이 포함되면
 # 후속 청킹 단계에서 의미 없는 공백이 청크에 포함될 수 있다.
 #
@@ -58,6 +66,18 @@ class PdfDocumentParser:
         """
 
         return DocumentType.PDF
+
+    @property
+    def parser_type(self) -> str:
+        """Local RAG DB에 저장할 텍스트 레이어 기반 PDF 파서 종류를 반환한다."""
+
+        return _PDF_PARSER_TYPE
+
+    @property
+    def parser_version(self) -> str:
+        """재파싱 판단에 사용할 PDF 파서 구현 버전을 반환한다."""
+
+        return _PDF_PARSER_VERSION
 
     async def parse(
         self,

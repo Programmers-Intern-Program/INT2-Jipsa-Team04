@@ -14,6 +14,9 @@ from jipsa_rag.infrastructure.database.session import (
     check_database_connection,
     close_database,
 )
+from jipsa_rag.infrastructure.indexing.qdrant_store import (
+    close_qdrant_vector_store,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,12 +63,20 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             },
         )
 
-        # SQLAlchemy AsyncEngine이 관리하는 연결 풀을 종료한다.
+        # Qdrant 저장소는 실제 파일 색인 요청이 발생한 경우에만
+        # 지연 생성되므로 사용하지 않은 실행 환경에서도 안전하게 종료할 수 있다.
         #
-        # 실제 데이터베이스 연결이 한 번도 생성되지 않은 경우에도
-        # close_database()가 안전하게 실행될 수 있도록
-        # infrastructure.database.session 계층에서 처리한다.
-        await close_database()
+        # Qdrant 종료 중 오류가 발생하더라도 SQLAlchemy 연결 풀은 반드시
+        # 정리해야 하므로 try/finally로 두 외부 자원의 종료를 분리한다.
+        try:
+            await close_qdrant_vector_store()
+        finally:
+            # SQLAlchemy AsyncEngine이 관리하는 연결 풀을 종료한다.
+            #
+            # 실제 데이터베이스 연결이 한 번도 생성되지 않은 경우에도
+            # close_database()가 안전하게 실행될 수 있도록
+            # infrastructure.database.session 계층에서 처리한다.
+            await close_database()
 
         logger.info(
             "Application shutdown completed.",

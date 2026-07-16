@@ -1,4 +1,4 @@
-"""파일 처리 API의 다운로드, 파싱, 청킹 및 임베딩 동작을 테스트한다."""
+"""파일 처리 API의 다운로드부터 Local RAG·Qdrant 저장까지 테스트한다."""
 
 import hashlib
 from collections.abc import Iterator
@@ -13,6 +13,7 @@ from jipsa_rag.api.v1.endpoints.file_processing import (
     get_document_chunker,
     get_document_parser_factory,
     get_file_downloader,
+    get_file_indexing_service,
 )
 from jipsa_rag.core.config import get_settings
 from jipsa_rag.infrastructure.chunking.exceptions import (
@@ -57,17 +58,30 @@ from jipsa_rag.infrastructure.embedding.models import (
 from jipsa_rag.infrastructure.file.downloader import (
     HttpFileDownloader,
 )
+from jipsa_rag.infrastructure.indexing.exceptions import (
+    LocalRagStorageError,
+    VectorCollectionConfigurationError,
+    VectorDatabaseError,
+    VectorDatabaseRejectedError,
+    VectorDatabaseUnavailableError,
+)
+from jipsa_rag.infrastructure.indexing.models import DocumentIndexMetadata
+from jipsa_rag.services.file_indexing import FileIndexingResult
 
-# API 계층 테스트에서는 실제 pypdf 파싱이나 TEI 통신을 수행하지 않는다.
+# API 계층 테스트에서는 실제 pypdf 파싱, TEI 통신, Local RAG DB 연결 또는
+# Qdrant 통신을 수행하지 않는다.
 #
 # 다운로더의 PDF Magic Byte와 해시 검증에 필요한 최소 바이트를 사용하고,
-# 문서 파싱, 청킹 및 임베딩 결과는 각 Stub 객체가 반환한다.
+# 파싱, 청킹, 임베딩 및 저장 결과는 각 Stub 객체가 반환한다.
 #
-# 실제 PDF 구조와 텍스트 추출은 PdfDocumentParser 단위 테스트에서,
-# 문자 분할은 CharacterTextChunker 단위 테스트에서,
-# TEI HTTP 계약은 TeiChunkEmbedder 단위 테스트에서 각각 검증한다.
+# 실제 구현의 세부 동작은 다음 단위 테스트에서 각각 검증한다.
+# - PdfDocumentParser
+# - CharacterTextChunker
+# - TeiChunkEmbedder
+# - LocalRagIndexRepository
+# - QdrantChunkVectorStore
+# - FileIndexingService
 PDF_CONTENT = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n"
-
 PDF_SHA256 = hashlib.sha256(PDF_CONTENT).hexdigest()
 
 TEST_EMBEDDING_MODEL = "test/embedding-model"
@@ -102,6 +116,18 @@ class StubPdfDocumentParser:
         """Factory에 등록할 문서 형식으로 PDF를 반환한다."""
 
         return DocumentType.PDF
+
+    @property
+    def parser_type(self) -> str:
+        """Local RAG 저장 테스트에 사용할 파서 종류를 반환한다."""
+
+        return "PDF_TEXT"
+
+    @property
+    def parser_version(self) -> str:
+        """Local RAG 저장 테스트에 사용할 파서 버전을 반환한다."""
+
+        return "test-1.0.0"
 
     async def parse(
         self,
@@ -234,6 +260,37 @@ class StubChunkEmbedder:
         )
 
 
+class StubFileIndexingService:
+    """Local RAG DB와 Qdrant를 호출하지 않는 파일 색인 서비스 대역."""
+
+    def __init__(self) -> None:
+        """호출 입력과 선택적으로 발생시킬 저장 예외를 초기화한다."""
+
+        self.error: LocalRagStorageError | VectorDatabaseError | None = None
+        self.received_metadata: list[DocumentIndexMetadata] = []
+        self.received_documents: list[EmbeddedDocument] = []
+
+    async def index(
+        self,
+        *,
+        metadata: DocumentIndexMetadata,
+        embedded_document: EmbeddedDocument,
+    ) -> FileIndexingResult:
+        """고정된 Local RAG 식별자를 포함한 저장 완료 결과를 반환한다."""
+
+        self.received_metadata.append(metadata)
+        self.received_documents.append(embedded_document)
+
+        if self.error is not None:
+            raise self.error
+
+        return FileIndexingResult(
+            rag_document_idx=100,
+            rag_index_run_idx=200,
+            chunk_count=embedded_document.chunk_count,
+        )
+
+
 @pytest.fixture
 def pdf_document_parser() -> StubPdfDocumentParser:
     """파일 처리 API에 주입할 테스트 전용 PDF 파서를 반환한다."""
@@ -256,14 +313,22 @@ def chunk_embedder() -> StubChunkEmbedder:
 
 
 @pytest.fixture
+def file_indexing_service() -> StubFileIndexingService:
+    """파일 처리 API에 주입할 테스트 전용 색인 서비스를 반환한다."""
+
+    return StubFileIndexingService()
+
+
+@pytest.fixture
 def file_processing_client(
     client: TestClient,
     tmp_path: Path,
     pdf_document_parser: StubPdfDocumentParser,
     document_chunker: StubDocumentChunker,
     chunk_embedder: StubChunkEmbedder,
+    file_indexing_service: StubFileIndexingService,
 ) -> Iterator[TestClient]:
-    """외부 네트워크 없이 전체 파일 처리 API 흐름을 테스트한다."""
+    """외부 네트워크와 저장소 없이 전체 파일 처리 API 흐름을 테스트한다."""
 
     async def handler(
         _: httpx2.Request,
@@ -287,13 +352,15 @@ def file_processing_client(
     )
 
     # conftest의 client fixture에서 사용하는 실제 애플리케이션과
-    # 동일한 객체에 다운로드, 파서, 청커 및 임베더 의존성 override를 적용한다.
+    # 동일한 객체에 다운로드, 파서, 청커, 임베더 및 색인 서비스
+    # 의존성 override를 적용한다.
     from jipsa_rag.main import app
 
     app.dependency_overrides[get_file_downloader] = lambda: downloader
     app.dependency_overrides[get_document_parser_factory] = lambda: parser_factory
     app.dependency_overrides[get_document_chunker] = lambda: document_chunker
     app.dependency_overrides[get_chunk_embedder] = lambda: chunk_embedder
+    app.dependency_overrides[get_file_indexing_service] = lambda: file_indexing_service
 
     try:
         yield client
@@ -316,15 +383,20 @@ def file_processing_client(
             get_chunk_embedder,
             None,
         )
+        app.dependency_overrides.pop(
+            get_file_indexing_service,
+            None,
+        )
 
 
-def test_file_processing_request_returns_embedded_response(
+def test_file_processing_request_returns_indexed_response(
     file_processing_client: TestClient,
     pdf_document_parser: StubPdfDocumentParser,
     document_chunker: StubDocumentChunker,
     chunk_embedder: StubChunkEmbedder,
+    file_indexing_service: StubFileIndexingService,
 ) -> None:
-    """유효한 PDF 요청이 청크별 임베딩 완료 응답을 반환한다."""
+    """유효한 PDF 요청이 Local RAG와 Qdrant 저장 완료 응답을 반환한다."""
 
     response = file_processing_client.post(
         "/api/v1/files/process",
@@ -334,9 +406,10 @@ def test_file_processing_request_returns_embedded_response(
     assert response.status_code == 202
     assert response.json() == {
         "success": True,
-        "code": "FILE_EMBEDDING_COMPLETED",
-        "message": "File download, parsing, chunking, and embedding completed.",
+        "code": "FILE_INDEXING_COMPLETED",
+        "message": ("File download, parsing, chunking, embedding, and indexing completed."),
         "data": {
+            "rag_document_idx": 100,
             "users_idx": 1,
             "file_idx": 10,
             "folder_idx": 3,
@@ -349,13 +422,12 @@ def test_file_processing_request_returns_embedded_response(
             "chunk_count": 1,
             "embedding_model": TEST_EMBEDDING_MODEL,
             "embedding_dim": TEST_EMBEDDING_DIM,
-            "processing_status": "EMBEDDED",
+            "processing_status": "INDEXED",
         },
     }
 
     # 파서는 다운로드된 임시 파일 경로를 정확히 한 번 전달받아야 한다.
     assert len(pdf_document_parser.received_file_paths) == 1
-
     parsed_file_path = pdf_document_parser.received_file_paths[0]
 
     # API 응답이 반환되기 전에 다운로드 context가 종료되어
@@ -364,7 +436,6 @@ def test_file_processing_request_returns_embedded_response(
 
     # 파서가 반환한 ParsedDocument가 청커에 그대로 전달되어야 한다.
     assert len(document_chunker.received_documents) == 1
-
     chunking_context = document_chunker.received_contexts[0]
 
     assert chunking_context.users_idx == 1
@@ -377,11 +448,32 @@ def test_file_processing_request_returns_embedded_response(
     assert chunk_embedder.received_documents[0].chunk_count == 1
     assert chunk_embedder.received_documents[0].chunks[0].content == "First page text."
 
+    # 임베딩 결과와 문서 메타데이터가 색인 서비스에 전달되어야 한다.
+    assert len(file_indexing_service.received_metadata) == 1
+    assert len(file_indexing_service.received_documents) == 1
+
+    indexing_metadata = file_indexing_service.received_metadata[0]
+
+    assert indexing_metadata.users_idx == 1
+    assert indexing_metadata.file_idx == 10
+    assert indexing_metadata.folder_idx == 3
+    assert indexing_metadata.file_name == "project-guide.pdf"
+    assert indexing_metadata.file_type is DocumentType.PDF
+    assert indexing_metadata.file_hash == PDF_SHA256
+    assert indexing_metadata.index_version == 1
+    assert indexing_metadata.parser_type == "PDF_TEXT"
+    assert indexing_metadata.parser_version == "test-1.0.0"
+
+    # Presigned URL과 S3_Key는 색인 메타데이터에 포함하지 않는다.
+    assert not hasattr(indexing_metadata, "file_url")
+    assert not hasattr(indexing_metadata, "s3_key")
+
 
 def test_file_processing_request_allows_null_folder_idx(
     file_processing_client: TestClient,
+    file_indexing_service: StubFileIndexingService,
 ) -> None:
-    """루트 경로 파일은 Folder_IDX 없이 요청할 수 있다."""
+    """루트 경로 파일은 Folder_IDX 없이 저장할 수 있다."""
 
     request_body = VALID_FILE_PROCESSING_REQUEST.copy()
     request_body["folder_idx"] = None
@@ -393,7 +485,8 @@ def test_file_processing_request_allows_null_folder_idx(
 
     assert response.status_code == 202
     assert response.json()["data"]["folder_idx"] is None
-    assert response.json()["data"]["processing_status"] == "EMBEDDED"
+    assert response.json()["data"]["processing_status"] == "INDEXED"
+    assert file_indexing_service.received_metadata[0].folder_idx is None
 
 
 def test_file_processing_request_rejects_hash_mismatch_before_parsing(
@@ -401,8 +494,9 @@ def test_file_processing_request_rejects_hash_mismatch_before_parsing(
     pdf_document_parser: StubPdfDocumentParser,
     document_chunker: StubDocumentChunker,
     chunk_embedder: StubChunkEmbedder,
+    file_indexing_service: StubFileIndexingService,
 ) -> None:
-    """파일 해시가 다르면 파싱, 청킹 및 임베딩을 실행하지 않는다."""
+    """파일 해시가 다르면 파싱, 청킹, 임베딩 및 저장을 실행하지 않는다."""
 
     request_body = VALID_FILE_PROCESSING_REQUEST.copy()
     request_body["file_hash"] = "0" * 64
@@ -423,6 +517,7 @@ def test_file_processing_request_rejects_hash_mismatch_before_parsing(
     assert pdf_document_parser.received_file_paths == []
     assert document_chunker.received_documents == []
     assert chunk_embedder.received_documents == []
+    assert file_indexing_service.received_documents == []
 
 
 @pytest.mark.parametrize(
@@ -496,6 +591,7 @@ def test_file_processing_request_maps_document_parser_error(
     pdf_document_parser: StubPdfDocumentParser,
     document_chunker: StubDocumentChunker,
     chunk_embedder: StubChunkEmbedder,
+    file_indexing_service: StubFileIndexingService,
     parser_error: DocumentParserError,
     expected_status_code: int,
     expected_code: str,
@@ -521,6 +617,7 @@ def test_file_processing_request_maps_document_parser_error(
     # 파싱 실패 이후 단계는 실행하지 않아야 한다.
     assert document_chunker.received_documents == []
     assert chunk_embedder.received_documents == []
+    assert file_indexing_service.received_documents == []
 
     assert len(pdf_document_parser.received_file_paths) == 1
     parsed_file_path = pdf_document_parser.received_file_paths[0]
@@ -571,6 +668,7 @@ def test_file_processing_request_maps_document_chunking_error(
     pdf_document_parser: StubPdfDocumentParser,
     document_chunker: StubDocumentChunker,
     chunk_embedder: StubChunkEmbedder,
+    file_indexing_service: StubFileIndexingService,
     chunking_error: DocumentChunkingError,
     expected_status_code: int,
     expected_code: str,
@@ -593,9 +691,10 @@ def test_file_processing_request_maps_document_chunking_error(
         "data": None,
     }
 
-    # 청킹은 실행되지만 실패 이후 임베딩 단계는 실행하지 않아야 한다.
+    # 청킹은 실행되지만 실패 이후 임베딩과 저장 단계는 실행하지 않아야 한다.
     assert len(document_chunker.received_documents) == 1
     assert chunk_embedder.received_documents == []
+    assert file_indexing_service.received_documents == []
 
     # 청킹은 다운로드 context 종료 후 실행되므로
     # 청킹 오류가 발생하더라도 임시 파일은 이미 삭제되어 있어야 한다.
@@ -669,6 +768,7 @@ def test_file_processing_request_maps_embedding_error(
     pdf_document_parser: StubPdfDocumentParser,
     document_chunker: StubDocumentChunker,
     chunk_embedder: StubChunkEmbedder,
+    file_indexing_service: StubFileIndexingService,
     embedding_error: EmbeddingError,
     expected_status_code: int,
     expected_code: str,
@@ -694,9 +794,94 @@ def test_file_processing_request_maps_embedding_error(
     # 임베딩 오류 시점에는 파싱과 청킹이 모두 완료되어야 한다.
     assert len(document_chunker.received_documents) == 1
     assert len(chunk_embedder.received_documents) == 1
+    assert file_indexing_service.received_documents == []
 
     # TEI 통신은 다운로드 context 종료 후 수행하므로
     # 임베딩 오류가 발생해도 임시 파일이 남지 않아야 한다.
+    assert len(pdf_document_parser.received_file_paths) == 1
+    assert not pdf_document_parser.received_file_paths[0].exists()
+
+
+@pytest.mark.parametrize(
+    (
+        "storage_error",
+        "expected_status_code",
+        "expected_code",
+        "expected_message",
+    ),
+    [
+        (
+            LocalRagStorageError("prepare_indexing"),
+            500,
+            "LOCAL_RAG_STORAGE_FAILED",
+            "The document index could not be stored in the Local RAG database.",
+        ),
+        (
+            VectorDatabaseUnavailableError(
+                "upsert_document",
+                status_code=503,
+            ),
+            503,
+            "VECTOR_DATABASE_UNAVAILABLE",
+            "The vector database is temporarily unavailable.",
+        ),
+        (
+            VectorDatabaseRejectedError(
+                "upsert_document",
+                status_code=400,
+            ),
+            502,
+            "VECTOR_STORAGE_FAILED",
+            "The document vectors could not be stored.",
+        ),
+        (
+            VectorCollectionConfigurationError("embedding_dim_mismatch"),
+            502,
+            "VECTOR_STORAGE_FAILED",
+            "The document vectors could not be stored.",
+        ),
+    ],
+    ids=[
+        "local-rag-storage-failed",
+        "vector-database-unavailable",
+        "vector-database-rejected",
+        "vector-collection-configuration-invalid",
+    ],
+)
+def test_file_processing_request_maps_index_storage_error(
+    file_processing_client: TestClient,
+    pdf_document_parser: StubPdfDocumentParser,
+    document_chunker: StubDocumentChunker,
+    chunk_embedder: StubChunkEmbedder,
+    file_indexing_service: StubFileIndexingService,
+    storage_error: LocalRagStorageError | VectorDatabaseError,
+    expected_status_code: int,
+    expected_code: str,
+    expected_message: str,
+) -> None:
+    """Local RAG DB와 Qdrant 저장 예외를 공통 API 오류로 변환한다."""
+
+    file_indexing_service.error = storage_error
+
+    response = file_processing_client.post(
+        "/api/v1/files/process",
+        json=VALID_FILE_PROCESSING_REQUEST,
+    )
+
+    assert response.status_code == expected_status_code
+    assert response.json() == {
+        "success": False,
+        "code": expected_code,
+        "message": expected_message,
+        "data": None,
+    }
+
+    # 저장 오류는 파싱, 청킹 및 임베딩이 완료된 뒤 발생한다.
+    assert len(document_chunker.received_documents) == 1
+    assert len(chunk_embedder.received_documents) == 1
+    assert len(file_indexing_service.received_documents) == 1
+
+    # 저장 단계에서도 Presigned URL의 임시 파일은 이미 삭제되어 있어야 한다.
     assert len(pdf_document_parser.received_file_paths) == 1
     assert not pdf_document_parser.received_file_paths[0].exists()
 

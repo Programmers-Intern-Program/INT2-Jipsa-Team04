@@ -167,6 +167,32 @@ class ErrorCode(Enum):
         message="The document embeddings could not be generated.",
     )
 
+    # RAG_Document, RAG_Chunk 또는 RAG_Index_Run 저장과
+    # 최종 상태 변경에 실패한 경우 사용한다.
+    #
+    # DB 드라이버 오류나 SQL 문은 외부 응답에 직접 노출하지 않는다.
+    LOCAL_RAG_STORAGE_FAILED = ErrorDefinition(
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        code="LOCAL_RAG_STORAGE_FAILED",
+        message="The document index could not be stored in the Local RAG database.",
+    )
+
+    # Qdrant 연결 실패, 시간 초과, 429 또는 5xx처럼
+    # 일시적으로 VectorDB를 사용할 수 없는 경우 사용한다.
+    VECTOR_DATABASE_UNAVAILABLE = ErrorDefinition(
+        status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+        code="VECTOR_DATABASE_UNAVAILABLE",
+        message="The vector database is temporarily unavailable.",
+    )
+
+    # Qdrant가 요청을 거부했거나 임베딩 모델·차원 설정이
+    # Collection 계약과 일치하지 않아 벡터를 저장하지 못한 경우 사용한다.
+    VECTOR_STORAGE_FAILED = ErrorDefinition(
+        status_code=HTTPStatus.BAD_GATEWAY,
+        code="VECTOR_STORAGE_FAILED",
+        message="The document vectors could not be stored.",
+    )
+
     FILE_TOO_LARGE = ErrorDefinition(
         status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
         code="FILE_TOO_LARGE",

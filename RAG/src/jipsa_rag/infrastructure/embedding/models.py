@@ -102,9 +102,7 @@ class EmbeddedDocument:
             actual_dimension = len(embedded_chunk.embedding)
 
             if actual_dimension != self.embedding_dim:
-                raise ValueError(
-                    "embedding dimension does not match the configured embedding_dim."
-                )
+                raise ValueError("embedding dimension does not match the configured embedding_dim.")
 
         object.__setattr__(
             self,
