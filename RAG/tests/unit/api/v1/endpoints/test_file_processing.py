@@ -1,4 +1,4 @@
-"""파일 처리 요청 API의 다운로드, 파싱 및 오류 응답을 테스트한다."""
+"""파일 처리 API의 다운로드, 파싱, 청킹 및 임베딩 동작을 테스트한다."""
 
 import hashlib
 from collections.abc import Iterator
@@ -9,10 +9,22 @@ import pytest
 from fastapi.testclient import TestClient
 
 from jipsa_rag.api.v1.endpoints.file_processing import (
+    get_chunk_embedder,
+    get_document_chunker,
     get_document_parser_factory,
     get_file_downloader,
 )
 from jipsa_rag.core.config import get_settings
+from jipsa_rag.infrastructure.chunking.exceptions import (
+    DocumentChunkingError,
+    InvalidChunkingConfigurationError,
+    NoDocumentChunksError,
+)
+from jipsa_rag.infrastructure.chunking.models import (
+    ChunkedDocument,
+    ChunkingContext,
+    TextChunk,
+)
 from jipsa_rag.infrastructure.document.exceptions import (
     DocumentFileNotFoundError,
     DocumentParserError,
@@ -31,20 +43,35 @@ from jipsa_rag.infrastructure.document.models import (
 from jipsa_rag.infrastructure.document.parser_factory import (
     DocumentParserFactory,
 )
+from jipsa_rag.infrastructure.embedding.exceptions import (
+    EmbeddingError,
+    EmbeddingServiceRejectedError,
+    EmbeddingServiceTimeoutError,
+    EmbeddingServiceUnavailableError,
+    InvalidEmbeddingResponseError,
+)
+from jipsa_rag.infrastructure.embedding.models import (
+    EmbeddedChunk,
+    EmbeddedDocument,
+)
 from jipsa_rag.infrastructure.file.downloader import (
     HttpFileDownloader,
 )
 
-# API 계층 테스트에서는 실제 pypdf 파싱을 수행하지 않는다.
+# API 계층 테스트에서는 실제 pypdf 파싱이나 TEI 통신을 수행하지 않는다.
 #
 # 다운로더의 PDF Magic Byte와 해시 검증에 필요한 최소 바이트를 사용하고,
-# 문서 파싱 결과는 StubPdfDocumentParser가 반환한다.
+# 문서 파싱, 청킹 및 임베딩 결과는 각 Stub 객체가 반환한다.
 #
-# 실제 PDF 구조, 암호화, 페이지 추출 및 텍스트 정규화 동작은
-# PdfDocumentParser 단위 테스트에서 별도로 검증한다.
+# 실제 PDF 구조와 텍스트 추출은 PdfDocumentParser 단위 테스트에서,
+# 문자 분할은 CharacterTextChunker 단위 테스트에서,
+# TEI HTTP 계약은 TeiChunkEmbedder 단위 테스트에서 각각 검증한다.
 PDF_CONTENT = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n"
 
 PDF_SHA256 = hashlib.sha256(PDF_CONTENT).hexdigest()
+
+TEST_EMBEDDING_MODEL = "test/embedding-model"
+TEST_EMBEDDING_DIM = 3
 
 VALID_FILE_PROCESSING_REQUEST: dict[str, object] = {
     "file_url": (
@@ -117,6 +144,96 @@ class StubPdfDocumentParser:
         )
 
 
+class StubDocumentChunker:
+    """파일 처리 API 테스트에서 사용하는 문서 청커 대역."""
+
+    def __init__(self) -> None:
+        """호출 입력과 선택적으로 발생시킬 예외를 초기화한다."""
+
+        self.error: DocumentChunkingError | None = None
+        self.received_documents: list[ParsedDocument] = []
+        self.received_contexts: list[ChunkingContext] = []
+
+    async def chunk(
+        self,
+        *,
+        document: ParsedDocument,
+        context: ChunkingContext,
+    ) -> ChunkedDocument:
+        """고정된 단일 청크를 포함한 청킹 결과를 반환한다."""
+
+        self.received_documents.append(document)
+        self.received_contexts.append(context)
+
+        if self.error is not None:
+            raise self.error
+
+        content = document.units[0].text
+        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+        return ChunkedDocument(
+            file_type=document.file_type,
+            chunks=(
+                TextChunk(
+                    chunk_id="11111111-1111-1111-1111-111111111111",
+                    chunk_index=0,
+                    content=content,
+                    content_hash=content_hash,
+                    start_offset=0,
+                    end_offset=len(content),
+                    source_metadata={
+                        "page_number": 1,
+                        "source_unit_index": 0,
+                        "unit_start_offset": 0,
+                        "unit_end_offset": len(content),
+                    },
+                ),
+            ),
+            source_unit_count=document.unit_count,
+            text_unit_count=document.text_unit_count,
+        )
+
+
+class StubChunkEmbedder:
+    """파일 처리 API 테스트에서 사용하는 청크 임베딩 생성기 대역."""
+
+    def __init__(self) -> None:
+        """호출 입력과 선택적으로 발생시킬 예외를 초기화한다."""
+
+        self.error: EmbeddingError | None = None
+        self.received_documents: list[ChunkedDocument] = []
+
+    async def embed(
+        self,
+        *,
+        document: ChunkedDocument,
+    ) -> EmbeddedDocument:
+        """모든 입력 청크에 고정된 테스트 벡터를 할당한다."""
+
+        self.received_documents.append(document)
+
+        if self.error is not None:
+            raise self.error
+
+        embedded_chunks = tuple(
+            EmbeddedChunk(
+                chunk=chunk,
+                embedding=(
+                    0.1,
+                    0.2,
+                    0.3,
+                ),
+            )
+            for chunk in document.chunks
+        )
+
+        return EmbeddedDocument(
+            embedding_model=TEST_EMBEDDING_MODEL,
+            embedding_dim=TEST_EMBEDDING_DIM,
+            chunks=embedded_chunks,
+        )
+
+
 @pytest.fixture
 def pdf_document_parser() -> StubPdfDocumentParser:
     """파일 처리 API에 주입할 테스트 전용 PDF 파서를 반환한다."""
@@ -125,12 +242,28 @@ def pdf_document_parser() -> StubPdfDocumentParser:
 
 
 @pytest.fixture
+def document_chunker() -> StubDocumentChunker:
+    """파일 처리 API에 주입할 테스트 전용 문서 청커를 반환한다."""
+
+    return StubDocumentChunker()
+
+
+@pytest.fixture
+def chunk_embedder() -> StubChunkEmbedder:
+    """파일 처리 API에 주입할 테스트 전용 청크 임베더를 반환한다."""
+
+    return StubChunkEmbedder()
+
+
+@pytest.fixture
 def file_processing_client(
     client: TestClient,
     tmp_path: Path,
     pdf_document_parser: StubPdfDocumentParser,
+    document_chunker: StubDocumentChunker,
+    chunk_embedder: StubChunkEmbedder,
 ) -> Iterator[TestClient]:
-    """외부 네트워크와 실제 PDF 파싱 없이 파일 처리 API를 테스트한다."""
+    """외부 네트워크 없이 전체 파일 처리 API 흐름을 테스트한다."""
 
     async def handler(
         _: httpx2.Request,
@@ -154,17 +287,19 @@ def file_processing_client(
     )
 
     # conftest의 client fixture에서 사용하는 실제 애플리케이션과
-    # 동일한 객체에 다운로드 및 문서 파서 의존성 override를 적용한다.
+    # 동일한 객체에 다운로드, 파서, 청커 및 임베더 의존성 override를 적용한다.
     from jipsa_rag.main import app
 
     app.dependency_overrides[get_file_downloader] = lambda: downloader
     app.dependency_overrides[get_document_parser_factory] = lambda: parser_factory
+    app.dependency_overrides[get_document_chunker] = lambda: document_chunker
+    app.dependency_overrides[get_chunk_embedder] = lambda: chunk_embedder
 
     try:
         yield client
     finally:
         # 다른 API 테스트에 테스트용 인프라 객체가 남지 않도록
-        # fixture 종료 시 모든 override를 제거한다.
+        # fixture 종료 시 이번 테스트에서 등록한 override를 모두 제거한다.
         app.dependency_overrides.pop(
             get_file_downloader,
             None,
@@ -173,13 +308,23 @@ def file_processing_client(
             get_document_parser_factory,
             None,
         )
+        app.dependency_overrides.pop(
+            get_document_chunker,
+            None,
+        )
+        app.dependency_overrides.pop(
+            get_chunk_embedder,
+            None,
+        )
 
 
-def test_file_processing_request_returns_parsed_response(
+def test_file_processing_request_returns_embedded_response(
     file_processing_client: TestClient,
     pdf_document_parser: StubPdfDocumentParser,
+    document_chunker: StubDocumentChunker,
+    chunk_embedder: StubChunkEmbedder,
 ) -> None:
-    """유효한 PDF 요청이 문서 파싱 완료 응답을 반환한다."""
+    """유효한 PDF 요청이 청크별 임베딩 완료 응답을 반환한다."""
 
     response = file_processing_client.post(
         "/api/v1/files/process",
@@ -189,8 +334,8 @@ def test_file_processing_request_returns_parsed_response(
     assert response.status_code == 202
     assert response.json() == {
         "success": True,
-        "code": "FILE_PARSING_COMPLETED",
-        "message": "File download, validation, and parsing completed.",
+        "code": "FILE_EMBEDDING_COMPLETED",
+        "message": "File download, parsing, chunking, and embedding completed.",
         "data": {
             "users_idx": 1,
             "file_idx": 10,
@@ -201,7 +346,10 @@ def test_file_processing_request_returns_parsed_response(
             "file_hash_verified": True,
             "page_count": 2,
             "text_unit_count": 1,
-            "processing_status": "PARSED",
+            "chunk_count": 1,
+            "embedding_model": TEST_EMBEDDING_MODEL,
+            "embedding_dim": TEST_EMBEDDING_DIM,
+            "processing_status": "EMBEDDED",
         },
     }
 
@@ -210,9 +358,24 @@ def test_file_processing_request_returns_parsed_response(
 
     parsed_file_path = pdf_document_parser.received_file_paths[0]
 
-    # 응답이 반환된 시점에는 download_and_validate() context가 종료되어
+    # API 응답이 반환되기 전에 다운로드 context가 종료되어
     # 임시 파일이 삭제되어야 한다.
     assert not parsed_file_path.exists()
+
+    # 파서가 반환한 ParsedDocument가 청커에 그대로 전달되어야 한다.
+    assert len(document_chunker.received_documents) == 1
+
+    chunking_context = document_chunker.received_contexts[0]
+
+    assert chunking_context.users_idx == 1
+    assert chunking_context.file_idx == 10
+    assert chunking_context.file_hash == PDF_SHA256
+    assert chunking_context.index_version == 1
+
+    # 청커가 반환한 ChunkedDocument가 임베더에 그대로 전달되어야 한다.
+    assert len(chunk_embedder.received_documents) == 1
+    assert chunk_embedder.received_documents[0].chunk_count == 1
+    assert chunk_embedder.received_documents[0].chunks[0].content == "First page text."
 
 
 def test_file_processing_request_allows_null_folder_idx(
@@ -230,14 +393,16 @@ def test_file_processing_request_allows_null_folder_idx(
 
     assert response.status_code == 202
     assert response.json()["data"]["folder_idx"] is None
-    assert response.json()["data"]["processing_status"] == "PARSED"
+    assert response.json()["data"]["processing_status"] == "EMBEDDED"
 
 
 def test_file_processing_request_rejects_hash_mismatch_before_parsing(
     file_processing_client: TestClient,
     pdf_document_parser: StubPdfDocumentParser,
+    document_chunker: StubDocumentChunker,
+    chunk_embedder: StubChunkEmbedder,
 ) -> None:
-    """파일 해시가 다르면 문서 파서를 호출하기 전에 오류를 반환한다."""
+    """파일 해시가 다르면 파싱, 청킹 및 임베딩을 실행하지 않는다."""
 
     request_body = VALID_FILE_PROCESSING_REQUEST.copy()
     request_body["file_hash"] = "0" * 64
@@ -255,8 +420,9 @@ def test_file_processing_request_rejects_hash_mismatch_before_parsing(
         "data": None,
     }
 
-    # 다운로드 검증이 완료되지 않았으므로 파서를 실행하면 안 된다.
     assert pdf_document_parser.received_file_paths == []
+    assert document_chunker.received_documents == []
+    assert chunk_embedder.received_documents == []
 
 
 @pytest.mark.parametrize(
@@ -328,6 +494,8 @@ def test_file_processing_request_rejects_hash_mismatch_before_parsing(
 def test_file_processing_request_maps_document_parser_error(
     file_processing_client: TestClient,
     pdf_document_parser: StubPdfDocumentParser,
+    document_chunker: StubDocumentChunker,
+    chunk_embedder: StubChunkEmbedder,
     parser_error: DocumentParserError,
     expected_status_code: int,
     expected_code: str,
@@ -350,14 +518,187 @@ def test_file_processing_request_maps_document_parser_error(
         "data": None,
     }
 
-    # 파싱 실패 시에도 파서는 async with 내부에서 실행되어야 한다.
-    assert len(pdf_document_parser.received_file_paths) == 1
+    # 파싱 실패 이후 단계는 실행하지 않아야 한다.
+    assert document_chunker.received_documents == []
+    assert chunk_embedder.received_documents == []
 
+    assert len(pdf_document_parser.received_file_paths) == 1
     parsed_file_path = pdf_document_parser.received_file_paths[0]
 
     # 파서가 예외를 발생시켜도 다운로더의 finally가 실행되어
     # 다운로드한 임시 파일이 남지 않아야 한다.
     assert not parsed_file_path.exists()
+
+
+@pytest.mark.parametrize(
+    (
+        "chunking_error",
+        "expected_status_code",
+        "expected_code",
+        "expected_message",
+    ),
+    [
+        (
+            NoDocumentChunksError(DocumentType.PDF),
+            422,
+            "DOCUMENT_CHUNKS_NOT_FOUND",
+            "No searchable text chunks could be created from the document.",
+        ),
+        (
+            InvalidChunkingConfigurationError(
+                chunk_size_chars=0,
+                chunk_overlap_chars=0,
+            ),
+            500,
+            "DOCUMENT_CHUNKING_FAILED",
+            "The document could not be chunked.",
+        ),
+        (
+            DocumentChunkingError("Unexpected chunking failure."),
+            500,
+            "DOCUMENT_CHUNKING_FAILED",
+            "The document could not be chunked.",
+        ),
+    ],
+    ids=[
+        "no-document-chunks",
+        "invalid-chunking-configuration",
+        "unexpected-chunking-error",
+    ],
+)
+def test_file_processing_request_maps_document_chunking_error(
+    file_processing_client: TestClient,
+    pdf_document_parser: StubPdfDocumentParser,
+    document_chunker: StubDocumentChunker,
+    chunk_embedder: StubChunkEmbedder,
+    chunking_error: DocumentChunkingError,
+    expected_status_code: int,
+    expected_code: str,
+    expected_message: str,
+) -> None:
+    """문서 청킹 예외를 공통 API 오류 응답으로 변환한다."""
+
+    document_chunker.error = chunking_error
+
+    response = file_processing_client.post(
+        "/api/v1/files/process",
+        json=VALID_FILE_PROCESSING_REQUEST,
+    )
+
+    assert response.status_code == expected_status_code
+    assert response.json() == {
+        "success": False,
+        "code": expected_code,
+        "message": expected_message,
+        "data": None,
+    }
+
+    # 청킹은 실행되지만 실패 이후 임베딩 단계는 실행하지 않아야 한다.
+    assert len(document_chunker.received_documents) == 1
+    assert chunk_embedder.received_documents == []
+
+    # 청킹은 다운로드 context 종료 후 실행되므로
+    # 청킹 오류가 발생하더라도 임시 파일은 이미 삭제되어 있어야 한다.
+    assert len(pdf_document_parser.received_file_paths) == 1
+    assert not pdf_document_parser.received_file_paths[0].exists()
+
+
+@pytest.mark.parametrize(
+    (
+        "embedding_error",
+        "expected_status_code",
+        "expected_code",
+        "expected_message",
+    ),
+    [
+        (
+            EmbeddingServiceTimeoutError(),
+            504,
+            "EMBEDDING_SERVICE_TIMEOUT",
+            "The embedding service request timed out.",
+        ),
+        (
+            EmbeddingServiceUnavailableError(),
+            503,
+            "EMBEDDING_SERVICE_UNAVAILABLE",
+            "The embedding service is temporarily unavailable.",
+        ),
+        (
+            EmbeddingServiceUnavailableError(
+                status_code=503,
+            ),
+            503,
+            "EMBEDDING_SERVICE_UNAVAILABLE",
+            "The embedding service is temporarily unavailable.",
+        ),
+        (
+            EmbeddingServiceRejectedError(
+                status_code=422,
+            ),
+            502,
+            "EMBEDDING_REQUEST_REJECTED",
+            "The embedding service rejected the request.",
+        ),
+        (
+            InvalidEmbeddingResponseError(
+                reason="vector dimension mismatch",
+                batch_start_index=0,
+            ),
+            502,
+            "INVALID_EMBEDDING_RESPONSE",
+            "The embedding service returned an invalid response.",
+        ),
+        (
+            EmbeddingError("Unexpected embedding failure."),
+            500,
+            "EMBEDDING_GENERATION_FAILED",
+            "The document embeddings could not be generated.",
+        ),
+    ],
+    ids=[
+        "embedding-timeout",
+        "embedding-connection-failed",
+        "embedding-service-unavailable",
+        "embedding-request-rejected",
+        "invalid-embedding-response",
+        "unexpected-embedding-error",
+    ],
+)
+def test_file_processing_request_maps_embedding_error(
+    file_processing_client: TestClient,
+    pdf_document_parser: StubPdfDocumentParser,
+    document_chunker: StubDocumentChunker,
+    chunk_embedder: StubChunkEmbedder,
+    embedding_error: EmbeddingError,
+    expected_status_code: int,
+    expected_code: str,
+    expected_message: str,
+) -> None:
+    """임베딩 계층 예외를 공통 API 오류 응답으로 변환한다."""
+
+    chunk_embedder.error = embedding_error
+
+    response = file_processing_client.post(
+        "/api/v1/files/process",
+        json=VALID_FILE_PROCESSING_REQUEST,
+    )
+
+    assert response.status_code == expected_status_code
+    assert response.json() == {
+        "success": False,
+        "code": expected_code,
+        "message": expected_message,
+        "data": None,
+    }
+
+    # 임베딩 오류 시점에는 파싱과 청킹이 모두 완료되어야 한다.
+    assert len(document_chunker.received_documents) == 1
+    assert len(chunk_embedder.received_documents) == 1
+
+    # TEI 통신은 다운로드 context 종료 후 수행하므로
+    # 임베딩 오류가 발생해도 임시 파일이 남지 않아야 한다.
+    assert len(pdf_document_parser.received_file_paths) == 1
+    assert not pdf_document_parser.received_file_paths[0].exists()
 
 
 def test_file_processing_request_rejects_invalid_file_hash(

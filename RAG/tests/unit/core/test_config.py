@@ -38,6 +38,7 @@ _SETTING_ENVIRONMENT_VARIABLES = (
     "JIPSA_RAG_EMBEDDING_BASE_URL",
     "JIPSA_RAG_EMBEDDING_MODEL",
     "JIPSA_RAG_EMBEDDING_DIM",
+    "JIPSA_RAG_EMBEDDING_BATCH_SIZE",
     "JIPSA_RAG_EMBEDDING_DISTANCE",
     "JIPSA_RAG_EMBEDDING_TIMEOUT_SECONDS",
     "JIPSA_RAG_VECTOR_DB_PROVIDER",
@@ -100,6 +101,7 @@ def _write_test_env_file(
                 ("JIPSA_RAG_EMBEDDING_BASE_URL=http://127.0.0.1:18081"),
                 ("JIPSA_RAG_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B"),
                 "JIPSA_RAG_EMBEDDING_DIM=1024",
+                "JIPSA_RAG_EMBEDDING_BATCH_SIZE=32",
                 "JIPSA_RAG_EMBEDDING_DISTANCE=cosine",
                 "JIPSA_RAG_EMBEDDING_TIMEOUT_SECONDS=60",
                 "JIPSA_RAG_VECTOR_DB_PROVIDER=qdrant",
@@ -150,6 +152,7 @@ def _create_settings(
         "embedding_base_url": "http://127.0.0.1:18081",
         "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
         "embedding_dim": 1024,
+        "embedding_batch_size": 32,
         "embedding_distance": "cosine",
         "embedding_timeout_seconds": 60.0,
         "vector_db_provider": "qdrant",
@@ -322,6 +325,7 @@ def test_settings_loads_selected_env_file(
     assert settings.embedding_base_url == "http://127.0.0.1:18081"
     assert settings.embedding_model == "Qwen/Qwen3-Embedding-0.6B"
     assert settings.embedding_dim == 1024
+    assert settings.embedding_batch_size == 32
     assert settings.embedding_distance == "cosine"
     assert settings.embedding_timeout_seconds == 60.0
 
@@ -854,6 +858,43 @@ def test_embedding_and_qdrant_positive_settings_reject_invalid_value(
             **{
                 field_name: invalid_value,
             }
+        )
+
+
+@pytest.mark.parametrize(
+    "embedding_batch_size",
+    [
+        1,
+        32,
+    ],
+)
+def test_embedding_batch_size_accepts_supported_boundary(
+    embedding_batch_size: int,
+) -> None:
+    """TEI 요청 배치 크기의 최소값과 최대값을 허용해야 한다."""
+
+    settings = _create_settings(
+        embedding_batch_size=embedding_batch_size,
+    )
+
+    assert settings.embedding_batch_size == embedding_batch_size
+
+
+@pytest.mark.parametrize(
+    "embedding_batch_size",
+    [
+        0,
+        33,
+    ],
+)
+def test_embedding_batch_size_rejects_unsupported_boundary(
+    embedding_batch_size: int,
+) -> None:
+    """TEI 요청 배치 크기가 1부터 32 범위를 벗어나면 거부해야 한다."""
+
+    with pytest.raises(ValidationError):
+        _create_settings(
+            embedding_batch_size=embedding_batch_size,
         )
 
 

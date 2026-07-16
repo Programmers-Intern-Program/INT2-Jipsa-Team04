@@ -111,6 +111,62 @@ class ErrorCode(Enum):
         message="The document could not be read.",
     )
 
+    # 파싱된 문서에는 텍스트가 존재하지만 청킹 정책을 적용한 뒤
+    # 검색에 사용할 수 있는 청크를 하나도 생성하지 못한 경우 사용한다.
+    DOCUMENT_CHUNKS_NOT_FOUND = ErrorDefinition(
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        code="DOCUMENT_CHUNKS_NOT_FOUND",
+        message="No searchable text chunks could be created from the document.",
+    )
+
+    # 청크 크기와 중첩 크기 같은 서버 내부 청킹 설정이 잘못되었거나
+    # 예상하지 못한 청킹 처리 실패가 발생한 경우 사용한다.
+    DOCUMENT_CHUNKING_FAILED = ErrorDefinition(
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        code="DOCUMENT_CHUNKING_FAILED",
+        message="The document could not be chunked.",
+    )
+
+    # TEI 서버가 설정된 제한 시간 안에 응답하지 않은 경우 사용한다.
+    EMBEDDING_SERVICE_TIMEOUT = ErrorDefinition(
+        status_code=HTTPStatus.GATEWAY_TIMEOUT,
+        code="EMBEDDING_SERVICE_TIMEOUT",
+        message="The embedding service request timed out.",
+    )
+
+    # TEI 서버에 연결할 수 없거나 과부하, 429 또는 5xx 응답으로
+    # 현재 임베딩 서비스를 정상적으로 사용할 수 없는 경우 사용한다.
+    EMBEDDING_SERVICE_UNAVAILABLE = ErrorDefinition(
+        status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+        code="EMBEDDING_SERVICE_UNAVAILABLE",
+        message="The embedding service is temporarily unavailable.",
+    )
+
+    # TEI 서버가 RAG 서버에서 생성한 요청을 4xx 응답으로 거부한 경우다.
+    #
+    # 사용자 요청 스키마가 아니라 내부 서비스 간 요청 문제이므로
+    # 클라이언트의 4xx 오류가 아닌 502 Bad Gateway로 변환한다.
+    EMBEDDING_REQUEST_REJECTED = ErrorDefinition(
+        status_code=HTTPStatus.BAD_GATEWAY,
+        code="EMBEDDING_REQUEST_REJECTED",
+        message="The embedding service rejected the request.",
+    )
+
+    # TEI 서버가 성공 상태를 반환했지만 응답 JSON, 벡터 개수,
+    # 벡터 차원 또는 벡터 값이 계약과 일치하지 않는 경우 사용한다.
+    INVALID_EMBEDDING_RESPONSE = ErrorDefinition(
+        status_code=HTTPStatus.BAD_GATEWAY,
+        code="INVALID_EMBEDDING_RESPONSE",
+        message="The embedding service returned an invalid response.",
+    )
+
+    # 명시적으로 분류하지 못한 임베딩 계층 오류가 발생한 경우 사용한다.
+    EMBEDDING_GENERATION_FAILED = ErrorDefinition(
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        code="EMBEDDING_GENERATION_FAILED",
+        message="The document embeddings could not be generated.",
+    )
+
     FILE_TOO_LARGE = ErrorDefinition(
         status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
         code="FILE_TOO_LARGE",
@@ -173,7 +229,7 @@ class ErrorCode(Enum):
 
     @property
     def status_code(self) -> int:
-        """오류에 대응하는 HTTP 상태 코드를 반환한다."""
+        """예외에 대응하는 HTTP 상태 코드를 반환한다."""
 
         return int(self.value.status_code)
 

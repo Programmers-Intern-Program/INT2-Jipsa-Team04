@@ -311,6 +311,16 @@ class Settings(BaseSettings):
         gt=0,
     )
 
+    # 한 번의 TEI /embed 요청에 포함할 최대 청크 수이다.
+    #
+    # 현재 TEI 컨테이너의 기본 max-client-batch-size가 32이므로
+    # 클라이언트 설정도 최대 32로 제한한다.
+    embedding_batch_size: int = Field(
+        default=32,
+        ge=1,
+        le=32,
+    )
+
     # Qdrant에서 벡터 유사도를 계산할 때 사용할 거리 함수이다.
     embedding_distance: EmbeddingDistance = "cosine"
 

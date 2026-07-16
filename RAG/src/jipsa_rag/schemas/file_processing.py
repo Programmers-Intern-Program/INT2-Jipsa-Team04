@@ -168,7 +168,7 @@ class FileProcessingRequest(BaseModel):
 
 
 class FileProcessingAcceptedResponse(BaseModel):
-    """파일 다운로드, 검증 및 문서 파싱이 완료되었을 때 반환하는 데이터."""
+    """다운로드부터 청크 임베딩 생성까지 완료된 처리 결과."""
 
     # 응답 스키마에 정의되지 않은 내부 데이터가
     # 외부 응답에 포함되지 않도록 제한한다.
@@ -229,8 +229,27 @@ class FileProcessingAcceptedResponse(BaseModel):
         examples=[9],
     )
 
-    processing_status: Literal["PARSED"] = Field(
-        default="PARSED",
-        description="원본 파일 다운로드, 검증 및 문서 파싱 완료 상태",
-        examples=["PARSED"],
+    chunk_count: int = Field(
+        gt=0,
+        description="문서 전체에서 생성된 검색 및 임베딩 대상 청크 수",
+        examples=[42],
+    )
+
+    embedding_model: str = Field(
+        min_length=1,
+        max_length=255,
+        description="청크 임베딩 생성에 사용한 모델 식별자",
+        examples=["Qwen/Qwen3-Embedding-0.6B"],
+    )
+
+    embedding_dim: int = Field(
+        gt=0,
+        description="청크별 임베딩 벡터 차원",
+        examples=[1024],
+    )
+
+    processing_status: Literal["EMBEDDED"] = Field(
+        default="EMBEDDED",
+        description="문서 청킹 및 청크별 임베딩 생성 완료 상태",
+        examples=["EMBEDDED"],
     )
