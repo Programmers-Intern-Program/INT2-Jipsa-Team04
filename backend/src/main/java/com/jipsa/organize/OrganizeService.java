@@ -23,10 +23,10 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 스마트 정리(v0) — AI 호출 자체는 아직 붙지 않은 뼈대.
- * 현재 폴더 트리 조회, AI 제안(OrganizeProposal) 검증, 검증된 제안을 실제로 반영하는
- * 로직을 담당한다. 실제 AI 호출({@link AiOrganizeClient})은 후속 작업 — 지금은 손으로
- * 만들거나 임시로 만든 제안 JSON을 그대로 검증/반영하는 것까지가 이 서비스의 책임이다.
+ * 스마트 정리(v0) — 현재 폴더 트리 조회, AI 제안({@link AiOrganizeClient}) 생성,
+ * 제안(OrganizeProposal) 검증, 검증된 제안을 실제로 반영하는 로직을 담당한다.
+ * generateProposal은 AI 응답도 반영 전 동일한 검증(validate)을 거치므로, AI가 만든
+ * 제안이든 수동으로 구성한 제안이든 applyProposal에 넘기기 전 항상 같은 방어선을 통과한다.
  */
 @Service
 public class OrganizeService {
@@ -35,15 +35,21 @@ public class OrganizeService {
     private final FileRepository fileRepository;
     private final FolderService folderService;
     private final FileService fileService;
+    private final OrganizeInputAssembler organizeInputAssembler;
+    private final AiOrganizeClient aiOrganizeClient;
 
     public OrganizeService(FolderRepository folderRepository,
                             FileRepository fileRepository,
                             FolderService folderService,
-                            FileService fileService) {
+                            FileService fileService,
+                            OrganizeInputAssembler organizeInputAssembler,
+                            AiOrganizeClient aiOrganizeClient) {
         this.folderRepository = folderRepository;
         this.fileRepository = fileRepository;
         this.folderService = folderService;
         this.fileService = fileService;
+        this.organizeInputAssembler = organizeInputAssembler;
+        this.aiOrganizeClient = aiOrganizeClient;
     }
 
     /** 미리보기 화면의 "현재" 쪽 — 본인 폴더 전체를 평면 목록에서 트리로 조립. */
@@ -51,6 +57,28 @@ public class OrganizeService {
     public List<FolderTreeNode> getCurrentFolderTree(Long userId) {
         List<FolderResponse> flat = folderService.list(userId);
         return buildTree(flat);
+    }
+
+    /**
+     * AI에게 현재 폴더 트리 + 파일 목록을 넘겨 제안을 생성하고, 반영 전에 미리 검증까지
+     * 마친 상태로 반환한다(존재하지 않는 id, 순환 참조 등은 여기서 걸러진다).
+     *
+     * 의도적으로 @Transactional을 걸지 않았다 — Anthropic 호출은 초 단위로 걸릴 수 있는데,
+     * 여기에 트랜잭션을 걸면 그 시간 내내 커넥션 풀에서 커넥션 하나를 붙잡고 있게 된다.
+     * 트리 조회/검증에 쓰이는 개별 리포지토리 호출은 Spring Data JPA가 각자 알아서
+     * 짧은 트랜잭션으로 처리하므로 여기서 하나로 묶을 필요가 없다.
+     */
+    public OrganizeProposal generateProposal(Long userId) {
+        List<FolderTreeNode> currentTree = getCurrentFolderTree(userId);
+        List<OrganizeFileInput> files = organizeInputAssembler.assemble(userId);
+
+        OrganizeProposal proposal = aiOrganizeClient.proposeOrganization(currentTree, files);
+        List<ProposedFolder> newFolders = proposal.newFolders() == null ? List.of() : proposal.newFolders();
+        List<FileMapping> mappings = proposal.mappings() == null ? List.of() : proposal.mappings();
+
+        validate(userId, newFolders, mappings);
+
+        return new OrganizeProposal(newFolders, mappings);
     }
 
     /**

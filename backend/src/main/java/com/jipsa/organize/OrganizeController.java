@@ -10,8 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 스마트 정리(v0) API.
- * AI 제안 생성(POST /organize/propose)은 아직 없다 — AiOrganizeClient 연동 후 추가 예정.
- * 지금은 "현재 폴더 트리 조회"와 "(수동으로 구성했든 AI가 생성했든) 제안 검증 후 반영"까지만 제공한다.
+ * 현재 폴더 트리 조회, AI 제안 생성(검증까지 마친 상태로 반환), 제안 검증 후 반영까지 제공한다.
  */
 @RestController
 @RequestMapping("/api/v1/organize")
@@ -30,6 +29,13 @@ public class OrganizeController {
     public OrganizeTreeResponse currentTree() {
         Long userId = currentUserProvider.requireUserId();
         return new OrganizeTreeResponse(organizeService.getCurrentFolderTree(userId));
+    }
+
+    /** AI에게 제안을 생성시킨다 — 반환되는 OrganizeProposal은 이미 검증을 통과한 상태다. */
+    @PostMapping("/propose")
+    public OrganizeProposal propose() {
+        Long userId = currentUserProvider.requireUserId();
+        return organizeService.generateProposal(userId);
     }
 
     /** 제안(OrganizeProposal)을 검증하고, 통과하면 실제 파일 이동/이름변경 및 새 폴더 생성을 반영한다. */
