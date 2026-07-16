@@ -8,13 +8,13 @@ import java.io.IOException;
 import java.security.GeneralSecurityException;
 
 /**
- * Verifies Google id_tokens — and nothing else.
+ * 구글 id_token 검증만 담당한다 — 그 외 책임은 없다.
  *
- * <p>Sole responsibility: turn a raw id_token string into a trusted {@link GoogleUserInfo}.
- * The heavy lifting (signature against Google's JWKS, {@code iss}, {@code aud}, {@code exp})
- * is done by Google's official {@link GoogleIdTokenVerifier}; on top of that this class
- * enforces our two application rules: {@code email_verified} must be true and {@code sub}
- * must be present. The token is never trusted by naive Base64 decoding.
+ * <p>유일한 역할: 원문 id_token 문자열을 신뢰할 수 있는 {@link GoogleUserInfo}로 바꾼다.
+ * 무거운 검증(구글 JWKS에 대한 서명 검증, {@code iss}, {@code aud}, {@code exp})은
+ * 구글 공식 {@link GoogleIdTokenVerifier}가 수행하고, 그 위에 이 클래스가 애플리케이션
+ * 규칙 두 가지를 추가로 강제한다: {@code email_verified}가 true여야 하고 {@code sub}가
+ * 있어야 한다. 토큰을 단순 Base64 디코딩으로 신뢰하는 일은 절대 없다.
  */
 @Component
 public class GoogleIdTokenValidator {
@@ -26,13 +26,17 @@ public class GoogleIdTokenValidator {
     }
 
     /**
-     * @throws GoogleAuthException if the token is malformed, its signature/iss/aud/exp
-     *         are invalid, the email is unverified, or the sub is missing.
+     * 구글 id_token을 검증해 신뢰할 수 있는 {@link GoogleUserInfo}로 변환한다.
+     *
+     * @param idTokenString 구글이 발급한 원문 id_token(JWT) 문자열
+     * @return 검증을 통과한 구글 사용자 정보
+     * @throws GoogleAuthException 토큰이 잘못되었거나, 서명/iss/aud/exp가 유효하지 않거나,
+     *         이메일이 미검증이거나, sub가 없을 때
      */
     public GoogleUserInfo validate(String idTokenString) {
         GoogleIdToken idToken;
         try {
-            // verify() returns null when signature / iss / aud / exp checks fail.
+            // 서명 / iss / aud / exp 검증에 실패하면 verify()는 null을 반환한다.
             idToken = verifier.verify(idTokenString);
         } catch (GeneralSecurityException | IOException e) {
             throw new GoogleAuthException("Google id_token 검증 중 오류가 발생했습니다.");

@@ -30,8 +30,9 @@ public class LoginTokenService {
      */
     public LoginResult issueTokens(UserFindOrCreateResult result) {
         Long userId = result.user().getId();
-        String accessToken = jwtService.generateToken(userId);
-        String refreshToken = refreshTokenService.issue(userId);
+        String accessToken = jwtService.generateToken(userId);      // JWT Access 토큰 생성
+        String refreshToken = refreshTokenService.issue(userId);    // Refresh 토큰(원문) 발급·저장
+        // isNewUser는 3단계 결과값을 그대로 전달 (토큰 발급은 신규/기존을 구분하지 않음)
         return new LoginResult(accessToken, refreshToken, result.isNewUser());
     }
 }

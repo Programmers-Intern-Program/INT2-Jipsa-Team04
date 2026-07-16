@@ -52,9 +52,13 @@ public class AuthService {
      * @return accessToken·refreshToken·isNewUser를 담은 {@link LoginResult}
      */
     public LoginResult loginWithGoogle(String authorizationCode) {
+        // 1) authorization code → 구글 토큰 응답 (HTTP 교환)
         GoogleTokenResponse tokenResponse = googleOAuthClient.exchangeAuthorizationCode(authorizationCode);
+        // 2) id_token 검증 → 신뢰할 수 있는 구글 사용자 정보
         GoogleUserInfo googleUserInfo = googleIdTokenValidator.validate(tokenResponse.idToken());
+        // 3) 내부 사용자 find-or-create (없으면 신규 생성)
         UserFindOrCreateResult userResult = userService.findOrCreate(googleUserInfo);
+        // 4) 자체 Access/Refresh 토큰 발급 → 최종 로그인 결과
         return loginTokenService.issueTokens(userResult);
     }
 }

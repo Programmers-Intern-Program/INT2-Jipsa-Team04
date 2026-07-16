@@ -8,12 +8,12 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
 /**
- * Talks to Google's token endpoint — and nothing else.
+ * 구글 토큰 엔드포인트와의 통신만 담당한다 — 그 외 책임은 없다.
  *
- * <p>Sole responsibility: exchange an authorization code for Google's token response
- * over HTTP. It does NOT verify the id_token (that is {@link GoogleIdTokenValidator}'s
- * job) and does NOT persist any Google token. Keeping the HTTP concern isolated makes
- * the exchange trivially testable with MockRestServiceServer.
+ * <p>유일한 역할: authorization code를 HTTP로 구글에 보내 토큰 응답으로 교환한다.
+ * id_token 검증({@link GoogleIdTokenValidator}의 역할)은 하지 않으며, 구글 토큰을
+ * 저장하지도 않는다. HTTP 관심사만 이 클래스에 격리해 두면 MockRestServiceServer로
+ * 교환 로직을 손쉽게 테스트할 수 있다.
  */
 @Component
 public class GoogleOAuthClient {
@@ -29,11 +29,13 @@ public class GoogleOAuthClient {
     }
 
     /**
-     * Exchange the authorization code React obtained from Google for a token response.
-     * Sends {@code code, client_id, client_secret, redirect_uri, grant_type} as
-     * application/x-www-form-urlencoded, per Google's token-endpoint contract.
+     * React가 구글에서 받아온 authorization code를 토큰 응답으로 교환한다.
+     * 구글 토큰 엔드포인트 규약에 따라 {@code code, client_id, client_secret,
+     * redirect_uri, grant_type}을 application/x-www-form-urlencoded로 전송한다.
      *
-     * @throws GoogleAuthException if Google returns an error or omits the id_token.
+     * @param authorizationCode 구글에서 발급받은 authorization code
+     * @return 구글 토큰 엔드포인트 응답({@link GoogleTokenResponse})
+     * @throws GoogleAuthException 구글이 오류를 반환하거나 응답에 id_token이 없을 때
      */
     public GoogleTokenResponse exchangeAuthorizationCode(String authorizationCode) {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
@@ -52,7 +54,7 @@ public class GoogleOAuthClient {
                     .retrieve()
                     .body(GoogleTokenResponse.class);
         } catch (RestClientException e) {
-            // Covers 4xx/5xx from Google as well as transport/parse failures.
+            // 구글의 4xx/5xx 응답은 물론 전송/파싱 실패까지 모두 여기서 처리한다.
             throw new GoogleAuthException("Google 토큰 교환에 실패했습니다.");
         }
 
