@@ -1,0 +1,139 @@
+package com.jipsa.auth;
+
+import com.jipsa.auth.google.GoogleAuthException;
+import com.jipsa.auth.google.GoogleIdTokenValidator;
+import com.jipsa.auth.google.GoogleOAuthClient;
+import com.jipsa.auth.google.GoogleTokenResponse;
+import com.jipsa.auth.google.GoogleUserInfo;
+import com.jipsa.user.AccountLoginBlockedException;
+import com.jipsa.user.UserFindOrCreateResult;
+import com.jipsa.user.UserService;
+import com.jipsa.user.Users;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * AuthService가 1~4단계 컴포넌트를
+ * exchange → validate → findOrCreate → issueTokens 순서로 연결하고,
+ * 각 단계의 산출물을 다음 단계 입력으로 그대로 전달하며,
+ * 어떤 단계의 예외든 임의로 변환하지 않고 그대로 전파하는지 검증한다.
+ */
+@ExtendWith(MockitoExtension.class)
+class AuthServiceTest {
+
+    private static final String AUTH_CODE = "auth-code-abc";
+    private static final String ID_TOKEN = "id-token-xyz";
+
+    @Mock
+    private GoogleOAuthClient googleOAuthClient;
+    @Mock
+    private GoogleIdTokenValidator googleIdTokenValidator;
+    @Mock
+    private UserService userService;
+    @Mock
+    private LoginTokenService loginTokenService;
+
+    @InjectMocks
+    private AuthService authService;
+
+    private GoogleTokenResponse tokenResponse;
+    private GoogleUserInfo googleUserInfo;
+    private UserFindOrCreateResult findOrCreateResult;
+
+    @BeforeEach
+    void setUp() {
+        tokenResponse = new GoogleTokenResponse(
+                "google-access", ID_TOKEN, "google-refresh", 3600L, "Bearer", "openid email profile");
+        googleUserInfo = new GoogleUserInfo("google-sub-1", "user@example.com", true, "홍길동", "http://img/p.png");
+        Users user = new Users();
+        user.setId(42L);
+        findOrCreateResult = new UserFindOrCreateResult(user, true);
+    }
+
+    @Test
+    void 네_단계를_순서대로_연결하고_각_단계_전달값이_올바르다() {
+        when(googleOAuthClient.exchangeAuthorizationCode(AUTH_CODE)).thenReturn(tokenResponse);
+        when(googleIdTokenValidator.validate(ID_TOKEN)).thenReturn(googleUserInfo);
+        when(userService.findOrCreate(googleUserInfo)).thenReturn(findOrCreateResult);
+        LoginResult expected = new LoginResult("access-jwt", "refresh-raw", true);
+        when(loginTokenService.issueTokens(findOrCreateResult)).thenReturn(expected);
+
+        LoginResult result = authService.loginWithGoogle(AUTH_CODE);
+
+        assertThat(result).isSameAs(expected);
+
+        // 호출 순서: exchange → validate → findOrCreate → issueTokens
+        InOrder order = inOrder(googleOAuthClient, googleIdTokenValidator, userService, loginTokenService);
+        // 전달값 검증: authorizationCode → exchange, idToken → validate,
+        //            googleUserInfo → findOrCreate, findOrCreateResult → issueTokens
+        order.verify(googleOAuthClient).exchangeAuthorizationCode(AUTH_CODE);
+        order.verify(googleIdTokenValidator).validate(ID_TOKEN);
+        order.verify(userService).findOrCreate(googleUserInfo);
+        order.verify(loginTokenService).issueTokens(findOrCreateResult);
+        order.verifyNoMoreInteractions();
+    }
+
+    @Test
+    void exchange에서_GoogleAuthException이면_그대로_전파되고_이후단계는_호출되지_않는다() {
+        GoogleAuthException original = new GoogleAuthException("Google 토큰 교환에 실패했습니다.");
+        when(googleOAuthClient.exchangeAuthorizationCode(AUTH_CODE)).thenThrow(original);
+
+        assertThatThrownBy(() -> authService.loginWithGoogle(AUTH_CODE))
+                .isSameAs(original);
+
+        verify(googleIdTokenValidator, never()).validate(org.mockito.ArgumentMatchers.any());
+        verify(userService, never()).findOrCreate(org.mockito.ArgumentMatchers.any());
+        verify(loginTokenService, never()).issueTokens(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void validate에서_GoogleAuthException이면_그대로_전파된다() {
+        GoogleAuthException original = new GoogleAuthException("유효하지 않은 Google id_token입니다.");
+        when(googleOAuthClient.exchangeAuthorizationCode(AUTH_CODE)).thenReturn(tokenResponse);
+        when(googleIdTokenValidator.validate(ID_TOKEN)).thenThrow(original);
+
+        assertThatThrownBy(() -> authService.loginWithGoogle(AUTH_CODE))
+                .isSameAs(original);
+
+        verify(userService, never()).findOrCreate(org.mockito.ArgumentMatchers.any());
+        verify(loginTokenService, never()).issueTokens(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void findOrCreate에서_AccountLoginBlockedException이면_그대로_전파된다() {
+        AccountLoginBlockedException original = new AccountLoginBlockedException("탈퇴 이력이 있는 계정입니다.");
+        when(googleOAuthClient.exchangeAuthorizationCode(AUTH_CODE)).thenReturn(tokenResponse);
+        when(googleIdTokenValidator.validate(ID_TOKEN)).thenReturn(googleUserInfo);
+        when(userService.findOrCreate(googleUserInfo)).thenThrow(original);
+
+        assertThatThrownBy(() -> authService.loginWithGoogle(AUTH_CODE))
+                .isSameAs(original);
+
+        verify(loginTokenService, never()).issueTokens(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void issueTokens에서_예외가_나면_그대로_전파된다() {
+        DataIntegrityViolationException original = new DataIntegrityViolationException("refresh token 저장 실패");
+        when(googleOAuthClient.exchangeAuthorizationCode(AUTH_CODE)).thenReturn(tokenResponse);
+        when(googleIdTokenValidator.validate(ID_TOKEN)).thenReturn(googleUserInfo);
+        when(userService.findOrCreate(googleUserInfo)).thenReturn(findOrCreateResult);
+        when(loginTokenService.issueTokens(findOrCreateResult)).thenThrow(original);
+
+        assertThatThrownBy(() -> authService.loginWithGoogle(AUTH_CODE))
+                .isSameAs(original);
+    }
+}
