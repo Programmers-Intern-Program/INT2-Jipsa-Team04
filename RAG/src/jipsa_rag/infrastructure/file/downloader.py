@@ -54,7 +54,14 @@ class DownloadedFile:
 
     path: Path
     size_bytes: int
+
+    # 애플리케이션 서버가 기준 해시를 전달하지 않더라도
+    # RAG 서버가 다운로드 원본 바이트에서 직접 계산한 SHA-256이다.
+    #
+    # 이 값은 Local RAG 문서의 File_Hash와 결정적 Chunk ID 생성에
+    # 사용하며 외부 응답이나 로그에는 포함하지 않는다.
     sha256: str
+
     content_type: str | None
 
 
@@ -79,17 +86,24 @@ class HttpFileDownloader:
         self,
         *,
         file_url: str,
-        expected_sha256: str,
         users_idx: int,
         file_idx: int,
+        expected_sha256: str | None = None,
     ) -> AsyncIterator[DownloadedFile]:
-        """원본 파일을 다운로드하고 PDF 형식과 해시를 검증한다.
+        """원본 파일을 다운로드하고 PDF 형식과 SHA-256을 검증한다.
 
         다운로드가 완료된 임시 파일은 async with 구문 안에서만
         사용할 수 있다.
 
         async with 블록이 정상 종료되거나 예외로 종료되더라도
         임시 파일은 finally 구문에서 삭제한다.
+
+        expected_sha256을 전달한 호출자는 다운로드 바이트의 SHA-256과
+        기준 해시가 일치하는지도 검증할 수 있다.
+
+        새 파일 처리 API 요청에는 file_hash가 포함되지 않으므로
+        해당 API에서는 expected_sha256을 전달하지 않는다. 이 경우에도
+        SHA-256은 항상 계산하여 DownloadedFile.sha256으로 반환한다.
         """
 
         # 네트워크 요청을 수행하기 전에 URL의 HTTPS 스킴,
@@ -101,7 +115,7 @@ class HttpFileDownloader:
         except OSError as error:
             raise AppException(
                 ErrorCode.INTERNAL_SERVER_ERROR,
-                public_message=("A temporary file could not be created."),
+                public_message="A temporary file could not be created.",
                 log_context={
                     "users_idx": users_idx,
                     "file_idx": file_idx,
@@ -113,10 +127,10 @@ class HttpFileDownloader:
         try:
             downloaded_file = await self._download_to_path(
                 file_url=file_url,
-                expected_sha256=expected_sha256,
                 users_idx=users_idx,
                 file_idx=file_idx,
                 temp_path=temp_path,
+                expected_sha256=expected_sha256,
             )
 
             # 후속 PDF 텍스트 추출은 이 yield 이후의
@@ -142,10 +156,10 @@ class HttpFileDownloader:
         self,
         *,
         file_url: str,
-        expected_sha256: str,
         users_idx: int,
         file_idx: int,
         temp_path: Path,
+        expected_sha256: str | None = None,
     ) -> DownloadedFile:
         """파일을 지정된 임시 경로에 스트리밍하고 검증 결과를 반환한다."""
 
@@ -156,10 +170,10 @@ class HttpFileDownloader:
 
         timeout = httpx2.Timeout(
             connect=(self._settings.file_download_connect_timeout_seconds),
-            read=(self._settings.file_download_read_timeout_seconds),
+            read=self._settings.file_download_read_timeout_seconds,
             # GET 요청은 별도의 본문을 전송하지 않지만
             # HTTP 클라이언트의 전체 timeout 구성을 명시한다.
-            write=(self._settings.file_download_read_timeout_seconds),
+            write=self._settings.file_download_read_timeout_seconds,
             pool=(self._settings.file_download_connect_timeout_seconds),
         )
 
@@ -184,9 +198,11 @@ class HttpFileDownloader:
                     "GET",
                     file_url,
                     headers={
-                        # 서버가 gzip 등의 압축 응답을 반환하면
-                        # 애플리케이션 서버가 계산한 원본 파일 해시와
-                        # 수신 바이트 해시가 달라질 수 있다.
+                        # 압축 디코딩이 개입하면 S3 원본 바이트와
+                        # RAG 서버가 해시를 계산하는 바이트가 달라질 수 있다.
+                        #
+                        # 원본 파일과 동일한 바이트를 받기 위해
+                        # Content-Encoding을 사용하지 않도록 요청한다.
                         "Accept-Encoding": "identity",
                     },
                 ) as response,
@@ -273,7 +289,7 @@ class HttpFileDownloader:
         if size_bytes == 0:
             raise AppException(
                 ErrorCode.INVALID_FILE,
-                public_message=("The downloaded file is empty."),
+                public_message="The downloaded file is empty.",
                 log_context={
                     "users_idx": users_idx,
                     "file_idx": file_idx,
@@ -294,9 +310,11 @@ class HttpFileDownloader:
 
         calculated_sha256 = sha256.hexdigest()
 
-        # 해시 문자열 비교에는 일반 문자열 비교 대신
-        # 일정 시간 비교 함수를 사용한다.
-        if not hmac.compare_digest(
+        # 기준 해시가 전달된 호출 경로에서만 해시 일치 여부를 검증한다.
+        #
+        # 일반 문자열 비교 대신 일정 시간 비교 함수를 사용하여
+        # 문자열 비교 시간 차이를 최소화한다.
+        if expected_sha256 is not None and not hmac.compare_digest(
             calculated_sha256,
             expected_sha256.lower(),
         ):
@@ -337,7 +355,7 @@ class HttpFileDownloader:
         if parsed.scheme.lower() != "https":
             raise AppException(
                 ErrorCode.INVALID_FILE_URL,
-                public_message=("The file URL must use HTTPS."),
+                public_message="The file URL must use HTTPS.",
                 log_context={
                     "validation": "url_scheme",
                 },
@@ -397,7 +415,7 @@ class HttpFileDownloader:
         if not is_allowed_host:
             raise AppException(
                 ErrorCode.INVALID_FILE_URL,
-                public_message=("The file URL host is not allowed."),
+                public_message="The file URL host is not allowed.",
                 log_context={
                     "validation": "url_allowed_host",
                 },
@@ -467,7 +485,7 @@ class HttpFileDownloader:
             .lower()
         )
 
-        # 원본 파일 해시를 동일하게 계산하기 위해
+        # S3 원본과 동일한 바이트를 기준으로 SHA-256을 계산하기 위해
         # 압축 또는 별도의 Content-Encoding 응답은 허용하지 않는다.
         if content_encoding not in {
             "",
@@ -515,7 +533,7 @@ class HttpFileDownloader:
                 exist_ok=True,
             )
 
-        # mkstemp()가 생성한 파일명은 외부 요청의 File_Name을
+        # mkstemp()가 생성한 파일명은 외부 요청의 file_name을
         # 사용하지 않으므로 경로 조작과 파일명 충돌을 방지할 수 있다.
         file_descriptor, path_value = tempfile.mkstemp(
             prefix="jipsa-rag-",

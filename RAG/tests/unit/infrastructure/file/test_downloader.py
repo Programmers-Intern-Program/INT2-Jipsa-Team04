@@ -41,11 +41,11 @@ def settings() -> Settings:
 
 
 @pytest.mark.asyncio
-async def test_downloads_and_validates_pdf_file(
+async def test_downloads_and_calculates_pdf_hash_without_expected_hash(
     settings: Settings,
     tmp_path: Path,
 ) -> None:
-    """정상 PDF를 다운로드하고 크기와 SHA-256 해시를 검증한다."""
+    """기준 해시 없이 PDF를 다운로드하고 SHA-256을 계산한다."""
 
     async def handler(
         request: httpx2.Request,
@@ -72,11 +72,12 @@ async def test_downloads_and_validates_pdf_file(
 
     downloaded_path: Path | None = None
 
+    # 새 파일 처리 API에는 file_hash가 없으므로
+    # expected_sha256을 전달하지 않는 호출 경로를 검증한다.
     async with downloader.download_and_validate(
         file_url=FILE_URL,
-        expected_sha256=PDF_SHA256,
-        users_idx=1,
-        file_idx=10,
+        users_idx=45,
+        file_idx=123,
     ) as downloaded_file:
         downloaded_path = downloaded_file.path
 
@@ -87,6 +88,45 @@ async def test_downloads_and_validates_pdf_file(
         assert downloaded_file.content_type == "application/pdf"
 
     # context 종료 후 임시 파일이 삭제되어야 한다.
+    assert downloaded_path is not None
+    assert not downloaded_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_accepts_matching_expected_file_hash(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """선택적으로 전달한 기준 해시가 실제 파일 해시와 같으면 허용한다."""
+
+    async def handler(
+        _: httpx2.Request,
+    ) -> httpx2.Response:
+        return httpx2.Response(
+            status_code=200,
+            headers={
+                "Content-Type": "application/pdf",
+            },
+            stream=httpx2.ByteStream(PDF_CONTENT),
+        )
+
+    downloader = HttpFileDownloader(
+        settings,
+        transport=httpx2.MockTransport(handler),
+        temp_directory=tmp_path,
+    )
+
+    downloaded_path: Path | None = None
+
+    async with downloader.download_and_validate(
+        file_url=FILE_URL,
+        users_idx=1,
+        file_idx=10,
+        expected_sha256=PDF_SHA256,
+    ) as downloaded_file:
+        downloaded_path = downloaded_file.path
+        assert downloaded_file.sha256 == PDF_SHA256
+
     assert downloaded_path is not None
     assert not downloaded_path.exists()
 
@@ -123,7 +163,6 @@ async def test_deletes_temporary_file_when_caller_raises_error(
     ):
         async with downloader.download_and_validate(
             file_url=FILE_URL,
-            expected_sha256=PDF_SHA256,
             users_idx=1,
             file_idx=10,
         ) as downloaded_file:
@@ -137,11 +176,11 @@ async def test_deletes_temporary_file_when_caller_raises_error(
 
 
 @pytest.mark.asyncio
-async def test_rejects_file_hash_mismatch(
+async def test_rejects_file_hash_mismatch_when_expected_hash_is_given(
     settings: Settings,
     tmp_path: Path,
 ) -> None:
-    """실제 파일 해시와 전달받은 해시가 다르면 요청을 거부한다."""
+    """선택적으로 전달한 기준 해시와 실제 파일 해시가 다르면 거부한다."""
 
     async def handler(
         _: httpx2.Request,
@@ -165,9 +204,9 @@ async def test_rejects_file_hash_mismatch(
     ) as exception_info:
         async with downloader.download_and_validate(
             file_url=FILE_URL,
-            expected_sha256="0" * 64,
             users_idx=1,
             file_idx=10,
+            expected_sha256="0" * 64,
         ):
             pass
 
@@ -206,7 +245,6 @@ async def test_rejects_file_larger_than_limit(
     ) as exception_info:
         async with downloader.download_and_validate(
             file_url=FILE_URL,
-            expected_sha256=hashlib.sha256(oversized_content).hexdigest(),
             users_idx=1,
             file_idx=10,
         ):
@@ -246,7 +284,6 @@ async def test_rejects_content_length_larger_than_limit(
     ) as exception_info:
         async with downloader.download_and_validate(
             file_url=FILE_URL,
-            expected_sha256=PDF_SHA256,
             users_idx=1,
             file_idx=10,
         ):
@@ -285,7 +322,6 @@ async def test_rejects_empty_file(
     ) as exception_info:
         async with downloader.download_and_validate(
             file_url=FILE_URL,
-            expected_sha256=hashlib.sha256(b"").hexdigest(),
             users_idx=1,
             file_idx=10,
         ):
@@ -326,7 +362,6 @@ async def test_rejects_non_pdf_magic_bytes(
     ) as exception_info:
         async with downloader.download_and_validate(
             file_url=FILE_URL,
-            expected_sha256=hashlib.sha256(invalid_content).hexdigest(),
             users_idx=1,
             file_idx=10,
         ):
@@ -365,7 +400,6 @@ async def test_rejects_unsupported_content_type(
     ) as exception_info:
         async with downloader.download_and_validate(
             file_url=FILE_URL,
-            expected_sha256=PDF_SHA256,
             users_idx=1,
             file_idx=10,
         ):
@@ -405,7 +439,6 @@ async def test_rejects_encoded_response(
     ) as exception_info:
         async with downloader.download_and_validate(
             file_url=FILE_URL,
-            expected_sha256=PDF_SHA256,
             users_idx=1,
             file_idx=10,
         ):
@@ -445,8 +478,7 @@ async def test_rejects_unallowed_download_host(
         AppException,
     ) as exception_info:
         async with downloader.download_and_validate(
-            file_url=("https://files.example.com/example-file.pdf"),
-            expected_sha256=PDF_SHA256,
+            file_url="https://files.example.com/example-file.pdf",
             users_idx=1,
             file_idx=10,
         ):
@@ -474,7 +506,6 @@ async def test_rejects_non_https_download_url(
     ) as exception_info:
         async with downloader.download_and_validate(
             file_url=("http://example-bucket.s3.ap-northeast-2.amazonaws.com/file.pdf"),
-            expected_sha256=PDF_SHA256,
             users_idx=1,
             file_idx=10,
         ):
@@ -509,7 +540,6 @@ async def test_converts_http_error_to_download_failure(
     ) as exception_info:
         async with downloader.download_and_validate(
             file_url=FILE_URL,
-            expected_sha256=PDF_SHA256,
             users_idx=1,
             file_idx=10,
         ):
@@ -545,7 +575,6 @@ async def test_converts_timeout_to_download_timeout(
     ) as exception_info:
         async with downloader.download_and_validate(
             file_url=FILE_URL,
-            expected_sha256=PDF_SHA256,
             users_idx=1,
             file_idx=10,
         ):

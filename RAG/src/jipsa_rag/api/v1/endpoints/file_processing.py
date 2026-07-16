@@ -1,4 +1,4 @@
-"""애플리케이션 서버에서 전달한 파일 처리 요청을 접수한다."""
+"""애플리케이션 서버에서 전달한 파일을 처리하고 색인 결과를 반환한다."""
 
 from http import HTTPStatus
 from typing import Annotated, Final
@@ -61,7 +61,7 @@ from jipsa_rag.schemas.common import (
     ValidationErrorData,
 )
 from jipsa_rag.schemas.file_processing import (
-    FileProcessingAcceptedResponse,
+    FileProcessingCompletedResponse,
     FileProcessingRequest,
 )
 from jipsa_rag.services.file_indexing import FileIndexingService
@@ -217,7 +217,7 @@ def _convert_document_parser_error(
     API 경계에서 파서 예외를 AppException으로 변환하여
     인프라 계층과 API 계층의 책임을 분리한다.
 
-    임시 파일 전체 경로, Presigned URL 및 파일 해시는
+    임시 파일 전체 경로, Presigned URL 및 계산한 파일 해시는
     내부 로그 컨텍스트에도 포함하지 않는다.
     """
 
@@ -427,14 +427,14 @@ def _convert_index_storage_error(
 
 @router.post(
     "/process",
-    status_code=HTTPStatus.ACCEPTED,
-    response_model=ApiResponse[FileProcessingAcceptedResponse],
-    summary="RAG 파일 처리 요청 접수",
+    status_code=HTTPStatus.OK,
+    response_model=ApiResponse[FileProcessingCompletedResponse],
+    summary="RAG 파일 처리",
     description=(
         "애플리케이션 서버에서 파일 URL과 파일 정보를 전달받아 "
-        "원본 PDF 파일을 다운로드하고 파일 형식과 SHA-256 해시를 "
-        "검증한 뒤 페이지별 텍스트 추출, 텍스트 청킹, 청크별 임베딩 생성, "
-        "Local RAG DB 저장 및 Qdrant 색인을 수행한다."
+        "원본 PDF 파일을 다운로드하고 파일 형식을 검증하며 SHA-256을 "
+        "계산한 뒤 페이지별 텍스트 추출, 텍스트 청킹, 청크별 임베딩 생성, "
+        "Local RAG DB 저장 및 Qdrant 색인을 완료한다."
     ),
     responses={
         HTTPStatus.BAD_REQUEST: {
@@ -451,9 +451,7 @@ def _convert_index_storage_error(
         },
         HTTPStatus.UNPROCESSABLE_ENTITY: {
             "model": ApiResponse[ValidationErrorData | None],
-            "description": (
-                "요청값, PDF 형식, 파일 해시, 문서 텍스트 또는 검색 가능 청크 검증 실패"
-            ),
+            "description": ("요청값, PDF 형식, 문서 텍스트 또는 검색 가능 청크 검증 실패"),
         },
         HTTPStatus.BAD_GATEWAY: {
             "model": ApiResponse[None],
@@ -461,11 +459,11 @@ def _convert_index_storage_error(
         },
         HTTPStatus.SERVICE_UNAVAILABLE: {
             "model": ApiResponse[None],
-            "description": "임베딩 서비스 또는 VectorDB 연결 실패 및 일시적 사용 불가",
+            "description": ("임베딩 서비스 또는 VectorDB 연결 실패 및 일시적 사용 불가"),
         },
         HTTPStatus.GATEWAY_TIMEOUT: {
             "model": ApiResponse[None],
-            "description": "원본 파일 다운로드 또는 임베딩 요청 시간 초과",
+            "description": ("원본 파일 다운로드 또는 임베딩 요청 시간 초과"),
         },
         HTTPStatus.INTERNAL_SERVER_ERROR: {
             "model": ApiResponse[None],
@@ -473,15 +471,15 @@ def _convert_index_storage_error(
         },
     },
 )
-async def accept_file_processing_request(
+async def process_file_processing_request(
     request: FileProcessingRequest,
     file_downloader: FileDownloaderDependency,
     document_parser_factory: DocumentParserFactoryDependency,
     document_chunker: DocumentChunkerDependency,
     chunk_embedder: ChunkEmbedderDependency,
     file_indexing_service: FileIndexingServiceDependency,
-) -> ApiResponse[FileProcessingAcceptedResponse]:
-    """원본 파일을 다운로드한 뒤 파싱, 청킹, 임베딩 및 저장을 수행한다."""
+) -> ApiResponse[FileProcessingCompletedResponse]:
+    """원본 파일 다운로드부터 문서 색인까지 완료하고 결과를 반환한다."""
 
     try:
         # API는 PdfDocumentParser와 같은 구체 구현체를 직접 선택하지 않는다.
@@ -496,14 +494,13 @@ async def accept_file_processing_request(
         )
 
         async with file_downloader.download_and_validate(
-            # Presigned URL은 변환하거나 로그에 남기지 않고
+            # download_url은 변환하거나 로그에 남기지 않고
             # 애플리케이션 서버가 전달한 원문을 다운로드에만 사용한다.
             #
             # S3 객체 위치는 AWS 서버 DB가 관리하므로 Local RAG DB에는
             # Presigned URL 또는 S3_Key를 저장하지 않는다.
-            file_url=request.file_url,
-            expected_sha256=request.file_hash,
-            users_idx=request.users_idx,
+            file_url=request.download_url,
+            users_idx=request.user_idx,
             file_idx=request.file_idx,
         ) as downloaded_file:
             # HttpFileDownloader의 context가 종료되면 임시 파일은
@@ -515,9 +512,14 @@ async def accept_file_processing_request(
                 downloaded_file.path,
             )
 
-            # async with 블록 종료 이후에도 응답에 사용할 수 있도록
-            # 임시 파일과 무관한 파일 크기만 별도 값으로 보관한다.
+            # async with 블록 종료 이후에도 후속 처리에 사용할 수 있도록
+            # 임시 파일과 독립적인 파일 크기 및 계산된 SHA-256만 보관한다.
+            #
+            # 새 요청 계약에는 애플리케이션 서버가 계산한 file_hash가
+            # 포함되지 않으므로 RAG 서버가 다운로드한 원본 바이트에서
+            # 직접 계산한 SHA-256을 문서 색인의 기준 해시로 사용한다.
             file_size_bytes = downloaded_file.size_bytes
+            calculated_file_hash = downloaded_file.sha256
 
         # 파싱이 완료되면 원본 임시 파일은 더 이상 필요하지 않다.
         #
@@ -526,9 +528,11 @@ async def accept_file_processing_request(
         chunked_document = await document_chunker.chunk(
             document=parsed_document,
             context=ChunkingContext(
-                users_idx=request.users_idx,
+                # 외부 API에서는 user_idx라는 단수형 필드명을 사용하지만
+                # 기존 Local RAG 내부 모델과 DB 컬럼은 users_idx를 사용한다.
+                users_idx=request.user_idx,
                 file_idx=request.file_idx,
-                file_hash=request.file_hash,
+                file_hash=calculated_file_hash,
                 index_version=_DEFAULT_INDEX_VERSION,
             ),
         )
@@ -539,12 +543,14 @@ async def accept_file_processing_request(
 
         indexing_result = await file_indexing_service.index(
             metadata=DocumentIndexMetadata(
-                users_idx=request.users_idx,
+                # API 계약의 user_idx를 내부 저장 모델의 users_idx로
+                # 명시적으로 변환하여 외부 계약과 내부 DB 명칭을 분리한다.
+                users_idx=request.user_idx,
                 file_idx=request.file_idx,
                 folder_idx=request.folder_idx,
                 file_name=request.file_name,
                 file_type=parsed_document.file_type,
-                file_hash=request.file_hash,
+                file_hash=calculated_file_hash,
                 index_version=_DEFAULT_INDEX_VERSION,
                 parser_type=document_parser.parser_type,
                 parser_version=document_parser.parser_version,
@@ -552,12 +558,18 @@ async def accept_file_processing_request(
             embedded_document=embedded_document,
         )
 
-        # 외부 응답에는 청크 원문과 임베딩 벡터를 노출하지 않는다.
-        # Local RAG 문서 식별자와 처리 개수·모델 메타데이터만 반환한다.
-        response_data = FileProcessingAcceptedResponse(
+        # 색인 서비스는 다음 작업이 모두 완료된 뒤 결과를 반환한다.
+        #
+        # 1. Local RAG DB에 문서와 청크 저장
+        # 2. Qdrant에 청크 벡터 저장
+        # 3. Local RAG DB 문서 상태를 INDEXED로 확정
+        #
+        # 외부 응답에는 청크 원문, 계산된 파일 해시 또는 임베딩 벡터를
+        # 포함하지 않고 처리 상태와 생성된 청크 수만 제공한다.
+        response_data = FileProcessingCompletedResponse(
             rag_document_idx=indexing_result.rag_document_idx,
-            users_idx=request.users_idx,
             file_idx=request.file_idx,
+            user_idx=request.user_idx,
             folder_idx=request.folder_idx,
             file_name=request.file_name,
             file_type=request.file_type,
@@ -567,6 +579,7 @@ async def accept_file_processing_request(
             chunk_count=indexing_result.chunk_count,
             embedding_model=embedded_document.embedding_model,
             embedding_dim=embedded_document.embedding_dim,
+            processing_status="INDEXED",
         )
 
     except DocumentParserError as error:
@@ -574,16 +587,16 @@ async def accept_file_processing_request(
         # 프로젝트 공통 AppException과 ErrorCode로 변환한다.
         raise _convert_document_parser_error(
             error,
-            users_idx=request.users_idx,
+            users_idx=request.user_idx,
             file_idx=request.file_idx,
         ) from error
 
     except DocumentChunkingError as error:
-        # 청크 원문이나 파일 해시를 노출하지 않고
+        # 청크 원문이나 계산된 파일 해시를 노출하지 않고
         # 청킹 계층 예외를 공통 API 오류로 변환한다.
         raise _convert_document_chunking_error(
             error,
-            users_idx=request.users_idx,
+            users_idx=request.user_idx,
             file_idx=request.file_idx,
         ) from error
 
@@ -592,7 +605,7 @@ async def accept_file_processing_request(
         # 임베딩 계층 예외를 공통 API 오류로 변환한다.
         raise _convert_embedding_error(
             error,
-            users_idx=request.users_idx,
+            users_idx=request.user_idx,
             file_idx=request.file_idx,
         ) from error
 
@@ -604,13 +617,13 @@ async def accept_file_processing_request(
         # 외부로 노출하지 않고 저장 계층 오류를 공통 API 오류로 변환한다.
         raise _convert_index_storage_error(
             error,
-            users_idx=request.users_idx,
+            users_idx=request.user_idx,
             file_idx=request.file_idx,
         ) from error
 
-    # Presigned URL, 실제 파일 해시, 추출 텍스트, 청크 원문,
+    # Presigned URL, 계산된 파일 해시, 추출 텍스트, 청크 원문,
     # 임베딩 벡터 및 임시 파일 경로는 외부 응답에 포함하지 않는다.
-    return ApiResponse[FileProcessingAcceptedResponse](
+    return ApiResponse[FileProcessingCompletedResponse](
         success=True,
         code="FILE_INDEXING_COMPLETED",
         message=("File download, parsing, chunking, embedding, and indexing completed."),

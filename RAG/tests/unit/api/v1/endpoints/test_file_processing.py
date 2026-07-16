@@ -65,14 +65,17 @@ from jipsa_rag.infrastructure.indexing.exceptions import (
     VectorDatabaseRejectedError,
     VectorDatabaseUnavailableError,
 )
-from jipsa_rag.infrastructure.indexing.models import DocumentIndexMetadata
+from jipsa_rag.infrastructure.indexing.models import (
+    DocumentIndexMetadata,
+)
 from jipsa_rag.services.file_indexing import FileIndexingResult
 
-# API 계층 테스트에서는 실제 pypdf 파싱, TEI 통신, Local RAG DB 연결 또는
-# Qdrant 통신을 수행하지 않는다.
+# API 계층 테스트에서는 실제 pypdf 파싱, TEI 통신,
+# Local RAG DB 연결 또는 Qdrant 통신을 수행하지 않는다.
 #
-# 다운로더의 PDF Magic Byte와 해시 검증에 필요한 최소 바이트를 사용하고,
-# 파싱, 청킹, 임베딩 및 저장 결과는 각 Stub 객체가 반환한다.
+# 다운로더의 PDF Magic Byte 검증과 SHA-256 계산에 필요한
+# 최소 바이트를 사용하고 파싱, 청킹, 임베딩 및 저장 결과는
+# 각 Stub 객체가 반환한다.
 #
 # 실제 구현의 세부 동작은 다음 단위 테스트에서 각각 검증한다.
 # - PdfDocumentParser
@@ -88,17 +91,16 @@ TEST_EMBEDDING_MODEL = "test/embedding-model"
 TEST_EMBEDDING_DIM = 3
 
 VALID_FILE_PROCESSING_REQUEST: dict[str, object] = {
-    "file_url": (
+    "file_idx": 123,
+    "user_idx": 45,
+    "folder_idx": 9,
+    "file_name": "2026 Q3 회의록.pdf",
+    "file_type": "pdf",
+    "download_url": (
         "https://example-bucket.s3.ap-northeast-2.amazonaws.com/"
         "files/example-file.pdf?X-Amz-Signature=example"
     ),
-    "users_idx": 1,
-    "file_idx": 10,
-    "folder_idx": 3,
-    "file_name": "project-guide.pdf",
-    "file_type": "pdf",
-    # 대문자 해시도 요청 스키마에서 소문자로 정규화되어야 한다.
-    "file_hash": PDF_SHA256.upper(),
+    "url_expires_in": 900,
 }
 
 
@@ -201,7 +203,7 @@ class StubDocumentChunker:
             file_type=document.file_type,
             chunks=(
                 TextChunk(
-                    chunk_id="11111111-1111-1111-1111-111111111111",
+                    chunk_id=("11111111-1111-1111-1111-111111111111"),
                     chunk_index=0,
                     content=content,
                     content_hash=content_hash,
@@ -389,34 +391,33 @@ def file_processing_client(
         )
 
 
-def test_file_processing_request_returns_indexed_response(
+def test_file_processing_request_returns_completed_response(
     file_processing_client: TestClient,
     pdf_document_parser: StubPdfDocumentParser,
     document_chunker: StubDocumentChunker,
     chunk_embedder: StubChunkEmbedder,
     file_indexing_service: StubFileIndexingService,
 ) -> None:
-    """유효한 PDF 요청이 Local RAG와 Qdrant 저장 완료 응답을 반환한다."""
+    """유효한 요청이 색인 완료 상태와 생성된 청크 수를 반환한다."""
 
     response = file_processing_client.post(
         "/api/v1/files/process",
         json=VALID_FILE_PROCESSING_REQUEST,
     )
 
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert response.json() == {
         "success": True,
         "code": "FILE_INDEXING_COMPLETED",
         "message": ("File download, parsing, chunking, embedding, and indexing completed."),
         "data": {
             "rag_document_idx": 100,
-            "users_idx": 1,
-            "file_idx": 10,
-            "folder_idx": 3,
-            "file_name": "project-guide.pdf",
-            "file_type": "PDF",
+            "file_idx": 123,
+            "user_idx": 45,
+            "folder_idx": 9,
+            "file_name": "2026 Q3 회의록.pdf",
+            "file_type": "pdf",
             "file_size_bytes": len(PDF_CONTENT),
-            "file_hash_verified": True,
             "page_count": 2,
             "text_unit_count": 1,
             "chunk_count": 1,
@@ -425,6 +426,13 @@ def test_file_processing_request_returns_indexed_response(
             "processing_status": "INDEXED",
         },
     }
+
+    response_data = response.json()["data"]
+
+    # 애플리케이션 서버가 별도의 상태 조회 없이
+    # 색인 완료 여부와 생성된 청크 개수를 확인할 수 있어야 한다.
+    assert response_data["processing_status"] == "INDEXED"
+    assert response_data["chunk_count"] == 1
 
     # 파서는 다운로드된 임시 파일 경로를 정확히 한 번 전달받아야 한다.
     assert len(pdf_document_parser.received_file_paths) == 1
@@ -438,8 +446,12 @@ def test_file_processing_request_returns_indexed_response(
     assert len(document_chunker.received_documents) == 1
     chunking_context = document_chunker.received_contexts[0]
 
-    assert chunking_context.users_idx == 1
-    assert chunking_context.file_idx == 10
+    # 외부 요청의 user_idx는 내부 모델의 users_idx로 변환되어야 한다.
+    assert chunking_context.users_idx == 45
+    assert chunking_context.file_idx == 123
+
+    # 요청에는 file_hash가 없지만 다운로더가 원본 바이트에서
+    # 계산한 SHA-256이 결정적 Chunk ID 생성 컨텍스트에 전달되어야 한다.
     assert chunking_context.file_hash == PDF_SHA256
     assert chunking_context.index_version == 1
 
@@ -454,17 +466,20 @@ def test_file_processing_request_returns_indexed_response(
 
     indexing_metadata = file_indexing_service.received_metadata[0]
 
-    assert indexing_metadata.users_idx == 1
-    assert indexing_metadata.file_idx == 10
-    assert indexing_metadata.folder_idx == 3
-    assert indexing_metadata.file_name == "project-guide.pdf"
+    assert indexing_metadata.users_idx == 45
+    assert indexing_metadata.file_idx == 123
+    assert indexing_metadata.folder_idx == 9
+    assert indexing_metadata.file_name == "2026 Q3 회의록.pdf"
     assert indexing_metadata.file_type is DocumentType.PDF
+
+    # Local RAG DB에는 다운로드 바이트에서 계산한 SHA-256을 저장한다.
     assert indexing_metadata.file_hash == PDF_SHA256
     assert indexing_metadata.index_version == 1
     assert indexing_metadata.parser_type == "PDF_TEXT"
     assert indexing_metadata.parser_version == "test-1.0.0"
 
     # Presigned URL과 S3_Key는 색인 메타데이터에 포함하지 않는다.
+    assert not hasattr(indexing_metadata, "download_url")
     assert not hasattr(indexing_metadata, "file_url")
     assert not hasattr(indexing_metadata, "s3_key")
 
@@ -473,7 +488,7 @@ def test_file_processing_request_allows_null_folder_idx(
     file_processing_client: TestClient,
     file_indexing_service: StubFileIndexingService,
 ) -> None:
-    """루트 경로 파일은 Folder_IDX 없이 저장할 수 있다."""
+    """루트 경로 파일은 folder_idx 없이 저장할 수 있다."""
 
     request_body = VALID_FILE_PROCESSING_REQUEST.copy()
     request_body["folder_idx"] = None
@@ -483,41 +498,46 @@ def test_file_processing_request_allows_null_folder_idx(
         json=request_body,
     )
 
-    assert response.status_code == 202
+    assert response.status_code == 200
     assert response.json()["data"]["folder_idx"] is None
     assert response.json()["data"]["processing_status"] == "INDEXED"
+    assert response.json()["data"]["chunk_count"] == 1
     assert file_indexing_service.received_metadata[0].folder_idx is None
 
 
-def test_file_processing_request_rejects_hash_mismatch_before_parsing(
+def test_file_processing_request_rejects_legacy_payload_fields(
     file_processing_client: TestClient,
-    pdf_document_parser: StubPdfDocumentParser,
-    document_chunker: StubDocumentChunker,
-    chunk_embedder: StubChunkEmbedder,
-    file_indexing_service: StubFileIndexingService,
 ) -> None:
-    """파일 해시가 다르면 파싱, 청킹, 임베딩 및 저장을 실행하지 않는다."""
+    """이전 요청 계약의 필드명과 외부 파일 해시를 거부한다."""
 
     request_body = VALID_FILE_PROCESSING_REQUEST.copy()
-    request_body["file_hash"] = "0" * 64
+
+    # 새 필드를 제거한 뒤 이전 계약의 필드를 추가한다.
+    request_body["file_url"] = request_body.pop("download_url")
+    request_body["users_idx"] = request_body.pop("user_idx")
+    request_body["file_hash"] = PDF_SHA256
 
     response = file_processing_client.post(
         "/api/v1/files/process",
         json=request_body,
     )
 
-    assert response.status_code == 422
-    assert response.json() == {
-        "success": False,
-        "code": "FILE_HASH_MISMATCH",
-        "message": "The downloaded file hash does not match.",
-        "data": None,
-    }
+    body = response.json()
+    invalid_fields = {error["field"] for error in body["data"]["errors"]}
 
-    assert pdf_document_parser.received_file_paths == []
-    assert document_chunker.received_documents == []
-    assert chunk_embedder.received_documents == []
-    assert file_indexing_service.received_documents == []
+    assert response.status_code == 422
+    assert body["success"] is False
+    assert body["code"] == "REQUEST_VALIDATION_FAILED"
+    assert body["message"] == "Request validation failed."
+
+    # 새 계약의 필수 필드가 없다는 오류가 포함되어야 한다.
+    assert "body.download_url" in invalid_fields
+    assert "body.user_idx" in invalid_fields
+
+    # extra="forbid" 설정으로 이전 계약 필드도 거부해야 한다.
+    assert "body.file_url" in invalid_fields
+    assert "body.users_idx" in invalid_fields
+    assert "body.file_hash" in invalid_fields
 
 
 @pytest.mark.parametrize(
@@ -639,7 +659,7 @@ def test_file_processing_request_maps_document_parser_error(
             NoDocumentChunksError(DocumentType.PDF),
             422,
             "DOCUMENT_CHUNKS_NOT_FOUND",
-            "No searchable text chunks could be created from the document.",
+            ("No searchable text chunks could be created from the document."),
         ),
         (
             InvalidChunkingConfigurationError(
@@ -814,7 +834,7 @@ def test_file_processing_request_maps_embedding_error(
             LocalRagStorageError("prepare_indexing"),
             500,
             "LOCAL_RAG_STORAGE_FAILED",
-            "The document index could not be stored in the Local RAG database.",
+            ("The document index could not be stored in the Local RAG database."),
         ),
         (
             VectorDatabaseUnavailableError(
@@ -881,18 +901,18 @@ def test_file_processing_request_maps_index_storage_error(
     assert len(chunk_embedder.received_documents) == 1
     assert len(file_indexing_service.received_documents) == 1
 
-    # 저장 단계에서도 Presigned URL의 임시 파일은 이미 삭제되어 있어야 한다.
+    # 저장 단계에서도 Presigned URL의 임시 파일은 이미 삭제되어야 한다.
     assert len(pdf_document_parser.received_file_paths) == 1
     assert not pdf_document_parser.received_file_paths[0].exists()
 
 
-def test_file_processing_request_rejects_invalid_file_hash(
+def test_file_processing_request_rejects_non_positive_url_expires_in(
     file_processing_client: TestClient,
 ) -> None:
-    """64자리 SHA-256 형식이 아닌 파일 해시를 거부한다."""
+    """0 이하의 Presigned URL 유효 시간을 거부한다."""
 
     request_body = VALID_FILE_PROCESSING_REQUEST.copy()
-    request_body["file_hash"] = "invalid-hash"
+    request_body["url_expires_in"] = 0
 
     response = file_processing_client.post(
         "/api/v1/files/process",
@@ -905,16 +925,16 @@ def test_file_processing_request_rejects_invalid_file_hash(
     assert body["success"] is False
     assert body["code"] == "REQUEST_VALIDATION_FAILED"
     assert body["message"] == "Request validation failed."
-    assert body["data"]["errors"][0]["field"] == "body.file_hash"
+    assert body["data"]["errors"][0]["field"] == "body.url_expires_in"
 
 
 def test_file_processing_request_rejects_non_https_url(
     file_processing_client: TestClient,
 ) -> None:
-    """HTTPS가 아닌 파일 URL을 요청 검증 단계에서 거부한다."""
+    """HTTPS가 아닌 다운로드 URL을 요청 검증 단계에서 거부한다."""
 
     request_body = VALID_FILE_PROCESSING_REQUEST.copy()
-    request_body["file_url"] = "http://example-bucket.s3.ap-northeast-2.amazonaws.com/file.pdf"
+    request_body["download_url"] = "http://example-bucket.s3.ap-northeast-2.amazonaws.com/file.pdf"
 
     response = file_processing_client.post(
         "/api/v1/files/process",
@@ -926,7 +946,7 @@ def test_file_processing_request_rejects_non_https_url(
     assert response.status_code == 422
     assert body["success"] is False
     assert body["code"] == "REQUEST_VALIDATION_FAILED"
-    assert body["data"]["errors"][0]["field"] == "body.file_url"
+    assert body["data"]["errors"][0]["field"] == "body.download_url"
 
 
 def test_file_processing_request_rejects_unsupported_file_type(
@@ -936,7 +956,7 @@ def test_file_processing_request_rejects_unsupported_file_type(
 
     request_body = VALID_FILE_PROCESSING_REQUEST.copy()
     request_body["file_name"] = "project-guide.docx"
-    request_body["file_type"] = "DOCX"
+    request_body["file_type"] = "docx"
 
     response = file_processing_client.post(
         "/api/v1/files/process",
@@ -948,6 +968,24 @@ def test_file_processing_request_rejects_unsupported_file_type(
     assert response.status_code == 422
     assert body["success"] is False
     assert body["code"] == "REQUEST_VALIDATION_FAILED"
+    assert body["data"]["errors"][0]["field"] == "body.file_type"
+
+
+def test_file_processing_request_normalizes_uppercase_pdf_type(
+    file_processing_client: TestClient,
+) -> None:
+    """대문자 PDF 파일 타입을 외부 응답의 소문자 pdf로 정규화한다."""
+
+    request_body = VALID_FILE_PROCESSING_REQUEST.copy()
+    request_body["file_type"] = "PDF"
+
+    response = file_processing_client.post(
+        "/api/v1/files/process",
+        json=request_body,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["file_type"] == "pdf"
 
 
 def test_file_processing_request_rejects_pdf_without_pdf_extension(
@@ -957,7 +995,7 @@ def test_file_processing_request_rejects_pdf_without_pdf_extension(
 
     request_body = VALID_FILE_PROCESSING_REQUEST.copy()
     request_body["file_name"] = "project-guide.txt"
-    request_body["file_type"] = "PDF"
+    request_body["file_type"] = "pdf"
 
     response = file_processing_client.post(
         "/api/v1/files/process",
@@ -998,7 +1036,7 @@ def test_file_processing_request_rejects_non_positive_identifiers(
     """0 이하의 사용자 및 파일 식별자를 거부한다."""
 
     request_body = VALID_FILE_PROCESSING_REQUEST.copy()
-    request_body["users_idx"] = 0
+    request_body["user_idx"] = 0
     request_body["file_idx"] = -1
 
     response = file_processing_client.post(
@@ -1012,7 +1050,7 @@ def test_file_processing_request_rejects_non_positive_identifiers(
     assert response.status_code == 422
     assert body["success"] is False
     assert body["code"] == "REQUEST_VALIDATION_FAILED"
-    assert "body.users_idx" in invalid_fields
+    assert "body.user_idx" in invalid_fields
     assert "body.file_idx" in invalid_fields
 
 
