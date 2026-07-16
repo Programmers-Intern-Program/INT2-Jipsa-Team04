@@ -1,5 +1,6 @@
 package com.jipsa.auth;
 
+import com.jipsa.common.ApiResponse;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -26,10 +27,12 @@ public class AuthController {
      * POST /api/v1/auth/oauth/google — 구글 로그인(최초 시 계정 자동 생성).
      *
      * <p>성공 시 HTTP 200과 함께 {@link LoginResult}({@code accessToken, refreshToken, isNewUser})를
-     * {@code ApiResponse}로 감싸지 않고 그대로 반환한다.
+     * 공통 응답 규칙에 따라 {@link ApiResponse}로 감싸 반환한다 — 실패 응답(GlobalExceptionHandler)과
+     * 동일하게 {@code {success, data, error}} 구조를 갖는다.
      */
     @PostMapping("/oauth/google")
-    public LoginResult googleLogin(@Valid @RequestBody GoogleLoginRequest request) {
-        return authService.loginWithGoogle(request.authorizationCode());
+    public ApiResponse<LoginResult> googleLogin(@Valid @RequestBody GoogleLoginRequest request) {
+        LoginResult loginResult = authService.loginWithGoogle(request.authorizationCode());
+        return ApiResponse.ok(loginResult);
     }
 }

@@ -11,6 +11,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
@@ -51,9 +52,11 @@ class AuthControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"authorizationCode\":\"valid-code\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.accessToken").value("access-jwt"))
-                .andExpect(jsonPath("$.refreshToken").value("refresh-raw"))
-                .andExpect(jsonPath("$.isNewUser").value(true));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.accessToken").value("access-jwt"))
+                .andExpect(jsonPath("$.data.refreshToken").value("refresh-raw"))
+                .andExpect(jsonPath("$.data.isNewUser").value(true))
+                .andExpect(jsonPath("$.error").value(nullValue()));
 
         verify(authService).loginWithGoogle("valid-code");
     }
