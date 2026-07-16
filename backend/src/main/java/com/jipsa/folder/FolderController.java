@@ -1,8 +1,8 @@
 package com.jipsa.folder;
 
+import com.jipsa.common.CurrentUserProvider;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -12,22 +12,25 @@ import java.util.Map;
 public class FolderController {
 
     private final FolderService folderService;
+    private final CurrentUserProvider currentUserProvider;
 
-    public FolderController(FolderService folderService) {
+    public FolderController(FolderService folderService, CurrentUserProvider currentUserProvider) {
         this.folderService = folderService;
+        this.currentUserProvider = currentUserProvider;
     }
 
     /** GET /api/v1/folders — 본인 소유 전체 평면 목록. */
     @GetMapping
-    public FolderListResponse list(@AuthenticationPrincipal Long userId) {
+    public FolderListResponse list() {
+        Long userId = currentUserProvider.requireUserId();
         return new FolderListResponse(folderService.list(userId));
     }
 
     /** POST /api/v1/folders — parentFolderId 미지정 시 루트에 생성. */
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public CreateFolderResponse create(@AuthenticationPrincipal Long userId,
-                                        @Valid @RequestBody CreateFolderRequest request) {
+    public CreateFolderResponse create(@Valid @RequestBody CreateFolderRequest request) {
+        Long userId = currentUserProvider.requireUserId();
         Long folderId = folderService.create(userId, request.name(), request.parentFolderId());
         return new CreateFolderResponse(folderId);
     }
@@ -39,9 +42,9 @@ public class FolderController {
      * 구분해야 하는데, record + 기본 Jackson 역직렬화로는 두 경우 모두 null이 되어 구분이 안 된다.
      */
     @PatchMapping("/{id}")
-    public SuccessResponse update(@AuthenticationPrincipal Long userId,
-                                   @PathVariable Long id,
+    public SuccessResponse update(@PathVariable Long id,
                                    @RequestBody Map<String, Object> body) {
+        Long userId = currentUserProvider.requireUserId();
         boolean nameProvided = body.containsKey("name");
         String name = nameProvided ? asString(body.get("name")) : null;
 
@@ -54,7 +57,8 @@ public class FolderController {
 
     /** DELETE /api/v1/folders/{id} — 하위 폴더 전부 재귀 삭제, 삭제 전 소유자 검증. */
     @DeleteMapping("/{id}")
-    public SuccessResponse delete(@AuthenticationPrincipal Long userId, @PathVariable Long id) {
+    public SuccessResponse delete(@PathVariable Long id) {
+        Long userId = currentUserProvider.requireUserId();
         folderService.delete(userId, id);
         return SuccessResponse.ok();
     }
