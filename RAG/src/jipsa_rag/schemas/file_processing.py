@@ -168,7 +168,7 @@ class FileProcessingRequest(BaseModel):
 
 
 class FileProcessingAcceptedResponse(BaseModel):
-    """파일 다운로드와 검증이 완료되었을 때 반환하는 데이터."""
+    """파일 다운로드, 검증 및 문서 파싱이 완료되었을 때 반환하는 데이터."""
 
     # 응답 스키마에 정의되지 않은 내부 데이터가
     # 외부 응답에 포함되지 않도록 제한한다.
@@ -217,8 +217,20 @@ class FileProcessingAcceptedResponse(BaseModel):
         examples=[True],
     )
 
-    processing_status: Literal["VALIDATED"] = Field(
-        default="VALIDATED",
-        description="원본 파일 다운로드 및 검증 완료 상태",
-        examples=["VALIDATED"],
+    page_count: int = Field(
+        gt=0,
+        description="PDF 파서가 확인한 원본 문서 전체 페이지 수",
+        examples=[10],
+    )
+
+    text_unit_count: int = Field(
+        gt=0,
+        description="실제 추출 텍스트가 존재하는 페이지 단위 수",
+        examples=[9],
+    )
+
+    processing_status: Literal["PARSED"] = Field(
+        default="PARSED",
+        description="원본 파일 다운로드, 검증 및 문서 파싱 완료 상태",
+        examples=["PARSED"],
     )

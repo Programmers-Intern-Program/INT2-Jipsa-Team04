@@ -57,6 +57,60 @@ class ErrorCode(Enum):
         message="The request conflicts with the current resource state.",
     )
 
+    # 문서 파서가 등록되지 않은 파일 형식을 요청한 경우 사용한다.
+    #
+    # 현재 요청 스키마는 PDF만 허용하지만 DOCX, XLSX 및 PPTX가
+    # 순차적으로 추가될 때 Factory 등록 여부를 명확하게 표현하기 위해
+    # API 오류 코드도 문서 파서 기준으로 분리한다.
+    UNSUPPORTED_DOCUMENT_TYPE = ErrorDefinition(
+        status_code=HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+        code="UNSUPPORTED_DOCUMENT_TYPE",
+        message="The document type is not supported.",
+    )
+
+    # 다운로드 형식 검증은 통과했지만 문서 내부 구조가 손상되어
+    # 형식별 파서가 문서로 해석하지 못한 경우 사용한다.
+    INVALID_DOCUMENT = ErrorDefinition(
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        code="INVALID_DOCUMENT",
+        message="The document structure is invalid.",
+    )
+
+    # 현재 파일 처리 요청에는 문서 비밀번호가 포함되지 않으므로
+    # 암호화 문서는 처리할 수 없는 입력으로 구분한다.
+    ENCRYPTED_DOCUMENT = ErrorDefinition(
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        code="ENCRYPTED_DOCUMENT",
+        message="Encrypted documents are not supported.",
+    )
+
+    # 문서 구조는 읽었지만 특정 페이지 등의 원본 위치에서
+    # 텍스트 추출이 실패한 경우 사용한다.
+    DOCUMENT_TEXT_EXTRACTION_FAILED = ErrorDefinition(
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        code="DOCUMENT_TEXT_EXTRACTION_FAILED",
+        message="Text could not be extracted from the document.",
+    )
+
+    # 이미지 기반 스캔 PDF처럼 문서 전체에서 검색 가능한
+    # 텍스트 레이어가 발견되지 않은 경우 사용한다.
+    DOCUMENT_TEXT_NOT_FOUND = ErrorDefinition(
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        code="DOCUMENT_TEXT_NOT_FOUND",
+        message="No extractable text was found in the document.",
+    )
+
+    # 검증이 끝난 임시 파일이 사라졌거나 파일 시스템 문제로
+    # 문서 바이트를 읽지 못한 경우 사용한다.
+    #
+    # 정상적인 사용자 입력 오류가 아니라 서버 내부 파일 처리
+    # 생명주기 또는 파일 시스템 문제이므로 500 응답으로 처리한다.
+    DOCUMENT_READ_FAILED = ErrorDefinition(
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        code="DOCUMENT_READ_FAILED",
+        message="The document could not be read.",
+    )
+
     FILE_TOO_LARGE = ErrorDefinition(
         status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
         code="FILE_TOO_LARGE",
