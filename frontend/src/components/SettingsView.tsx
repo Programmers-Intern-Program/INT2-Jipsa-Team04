@@ -9,6 +9,8 @@ import {
   Zap
 } from "lucide-react";
 import type { AISettings } from "../types";
+import { getStorageUsage } from "../api/files";
+import { formatBytes } from "../utils/formatBytes";
 
 interface SettingsViewProps {
   user: { name: string; email: string; role: string } | null;
@@ -19,11 +21,26 @@ interface SettingsViewProps {
 export default function SettingsView({ user, committedSettings, onSaveSettings }: SettingsViewProps) {
   const [localSettings, setLocalSettings] = useState<AISettings>({ ...committedSettings });
   const [isSaving, setIsSaving] = useState(false);
+  const [storage, setStorage] = useState<{ usedBytes: number; quotaBytes: number } | null>(null);
 
   // Sync state if committedSettings changes from parent
   useEffect(() => {
     setLocalSettings({ ...committedSettings });
   }, [committedSettings]);
+
+  useEffect(() => {
+    getStorageUsage()
+        .then(setStorage)
+        .catch((err) => {
+          console.warn("[files] GET /api/v1/files/storage 실패 - 사용량 표시 보류(로그인 연동 전이면 정상):", err);
+          setStorage(null);
+        });
+  }, []);
+
+  const usedBytes = storage?.usedBytes ?? 0;
+  const quotaBytes = storage?.quotaBytes ?? 0;
+  const usedPercent = quotaBytes > 0 ? Math.min(100, Math.round((usedBytes / quotaBytes) * 100)) : 0;
+  const freeBytes = Math.max(0, quotaBytes - usedBytes);
 
   // Check if there are unsaved changes
   const hasChanges = JSON.stringify(localSettings) !== JSON.stringify(committedSettings);
@@ -136,14 +153,15 @@ export default function SettingsView({ user, committedSettings, onSaveSettings }
                 <HardDrive className="w-5 h-5 text-primary" />
                 스토리지 사용량
               </h4>
-              <span className="text-primary font-bold text-xs bg-primary/5 px-2.5 py-1 rounded-full">82% 사용 중</span>
+              <span className="text-primary font-bold text-xs bg-primary/5 px-2.5 py-1 rounded-full">
+                {storage ? `${usedPercent}% 사용 중` : "불러오는 중"}
+              </span>
             </div>
 
             {/* Horizontal Stacked Progress Bar */}
             <div className="h-3 w-full bg-surface-container rounded-full overflow-hidden mb-4 flex">
-              <div className="h-full bg-primary" style={{ width: "42%" }} title="문서 41.2 GB"></div>
-              <div className="h-full bg-secondary" style={{ width: "40%" }} title="미디어 38.5 GB"></div>
-              <div className="h-full bg-outline-variant" style={{ width: "18%" }} title="여유 공간"></div>
+              <div className="h-full bg-primary" style={{ width: `${usedPercent}%` }} title={`사용 중 ${formatBytes(usedBytes)}`}></div>
+              <div className="h-full bg-outline-variant" style={{ width: `${100 - usedPercent}%` }} title={`여유 공간 ${formatBytes(freeBytes)}`}></div>
             </div>
 
             <div className="space-y-3" id="storage-breakdown">
@@ -151,19 +169,19 @@ export default function SettingsView({ user, committedSettings, onSaveSettings }
                 <span className="flex items-center gap-2 text-outline font-semibold">
                   <span className="w-2.5 h-2.5 rounded-full bg-primary"></span> 문서
                 </span>
-                <span className="font-bold text-on-surface">41.2 GB</span>
-              </div>
-              <div className="flex justify-between items-center text-body-sm">
-                <span className="flex items-center gap-2 text-outline font-semibold">
-                  <span className="w-2.5 h-2.5 rounded-full bg-secondary"></span> 미디어
-                </span>
-                <span className="font-bold text-on-surface">38.5 GB</span>
+                <span className="font-bold text-on-surface">{storage ? formatBytes(usedBytes) : "-"}</span>
               </div>
               <div className="flex justify-between items-center text-body-sm">
                 <span className="flex items-center gap-2 text-outline font-semibold">
                   <span className="w-2.5 h-2.5 rounded-full bg-outline-variant"></span> 여유 공간
                 </span>
-                <span className="font-bold text-on-surface">20.3 GB</span>
+                <span className="font-bold text-on-surface">{storage ? formatBytes(freeBytes) : "-"}</span>
+              </div>
+              <div className="flex justify-between items-center text-body-sm">
+                <span className="flex items-center gap-2 text-outline font-semibold">
+                  <span className="w-2.5 h-2.5 rounded-full bg-surface-container"></span> 총 용량
+                </span>
+                <span className="font-bold text-on-surface">{storage ? formatBytes(quotaBytes) : "-"}</span>
               </div>
             </div>
 

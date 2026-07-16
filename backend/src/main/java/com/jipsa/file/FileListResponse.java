@@ -4,6 +4,8 @@ import java.util.List;
 
 public record FileListResponse(
         List<FileListItem> items,
-        long total
+        long total,
+        int page,
+        int size
 ) {
 }

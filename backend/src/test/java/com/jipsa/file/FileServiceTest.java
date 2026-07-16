@@ -7,18 +7,28 @@ import com.jipsa.folder.Folder;
 import com.jipsa.folder.FolderNotFoundException;
 import com.jipsa.folder.FolderRepository;
 import com.jipsa.job.JobRepository;
+import com.jipsa.job.JobService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.io.ByteArrayResource;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
+import java.time.LocalDateTime;
 import java.util.Optional;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 
 @ExtendWith(MockitoExtension.class)
 class FileServiceTest {
@@ -31,13 +41,17 @@ class FileServiceTest {
     private FolderRepository folderRepository;
     @Mock
     private S3Service s3Service;
+    @Mock
+    private FileMetadataRepository fileMetadataRepository;
+    @Mock
+    private JobService jobService;
 
     private FileService fileService;
 
     @BeforeEach
     void setUp() {
-        fileService = new FileService(fileRepository, jobRepository, folderRepository,
-                s3Service, "test-bucket");
+        fileService = new FileService(fileRepository, jobRepository, jobService, folderRepository,
+                fileMetadataRepository, s3Service, "test-bucket", 1000L);
     }
 
     private File ownedFile() {
@@ -137,5 +151,162 @@ class FileServiceTest {
         assertThat(result.filename()).isEqualTo("test.pdf");
         assertThat(result.contentType()).isEqualTo("application/pdf");
         assertThat(result.contentLength()).isEqualTo(3L);
+    }
+
+    @Test
+    void getDetailReturnsSummaryAndTagsFromMetadata() {
+        File file = ownedFile();
+        file.setName("doc.pdf");
+        FileMetadata metadata = new FileMetadata();
+        metadata.setFileId(1L);
+        metadata.setSummary("계약 요약");
+        metadata.setTags("[\"세금\",\"계약\"]");
+        when(fileRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(file));
+        when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(metadata));
+
+        FileDetailResponse result = fileService.getDetail(1L, 1L);
+
+        assertThat(result.summary()).isEqualTo("계약 요약");
+        assertThat(result.tags()).containsExactly("세금", "계약");
+        assertThat(result.docType()).isEqualTo("");
+        assertThat(result.entities()).isNotNull();
+        assertThat(result.entities().dates()).isEmpty();
+    }
+
+    @Test
+    void getDetailReturnsEmptyMetadataWhenAbsent() {
+        File file = ownedFile();
+        when(fileRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(file));
+        when(fileMetadataRepository.findById(1L)).thenReturn(Optional.empty());
+
+        FileDetailResponse result = fileService.getDetail(1L, 1L);
+
+        assertThat(result.summary()).isEqualTo("");
+        assertThat(result.tags()).isEmpty();
+        assertThat(result.entities()).isNotNull();
+    }
+
+    @Test
+    void listReturnsPageMetadata() {
+        File file = ownedFile();
+        file.setName("a.pdf");
+        when(fileRepository.search(eq(1L), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(),
+                any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(file), PageRequest.of(0, 20), 1));
+
+        FileListResponse result = fileService.list(1L, null, null, null, null, null, null, 0);
+
+        assertThat(result.items()).hasSize(1);
+        assertThat(result.total()).isEqualTo(1);
+        assertThat(result.page()).isEqualTo(0);
+        assertThat(result.size()).isEqualTo(20);
+    }
+
+    @Test
+    void moveFilesToFolderUpdatesAllFiles() {
+        File first = ownedFile();
+        File second = ownedFile();
+        second.setId(2L);
+        when(fileRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(first));
+        when(fileRepository.findByIdAndDeletedAtIsNull(2L)).thenReturn(Optional.of(second));
+        when(folderRepository.findByIdAndUsersId(5L, 1L)).thenReturn(Optional.of(new Folder()));
+
+        fileService.moveFilesToFolder(1L, List.of(1L, 2L), 5L);
+
+        assertThat(first.getFolderId()).isEqualTo(5L);
+        assertThat(second.getFolderId()).isEqualTo(5L);
+    }
+
+    @Test
+    void moveFilesToRootAcceptsNullFolder() {
+        File file = ownedFile();
+        file.setFolderId(9L);
+        when(fileRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(file));
+
+        fileService.moveFilesToFolder(1L, List.of(1L), null);
+
+        assertThat(file.getFolderId()).isNull();
+    }
+
+    @Test
+    void moveFilesRejectsBatchContainingAnotherUsersFile() {
+        File mine = ownedFile();
+        mine.setFolderId(9L);
+        File theirs = ownedFile();
+        theirs.setId(2L);
+        theirs.setUsersId(2L);
+        when(fileRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(mine));
+        when(fileRepository.findByIdAndDeletedAtIsNull(2L)).thenReturn(Optional.of(theirs));
+
+        assertThatThrownBy(() -> fileService.moveFilesToFolder(1L, List.of(1L, 2L), null))
+                .isInstanceOf(ForbiddenException.class);
+
+        assertThat(mine.getFolderId()).isEqualTo(9L);
+    }
+
+    @Test
+    void moveFilesRejectsEmptyList() {
+        assertThatThrownBy(() -> fileService.moveFilesToFolder(1L, List.of(), null))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void restoreClearsDeletedAtAndReenqueuesIngest() {
+        File file = ownedFile();
+        file.setUploadsId(7L);
+        file.setStatus(FileStatus.DELETED);
+        file.setDeletedAt(LocalDateTime.now());
+        when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
+
+        fileService.restore(1L, 1L);
+
+        assertThat(file.getDeletedAt()).isNull();
+        assertThat(file.getStatus()).isEqualTo(FileStatus.UPLOADED);
+        verify(jobService).enqueueIngest(1L, 7L);
+    }
+
+    @Test
+    void restoreRejectsFileOwnedByAnotherUser() {
+        File file = ownedFile();
+        file.setUsersId(2L);
+        file.setDeletedAt(LocalDateTime.now());
+        when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
+
+        assertThatThrownBy(() -> fileService.restore(1L, 1L))
+                .isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void restoreRejectsFileThatIsNotDeleted() {
+        File file = ownedFile();
+        when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
+
+        assertThatThrownBy(() -> fileService.restore(1L, 1L))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void listTrashReturnsOnlyDeletedFiles() {
+        File file = ownedFile();
+        file.setName("gone.pdf");
+        file.setDeletedAt(LocalDateTime.now());
+        when(fileRepository.findByUsersIdAndDeletedAtIsNotNullOrderByDeletedAtDesc(eq(1L), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(file), PageRequest.of(0, 20), 1));
+
+        FileListResponse result = fileService.listTrash(1L, 0);
+
+        assertThat(result.items()).hasSize(1);
+        assertThat(result.items().get(0).name()).isEqualTo("gone.pdf");
+        assertThat(result.total()).isEqualTo(1);
+    }
+
+    @Test
+    void getStorageUsageReturnsSumAndQuota() {
+        when(fileRepository.sumSizeBytesByUsersId(1L)).thenReturn(2048L);
+
+        StorageUsageResponse result = fileService.getStorageUsage(1L);
+
+        assertThat(result.usedBytes()).isEqualTo(2048L);
+        assertThat(result.quotaBytes()).isEqualTo(1000L);
     }
 }

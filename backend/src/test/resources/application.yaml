@@ -12,3 +12,5 @@ app:
     bucket: test-bucket
   aws:
     region: ap-northeast-2
+  ingest:
+    enabled: false

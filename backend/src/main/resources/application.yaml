@@ -29,3 +29,11 @@ app:
     bucket: ${S3_BUCKET}
   aws:
     region: ${AWS_REGION:ap-northeast-2}
+  ingest:
+    enabled: true
+    poll-interval-ms: 2000
+    batch-size: 5
+    ownership-ttl-ms: 60000
+    retry-backoff-ms: 5000
+  storage:
+    quota-bytes: 107374182400
