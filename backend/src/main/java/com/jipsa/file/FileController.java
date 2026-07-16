@@ -17,6 +17,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.charset.StandardCharsets;
+import org.springframework.format.annotation.DateTimeFormat;
+
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/v1/files")
@@ -35,9 +38,12 @@ public class FileController {
             @RequestParam(required = false) Long folderId,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String docType,
+            @RequestParam(required = false) String tags,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
             @RequestParam(defaultValue = "0") int page) {
         Long userId = currentUserProvider.requireUserId();
-        return fileService.list(userId, folderId, keyword, docType, page);
+        return fileService.list(userId, folderId, keyword, docType, tags, dateFrom, dateTo, page);
     }
 
     @GetMapping("/{id}")
@@ -59,10 +65,36 @@ public class FileController {
         return new SuccessResponse(true);
     }
 
+    @GetMapping("/trash")
+    public FileListResponse trash(@RequestParam(defaultValue = "0") int page) {
+        Long userId = currentUserProvider.requireUserId();
+        return fileService.listTrash(userId, page);
+    }
+
+    @PatchMapping("/{id}/restore")
+    public SuccessResponse restore(@PathVariable Long id) {
+        Long userId = currentUserProvider.requireUserId();
+        fileService.restore(userId, id);
+        return new SuccessResponse(true);
+    }
+
+    @GetMapping("/storage")
+    public StorageUsageResponse storage() {
+        Long userId = currentUserProvider.requireUserId();
+        return fileService.getStorageUsage(userId);
+    }
+
     @PatchMapping("/{id}")
     public SuccessResponse move(@PathVariable Long id, @RequestBody MoveFileRequest request) {
         Long userId = currentUserProvider.requireUserId();
         fileService.moveToFolder(userId, id, request.folderId());
+        return new SuccessResponse(true);
+    }
+
+    @PatchMapping("/batch/move")
+    public SuccessResponse moveBatch(@RequestBody MoveFilesRequest request) {
+        Long userId = currentUserProvider.requireUserId();
+        fileService.moveFilesToFolder(userId, request.fileIds(), request.folderId());
         return new SuccessResponse(true);
     }
 

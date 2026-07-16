@@ -1,5 +1,8 @@
 package com.jipsa.file;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jipsa.common.BadRequestException;
 import com.jipsa.common.exception.FileNotFoundException;
 import com.jipsa.common.exception.ForbiddenException;
@@ -7,6 +10,7 @@ import com.jipsa.folder.FolderNotFoundException;
 import com.jipsa.folder.FolderRepository;
 import com.jipsa.job.Job;
 import com.jipsa.job.JobRepository;
+import com.jipsa.job.JobService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -15,7 +19,9 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 
 @Service
@@ -25,35 +31,52 @@ public class FileService {
 
     private final FileRepository fileRepository;
     private final JobRepository jobRepository;
+    private final JobService jobService;
     private final FolderRepository folderRepository;
+    private final FileMetadataRepository fileMetadataRepository;
     private final S3Service s3Service;
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private final String bucket;
+    private final long storageQuotaBytes;
 
     public FileService(FileRepository fileRepository,
                        JobRepository jobRepository,
+                       JobService jobService,
                        FolderRepository folderRepository,
+                       FileMetadataRepository fileMetadataRepository,
                        S3Service s3Service,
-                       @Value("${app.s3.bucket}") String bucket) {
+                       @Value("${app.s3.bucket}") String bucket,
+                       @Value("${app.storage.quota-bytes:107374182400}") long storageQuotaBytes) {
         this.fileRepository = fileRepository;
         this.jobRepository = jobRepository;
+        this.jobService = jobService;
         this.folderRepository = folderRepository;
+        this.fileMetadataRepository = fileMetadataRepository;
         this.s3Service = s3Service;
         this.bucket = bucket;
+        this.storageQuotaBytes = storageQuotaBytes;
     }
 
     @Transactional(readOnly = true)
-    public FileListResponse list(Long userId, Long folderId, String keyword, String docType, int page) {
+    public FileListResponse list(Long userId, Long folderId, String keyword, String docType,
+                                 String tags, LocalDate dateFrom, LocalDate dateTo, int page) {
         Pageable pageable = PageRequest.of(page, PAGE_SIZE, Sort.by(Sort.Direction.DESC, "createdAt"));
-        Page<File> result = fileRepository.search(userId, folderId, escapeLike(keyword), docType, pageable);
+        LocalDateTime from = dateFrom == null ? null : dateFrom.atStartOfDay();
+        LocalDateTime to = dateTo == null ? null : dateTo.atTime(LocalTime.MAX);
+        Page<File> result = fileRepository.search(userId, folderId, escapeLike(keyword), docType,
+                blankToNull(tags), from, to, pageable);
         List<FileListItem> items = result.getContent().stream()
                 .map(this::toListItem)
                 .toList();
-        return new FileListResponse(items, result.getTotalElements());
+        return new FileListResponse(items, result.getTotalElements(), result.getNumber(), result.getSize());
     }
 
     @Transactional(readOnly = true)
     public FileDetailResponse getDetail(Long userId, Long fileId) {
         File file = requireOwnedFile(userId, fileId);
+        FileMetadata metadata = fileMetadataRepository.findById(fileId).orElse(null);
+        String summary = metadata != null && metadata.getSummary() != null ? metadata.getSummary() : "";
+        List<String> tags = metadata != null ? parseStringList(metadata.getTags()) : List.of();
         return new FileDetailResponse(
                 file.getName(),
                 file.getFileType(),
@@ -61,10 +84,10 @@ public class FileService {
                 file.getFolderId(),
                 file.getOwnerName(),
                 file.isStar(),
-                null,
-                null,
-                null,
-                null,
+                summary,
+                tags,
+                "",
+                new FileDetailResponse.Entities(List.of(), List.of(), List.of(), null),
                 file.getUpdatedAt(),
                 file.getStatus(),
                 file.getProcessingStage(),
@@ -92,6 +115,40 @@ public class FileService {
         file.setDeletedAt(LocalDateTime.now());
     }
 
+    @Transactional(readOnly = true)
+    public FileListResponse listTrash(Long userId, int page) {
+        Pageable pageable = PageRequest.of(page, PAGE_SIZE);
+        Page<File> result = fileRepository
+                .findByUsersIdAndDeletedAtIsNotNullOrderByDeletedAtDesc(userId, pageable);
+        List<FileListItem> items = result.getContent().stream()
+                .map(this::toListItem)
+                .toList();
+        return new FileListResponse(items, result.getTotalElements(), result.getNumber(), result.getSize());
+    }
+
+    @Transactional
+    public void restore(Long userId, Long fileId) {
+        File file = fileRepository.findById(fileId)
+                .orElseThrow(() -> new FileNotFoundException("파일을 찾을 수 없습니다: " + fileId));
+        if (!file.getUsersId().equals(userId)) {
+            throw new ForbiddenException("해당 파일에 접근할 권한이 없습니다.");
+        }
+        if (file.getDeletedAt() == null) {
+            throw new BadRequestException("삭제되지 않은 파일입니다: " + fileId);
+        }
+        file.setDeletedAt(null);
+        file.setStatus(FileStatus.UPLOADED);
+        file.setProcessingStage(null);
+        file.setErrorMessage(null);
+        jobService.enqueueIngest(file.getId(), file.getUploadsId());
+    }
+
+    @Transactional(readOnly = true)
+    public StorageUsageResponse getStorageUsage(Long userId) {
+        long used = fileRepository.sumSizeBytesByUsersId(userId);
+        return new StorageUsageResponse(used, storageQuotaBytes);
+    }
+
     @Transactional
     public void moveToFolder(Long userId, Long fileId, Long folderId) {
         File file = requireOwnedFile(userId, fileId);
@@ -100,6 +157,21 @@ public class FileService {
                     .orElseThrow(() -> new FolderNotFoundException(folderId));
         }
         file.setFolderId(folderId);
+    }
+
+    @Transactional
+    public void moveFilesToFolder(Long userId, List<Long> fileIds, Long folderId) {
+        if (fileIds == null || fileIds.isEmpty()) {
+            throw new BadRequestException("이동할 파일이 없습니다.");
+        }
+        List<File> files = fileIds.stream()
+                .map(fileId -> requireOwnedFile(userId, fileId))
+                .toList();
+        if (folderId != null) {
+            folderRepository.findByIdAndUsersId(folderId, userId)
+                    .orElseThrow(() -> new FolderNotFoundException(folderId));
+        }
+        files.forEach(file -> file.setFolderId(folderId));
     }
 
     @Transactional
@@ -150,5 +222,21 @@ public class FileService {
             return null;
         }
         return keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    }
+
+    private List<String> parseStringList(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            List<String> parsed = OBJECT_MAPPER.readValue(json, new TypeReference<List<String>>() {});
+            return parsed == null ? List.of() : parsed;
+        } catch (JsonProcessingException e) {
+            return List.of();
+        }
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 }

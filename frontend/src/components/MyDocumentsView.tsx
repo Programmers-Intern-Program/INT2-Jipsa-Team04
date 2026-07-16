@@ -22,13 +22,15 @@ import {
   Star,
   Clock,
   Trash2,
-  ShieldAlert
+  ShieldAlert,
+  Undo2
 } from "lucide-react";
 import type { Document, Folder as FolderType } from "../types";
 import { formatBytes } from "../utils/formatBytes";
 import { mockFolders } from "../mocks/mockData";
 import { getFolderPath, getFolderAncestors, isDescendantOrSelf, ensureFolderPath } from "../utils/folderTree";
 import { listFolders, createFolder, deleteFolder } from "../api/folders";
+import { getStorageUsage, listFiles, listTrash, moveFiles, restoreFile, toDocument } from "../api/files";
 
 interface MyDocumentsViewProps {
   documents: Document[];
@@ -51,6 +53,12 @@ export default function MyDocumentsView({
   const [selectedFolder, setSelectedFolder] = useState<number | null>(null);
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [selectedSecurity, setSelectedSecurity] = useState<string | null>(null);
+  const [serverSearchDocs, setServerSearchDocs] = useState<Document[] | null>(null);
+  const [searchTotal, setSearchTotal] = useState(0);
+  const [searchSize, setSearchSize] = useState(20);
+  const [searchPage, setSearchPage] = useState(0);
+  const [trashDocs, setTrashDocs] = useState<Document[] | null>(null);
+  const [storage, setStorage] = useState<{ usedBytes: number; quotaBytes: number } | null>(null);
 
   // AI Organize state
   const [isSmartMenuOpen, setIsSmartMenuOpen] = useState(false);
@@ -165,19 +173,89 @@ export default function MyDocumentsView({
   const [isCreatingNewFolderInMove, setIsCreatingNewFolderInMove] = useState(false);
   const [newFolderNameInMove, setNewFolderNameInMove] = useState("");
 
+  useEffect(() => {
+    setSearchPage(0);
+  }, [searchQuery, selectedType]);
+
+  useEffect(() => {
+    const keyword = searchQuery.trim();
+    if (!keyword || currentTab !== "mydrive") {
+      setServerSearchDocs(null);
+      setSearchTotal(0);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      listFiles({ keyword, docType: selectedType ?? undefined, page: searchPage })
+          .then((res) => {
+            if (cancelled) return;
+            setServerSearchDocs(res.items.map(toDocument));
+            setSearchTotal(res.total);
+            setSearchSize(res.size);
+          })
+          .catch((err) => {
+            if (cancelled) return;
+            console.warn("[files] GET /api/v1/files 실패 - mock 데이터로 폴백(로그인 연동 전이면 정상):", err);
+            setServerSearchDocs(null);
+            setSearchTotal(0);
+          });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [searchQuery, selectedType, searchPage, currentTab]);
+
+  useEffect(() => {
+    if (currentTab !== "trash") {
+      setTrashDocs(null);
+      return;
+    }
+    let cancelled = false;
+    listTrash(0)
+        .then((res) => {
+          if (cancelled) return;
+          setTrashDocs(res.items.map(toDocument));
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          console.warn("[files] GET /api/v1/files/trash 실패 - 빈 목록 표시(로그인 연동 전이면 정상):", err);
+          setTrashDocs([]);
+        });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentTab]);
+
+  useEffect(() => {
+    getStorageUsage()
+        .then(setStorage)
+        .catch((err) => {
+          console.warn("[files] GET /api/v1/files/storage 실패 - 사용량 표시 보류(로그인 연동 전이면 정상):", err);
+          setStorage(null);
+        });
+  }, []);
+
+  const storagePercent = storage && storage.quotaBytes > 0
+      ? Math.min(100, Math.round((storage.usedBytes / storage.quotaBytes) * 100))
+      : 0;
+
   // Filter logic: match exact folder or nested sub-folder
   const filteredDocuments = useMemo(() => {
-    return documents.filter((doc) => {
-      const matchesSearch = 
-        doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        doc.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        doc.summary.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        doc.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
-      
+    const source = currentTab === "trash"
+        ? (trashDocs ?? [])
+        : (serverSearchDocs ?? documents);
+    return source.filter((doc) => {
+      const matchesSearch =
+          doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          doc.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          doc.summary.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          doc.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
+
       let matchesTabAndFolder = true;
       if (currentTab === "mydrive") {
-        matchesTabAndFolder = selectedFolder === null || 
-          isDescendantOrSelf(doc.folderId, selectedFolder, folders);
+        matchesTabAndFolder = selectedFolder === null ||
+            isDescendantOrSelf(doc.folderId, selectedFolder, folders);
       } else if (currentTab === "starred") {
         matchesTabAndFolder = starredDocIds.includes(doc.id);
       } else if (currentTab === "secure") {
@@ -185,15 +263,15 @@ export default function MyDocumentsView({
       } else if (currentTab === "recent") {
         matchesTabAndFolder = true;
       } else if (currentTab === "trash") {
-        matchesTabAndFolder = false;
+        matchesTabAndFolder = true;
       }
-      
+
       const matchesType = !selectedType || doc.fileType === selectedType;
       const matchesSecurity = !selectedSecurity || doc.securityRank === selectedSecurity;
 
       return matchesSearch && matchesTabAndFolder && matchesType && matchesSecurity;
     });
-  }, [documents, searchQuery, selectedFolder, selectedType, selectedSecurity, currentTab, starredDocIds, folders]);
+  }, [documents, serverSearchDocs, trashDocs, searchQuery, selectedFolder, selectedType, selectedSecurity, currentTab, starredDocIds, folders]);
 
   const sortedFilteredDocuments = useMemo(() => {
     if (currentTab === "recent") {
@@ -301,23 +379,34 @@ export default function MyDocumentsView({
   };
 
   const handleMoveDocuments = async (docIds: string[], targetFolder: number | null) => {
+    const fileIds = docIds.map(Number).filter((id) => Number.isFinite(id));
     try {
-      const res = await fetch("/api/documents/move", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ docIds, targetFolder }),
-      });
-      if (!res.ok) throw new Error("파일 이동에 실패했습니다.");
-      const data = await res.json();
-      if (data.success) {
-        onUpdateDocuments(data.documents);
-        setCheckedDocIds([]); // Clear selection
-        alert(`선택하신 ${docIds.length}개의 문서가 '${getFolderPath(targetFolder, folders) || "내 드라이브"}' 폴더로 성공적으로 이동되었습니다.`);
-      }
+      await moveFiles(fileIds, targetFolder);
     } catch (err) {
-      console.error(err);
-      alert("파일 이동 중 오류가 발생했습니다.");
+      console.warn("[files] PATCH /api/v1/files/batch/move 실패 - 로컬 상태만 갱신됨(로그인 연동 전이면 정상):", err);
     }
+    onUpdateDocuments(
+        documents.map((d) => (docIds.includes(d.id) ? { ...d, folderId: targetFolder } : d))
+    );
+    setCheckedDocIds([]);
+    alert(`선택하신 ${docIds.length}개의 문서가 '${getFolderPath(targetFolder, folders) || "내 드라이브"}' 폴더로 성공적으로 이동되었습니다.`);
+  };
+
+  const handleRestoreDocuments = async (docIds: string[]) => {
+    const ids = docIds.map(Number).filter((id) => Number.isFinite(id));
+    const results = await Promise.allSettled(ids.map((id) => restoreFile(id)));
+    const restoredIds = ids.filter((_, i) => results[i].status === "fulfilled").map(String);
+    const failed = results.length - restoredIds.length;
+    if (failed > 0) {
+      console.warn("[files] PATCH /api/v1/files/{id}/restore 일부 실패(로그인 연동 전이면 정상):", failed);
+    }
+    if (restoredIds.length > 0) {
+      setTrashDocs((prev) => (prev ? prev.filter((d) => !restoredIds.includes(d.id)) : prev));
+      alert(`${restoredIds.length}개의 문서를 복원했습니다.`);
+    } else {
+      alert("문서 복원에 실패했습니다.");
+    }
+    setCheckedDocIds([]);
   };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
@@ -496,37 +585,45 @@ export default function MyDocumentsView({
   // DELETE /api/v1/folders/{id}를 fire-and-forget으로 호출한다 — 로그인 연동 전이라
   // 401이 정상일 수 있어 로컬 상태 갱신은 API 응답을 기다리지 않는다.
   // 하위 폴더까지 함께 삭제하고, 포함된 문서는 미분류(루트, folderId: null)로 옮긴다.
-  // 주의: documents의 folderId 재배치는 File API가 아직 없어 로컬 상태에만 반영됨
-  // (File 도메인 연동은 별도 이슈 - com.jipsa.file 완성 후 서버 반영 필요).
   const handleDeleteFolder = (folderId: number, folderName: string) => {
     const collectDescendantIds = (id: number): number[] => {
       const childIds = folders.filter((f) => f.parentFolderId === id).map((f) => f.folderId);
       return [id, ...childIds.flatMap(collectDescendantIds)];
     };
     const idsToDelete = collectDescendantIds(folderId);
-    const affectedDocCount = documents.filter(
-      (d) => d.folderId !== null && idsToDelete.includes(d.folderId)
-    ).length;
+    const affectedDocs = documents.filter(
+        (d) => d.folderId !== null && idsToDelete.includes(d.folderId)
+    );
+    const affectedDocCount = affectedDocs.length;
 
     const subFolderCount = idsToDelete.length - 1;
     const confirmMsg =
-      `'${folderName}' 폴더를 삭제하시겠습니까?` +
-      (subFolderCount > 0 ? `\n하위 폴더 ${subFolderCount}개도 함께 삭제됩니다.` : "") +
-      (affectedDocCount > 0 ? `\n포함된 문서 ${affectedDocCount}개는 [미분류]로 이동됩니다.` : "");
+        `'${folderName}' 폴더를 삭제하시겠습니까?` +
+        (subFolderCount > 0 ? `\n하위 폴더 ${subFolderCount}개도 함께 삭제됩니다.` : "") +
+        (affectedDocCount > 0 ? `\n포함된 문서 ${affectedDocCount}개는 [미분류]로 이동됩니다.` : "");
 
     if (!window.confirm(confirmMsg)) return;
 
-    deleteFolder(folderId).catch((err) => {
-      console.warn("[folders] DELETE /api/v1/folders 실패 - 로컬 상태만 갱신됨(로그인 연동 전이면 정상):", err);
-    });
+    const reassign = affectedDocCount > 0
+        ? moveFiles(affectedDocs.map((d) => Number(d.id)).filter((id) => Number.isFinite(id)), null)
+        : Promise.resolve();
+
+    reassign
+        .catch((err) => {
+          console.warn("[files] PATCH /api/v1/files/batch/move 실패 - 로컬 상태만 갱신됨(로그인 연동 전이면 정상):", err);
+        })
+        .then(() => deleteFolder(folderId))
+        .catch((err) => {
+          console.warn("[folders] DELETE /api/v1/folders 실패 - 로컬 상태만 갱신됨(로그인 연동 전이면 정상):", err);
+        });
 
     setFolders((prev) => prev.filter((f) => !idsToDelete.includes(f.folderId)));
 
     if (affectedDocCount > 0) {
       onUpdateDocuments(
-        documents.map((d) =>
-          d.folderId !== null && idsToDelete.includes(d.folderId) ? { ...d, folderId: null } : d
-        )
+          documents.map((d) =>
+              d.folderId !== null && idsToDelete.includes(d.folderId) ? { ...d, folderId: null } : d
+          )
       );
     }
 
@@ -940,14 +1037,13 @@ export default function MyDocumentsView({
 
             </div>
 
-            {/* Simulated Storage Status */}
             <div className="pt-4 border-t border-outline-variant/30 space-y-2 text-center" id="tree-sidebar-storage">
               <div className="flex justify-between items-center text-[10px] font-bold text-outline">
                 <span>클라우드 총 용량</span>
-                <span>82.3 / 102.8 GB</span>
+                <span>{storage ? `${formatBytes(storage.usedBytes)} / ${formatBytes(storage.quotaBytes)}` : "-"}</span>
               </div>
               <div className="h-1.5 w-full bg-surface-container rounded-full overflow-hidden">
-                <div className="h-full bg-primary rounded-full" style={{ width: "80%" }}></div>
+                <div className="h-full bg-primary rounded-full" style={{ width: `${storagePercent}%` }}></div>
               </div>
             </div>
           </div>
@@ -1109,6 +1205,27 @@ export default function MyDocumentsView({
                   총 {filteredDocuments.length}개
                 </span>
               </div>
+              {serverSearchDocs && (
+                  <div className="flex items-center gap-3" id="vault-server-search-pagination">
+                  <span className="text-[10px] text-outline font-bold">
+                    서버 검색 {searchTotal}건 · {searchPage + 1} / {Math.max(1, Math.ceil(searchTotal / searchSize))} 페이지
+                  </span>
+                    <button
+                        onClick={() => setSearchPage((p) => Math.max(0, p - 1))}
+                        disabled={searchPage === 0}
+                        className="text-[11px] px-2.5 py-1 rounded-full border border-outline-variant font-bold disabled:opacity-40 hover:bg-surface-container cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      이전
+                    </button>
+                    <button
+                        onClick={() => setSearchPage((p) => p + 1)}
+                        disabled={(searchPage + 1) * searchSize >= searchTotal}
+                        className="text-[11px] px-2.5 py-1 rounded-full border border-outline-variant font-bold disabled:opacity-40 hover:bg-surface-container cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      다음
+                    </button>
+                  </div>
+              )}
             </div>
 
             {/* Batch Action Bar */}
@@ -1124,23 +1241,35 @@ export default function MyDocumentsView({
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => {
-                      setMovingDocIds(checkedDocIds);
-                      const firstDoc = documents.find(d => d.id === checkedDocIds[0]);
-                      setMoveTargetFolder(firstDoc ? firstDoc.folderId : null);
-                      setIsMoveModalOpen(true);
-                    }}
-                    className="px-3.5 py-2 bg-primary text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
-                  >
-                    <FolderInput className="w-3.5 h-3.5" /> 폴더로 일괄 이동
-                  </button>
-                  <button
-                    onClick={() => onNavigateToChat(checkedDocIds)}
-                    className="px-3.5 py-2 bg-secondary text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
-                  >
-                    <Sparkles className="w-3.5 h-3.5 animate-pulse" /> AI RAG 일괄 질문
-                  </button>
+                  {currentTab === "trash" && (
+                      <button
+                          onClick={() => handleRestoreDocuments(checkedDocIds)}
+                          className="px-3.5 py-2 bg-primary text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                      >
+                        <Undo2 className="w-3.5 h-3.5" /> 선택 복원
+                      </button>
+                  )}
+                  {currentTab !== "trash" && (
+                      <>
+                        <button
+                            onClick={() => {
+                              setMovingDocIds(checkedDocIds);
+                              const firstDoc = documents.find(d => d.id === checkedDocIds[0]);
+                              setMoveTargetFolder(firstDoc ? firstDoc.folderId : null);
+                              setIsMoveModalOpen(true);
+                            }}
+                            className="px-3.5 py-2 bg-primary text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        >
+                          <FolderInput className="w-3.5 h-3.5" /> 폴더로 일괄 이동
+                        </button>
+                        <button
+                            onClick={() => onNavigateToChat(checkedDocIds)}
+                            className="px-3.5 py-2 bg-secondary text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 animate-pulse" /> AI RAG 일괄 질문
+                        </button>
+                      </>
+                  )}
                 </div>
               </div>
             )}
