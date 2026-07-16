@@ -40,6 +40,10 @@ class OrganizeServiceTest {
     private FolderService folderService;
     @Mock
     private FileService fileService;
+    @Mock
+    private OrganizeInputAssembler organizeInputAssembler;
+    @Mock
+    private AiOrganizeClient aiOrganizeClient;
 
     private OrganizeService organizeService;
 
@@ -48,7 +52,8 @@ class OrganizeServiceTest {
 
     @BeforeEach
     void setUp() {
-        organizeService = new OrganizeService(folderRepository, fileRepository, folderService, fileService);
+        organizeService = new OrganizeService(folderRepository, fileRepository, folderService, fileService,
+                organizeInputAssembler, aiOrganizeClient);
     }
 
     private File ownedFile(Long id) {
@@ -271,5 +276,55 @@ class OrganizeServiceTest {
 
         verify(folderService).create(USER, "제안폴더", 5L);
         verify(fileService).moveToFolder(USER, 10L, 100L);
+    }
+
+    // ---- AI 제안 생성 ----
+
+    @Test
+    void generateProposal_AI_제안을_검증해서_반환한다() {
+        when(folderService.list(USER)).thenReturn(List.of());
+        when(organizeInputAssembler.assemble(USER)).thenReturn(List.of());
+        when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(ownedFile(10L)));
+
+        OrganizeProposal aiResponse = new OrganizeProposal(
+                List.of(new ProposedFolder("t1", "제안폴더", null, null)),
+                List.of(new FileMapping(10L, null, "t1", null)));
+        when(aiOrganizeClient.proposeOrganization(any(), any())).thenReturn(aiResponse);
+
+        OrganizeProposal result = organizeService.generateProposal(USER);
+
+        assertThat(result).isEqualTo(aiResponse);
+        // getCurrentFolderTree 때문에 folderService.list는 호출되지만, 실제 반영(새 폴더 생성/
+        // 파일 이동)은 하지 않아야 한다.
+        verify(folderService, never()).create(any(), any(), any());
+        verify(fileService, never()).moveToFolder(any(), any(), any());
+    }
+
+    @Test
+    void generateProposal_AI가_존재하지않는_파일을_참조하면_예외() {
+        when(folderService.list(USER)).thenReturn(List.of());
+        when(organizeInputAssembler.assemble(USER)).thenReturn(List.of());
+        when(fileRepository.findByIdAndDeletedAtIsNull(999L)).thenReturn(Optional.empty());
+
+        OrganizeProposal aiResponse = new OrganizeProposal(
+                List.of(),
+                List.of(new FileMapping(999L, null, null, null)));
+        when(aiOrganizeClient.proposeOrganization(any(), any())).thenReturn(aiResponse);
+
+        assertThatThrownBy(() -> organizeService.generateProposal(USER))
+                .isInstanceOf(FileNotFoundException.class);
+    }
+
+    @Test
+    void generateProposal_newFolders_mappings가_null이어도_안전하게_처리() {
+        when(folderService.list(USER)).thenReturn(List.of());
+        when(organizeInputAssembler.assemble(USER)).thenReturn(List.of());
+        when(aiOrganizeClient.proposeOrganization(any(), any()))
+                .thenReturn(new OrganizeProposal(null, null));
+
+        OrganizeProposal result = organizeService.generateProposal(USER);
+
+        assertThat(result.newFolders()).isEmpty();
+        assertThat(result.mappings()).isEmpty();
     }
 }

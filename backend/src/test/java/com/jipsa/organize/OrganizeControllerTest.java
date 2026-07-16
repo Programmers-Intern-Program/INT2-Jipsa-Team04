@@ -69,6 +69,21 @@ class OrganizeControllerTest {
     }
 
     @Test
+    void propose_AI_제안을_그대로_반환한다() throws Exception {
+        given(currentUserProvider.requireUserId()).willReturn(USER_ID);
+        given(organizeService.generateProposal(USER_ID)).willReturn(new OrganizeProposal(
+                List.of(new ProposedFolder("t1", "제안폴더", null, null)),
+                List.of(new FileMapping(10L, null, "t1", "새이름.pdf"))));
+
+        mockMvc.perform(post("/api/v1/organize/propose"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.newFolders[0].tempId").value("t1"))
+                .andExpect(jsonPath("$.newFolders[0].name").value("제안폴더"))
+                .andExpect(jsonPath("$.mappings[0].fileId").value(10))
+                .andExpect(jsonPath("$.mappings[0].targetTempId").value("t1"));
+    }
+
+    @Test
     void apply_성공하면_success_true를_반환하고_요청바디를_그대로_전달한다() throws Exception {
         given(currentUserProvider.requireUserId()).willReturn(USER_ID);
 
