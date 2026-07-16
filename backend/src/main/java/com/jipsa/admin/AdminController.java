@@ -1,6 +1,7 @@
 package com.jipsa.admin;
 
 import com.jipsa.common.CurrentUserProvider;
+import com.jipsa.common.SuccessResponse;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
