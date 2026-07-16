@@ -4,7 +4,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Final, Literal, cast
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -23,6 +23,15 @@ DatabaseCharset = Literal["utf8mb4"]
 # 애플리케이션 서버에서 전달받는 S3 Object Key는
 # files/{uuid} 형식만 사용한다.
 S3AllowedKeyPrefix = Literal["files/"]
+
+# 임베딩 생성 서버는 Hugging Face Text Embeddings Inference만 사용한다.
+EmbeddingProvider = Literal["tei"]
+
+# Qdrant Collection의 벡터 유사도 계산에는 Cosine 거리를 사용한다.
+EmbeddingDistance = Literal["cosine"]
+
+# 현재 VectorDB 구현체는 Qdrant로 고정한다.
+VectorDatabaseProvider = Literal["qdrant"]
 
 
 # 현재 파일 위치:
@@ -87,6 +96,47 @@ def resolve_env_file(
         return None
 
     return env_file
+
+
+def _parse_http_base_url(
+    value: str,
+    *,
+    setting_name: str,
+) -> SplitResult:
+    """외부 HTTP 서비스 기본 URL을 공통 규칙으로 검증한다."""
+
+    if value.endswith("/"):
+        raise ValueError(f"{setting_name}은 '/'로 끝날 수 없습니다.")
+
+    parsed = urlsplit(value)
+
+    if parsed.scheme not in {
+        "http",
+        "https",
+    }:
+        raise ValueError(f"{setting_name}은 http 또는 https 스킴을 사용해야 합니다.")
+
+    if not parsed.netloc or parsed.hostname is None:
+        raise ValueError(f"{setting_name}에는 호스트가 필요합니다.")
+
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"{setting_name}에 인증 정보를 포함할 수 없습니다.")
+
+    if parsed.query or parsed.fragment:
+        raise ValueError(f"{setting_name}에 query 또는 fragment를 포함할 수 없습니다.")
+
+    if parsed.path:
+        raise ValueError(f"{setting_name}에 경로를 포함할 수 없습니다.")
+
+    try:
+        parsed_port = parsed.port
+    except ValueError as error:
+        raise ValueError(f"{setting_name}의 포트가 올바르지 않습니다.") from error
+
+    if parsed_port is not None and not 1 <= parsed_port <= 65535:
+        raise ValueError(f"{setting_name} 포트는 1부터 65535 사이여야 합니다.")
+
+    return parsed
 
 
 class Settings(BaseSettings):
@@ -229,6 +279,95 @@ class Settings(BaseSettings):
     )
 
     # =========================================================
+    # Embedding Service
+    # =========================================================
+
+    # 임베딩 생성 서버 구현체이다.
+    #
+    # 모델 실행과 CUDA 의존성은 RAG 프로세스가 아니라
+    # 별도의 Hugging Face TEI Docker 컨테이너가 담당한다.
+    embedding_provider: EmbeddingProvider = "tei"
+
+    # 로컬 RAG 서버가 TEI HTTP API에 접근하는 기본 주소이다.
+    #
+    # 애플리케이션 서버의 8080 포트와 충돌하지 않도록
+    # TEI는 호스트 포트 18081을 사용한다.
+    embedding_base_url: str = Field(
+        default="http://127.0.0.1:18081",
+        min_length=1,
+    )
+
+    # TEI 컨테이너에서 로드하는 Hugging Face 모델 식별자이다.
+    embedding_model: str = Field(
+        default="Qwen/Qwen3-Embedding-0.6B",
+        min_length=1,
+    )
+
+    # Qwen3-Embedding-0.6B가 반환하는 벡터 차원이다.
+    #
+    # Qdrant Collection의 vector size와 반드시 동일해야 한다.
+    embedding_dim: int = Field(
+        default=1024,
+        gt=0,
+    )
+
+    # Qdrant에서 벡터 유사도를 계산할 때 사용할 거리 함수이다.
+    embedding_distance: EmbeddingDistance = "cosine"
+
+    # TEI 임베딩 HTTP 요청의 전체 제한 시간이다.
+    embedding_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0,
+    )
+
+    # =========================================================
+    # Qdrant Vector Database
+    # =========================================================
+
+    # VectorDB 구현체이다.
+    vector_db_provider: VectorDatabaseProvider = "qdrant"
+
+    # 로컬 RAG 서버가 Qdrant REST API에 접근하는 기본 주소이다.
+    qdrant_url: str = Field(
+        default="http://127.0.0.1:6333",
+        min_length=1,
+    )
+
+    # Qwen3-Embedding-0.6B의 1024차원 벡터를 저장할 Collection 이름이다.
+    #
+    # 모델 또는 임베딩 차원이 변경되면 기존 Collection을 재사용하지 않고
+    # 모델과 차원을 식별할 수 있는 별도 Collection을 생성한다.
+    qdrant_collection: str = Field(
+        default="rag_chunk_vector_qwen3_embedding_0_6b_1024",
+        min_length=1,
+        max_length=255,
+    )
+
+    # Qdrant gRPC 연결 포트이다.
+    qdrant_grpc_port: int = Field(
+        default=6334,
+        ge=1,
+        le=65535,
+    )
+
+    # Qdrant 클라이언트에서 REST 대신 gRPC를 우선 사용할지 결정한다.
+    #
+    # 초기 구현은 디버깅과 검증이 쉬운 REST를 사용한다.
+    qdrant_prefer_grpc: bool = False
+
+    # 원격 또는 인증이 활성화된 Qdrant에서 사용할 API Key이다.
+    #
+    # 현재 로컬 Qdrant는 API Key를 사용하지 않으므로 None이 기본값이다.
+    # 값이 존재하더라도 Settings 출력과 로그에서는 원문을 숨긴다.
+    qdrant_api_key: SecretStr | None = None
+
+    # Qdrant 요청 제한 시간이다.
+    qdrant_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+    )
+
+    # =========================================================
     # Application Server
     # =========================================================
 
@@ -267,6 +406,12 @@ class Settings(BaseSettings):
         # file_download_max_size_bytes
         # -> JIPSA_RAG_FILE_DOWNLOAD_MAX_SIZE_BYTES
         #
+        # embedding_base_url
+        # -> JIPSA_RAG_EMBEDDING_BASE_URL
+        #
+        # qdrant_collection
+        # -> JIPSA_RAG_QDRANT_COLLECTION
+        #
         # app_server_base_url
         # -> JIPSA_RAG_APP_SERVER_BASE_URL
         env_prefix="JIPSA_RAG_",
@@ -289,6 +434,10 @@ class Settings(BaseSettings):
         "database_user",
         "s3_allowed_key_prefix",
         "file_download_allowed_host_suffixes",
+        "embedding_base_url",
+        "embedding_model",
+        "qdrant_url",
+        "qdrant_collection",
         "app_server_base_url",
         "app_server_api_v1_prefix",
         mode="before",
@@ -302,6 +451,37 @@ class Settings(BaseSettings):
 
         if isinstance(value, str):
             return value.strip()
+
+        return value
+
+    @field_validator(
+        "embedding_provider",
+        "embedding_distance",
+        "vector_db_provider",
+        mode="before",
+    )
+    @classmethod
+    def normalize_choice_text(
+        cls,
+        value: object,
+    ) -> object:
+        """provider와 거리 함수 문자열을 소문자로 정규화한다."""
+
+        if isinstance(value, str):
+            return value.strip().lower()
+
+        return value
+
+    @field_validator("qdrant_api_key", mode="before")
+    @classmethod
+    def normalize_optional_qdrant_api_key(
+        cls,
+        value: object,
+    ) -> object:
+        """공백으로만 구성된 Qdrant API Key를 미설정 상태로 변환한다."""
+
+        if isinstance(value, str) and not value.strip():
+            return None
 
         return value
 
@@ -386,6 +566,58 @@ class Settings(BaseSettings):
         # 중복 항목은 제거하되 관리자가 작성한 입력 순서는 유지한다.
         return ",".join(dict.fromkeys(normalized_suffixes))
 
+    @field_validator("embedding_base_url")
+    @classmethod
+    def validate_embedding_base_url(
+        cls,
+        value: str,
+    ) -> str:
+        """TEI 임베딩 서버 기본 URL의 형식을 검증한다."""
+
+        _parse_http_base_url(
+            value,
+            setting_name="임베딩 서버 기본 URL",
+        )
+        return value
+
+    @field_validator("qdrant_url")
+    @classmethod
+    def validate_qdrant_url(
+        cls,
+        value: str,
+    ) -> str:
+        """Qdrant REST API 기본 URL의 형식을 검증한다."""
+
+        _parse_http_base_url(
+            value,
+            setting_name="Qdrant 기본 URL",
+        )
+        return value
+
+    @field_validator("qdrant_collection")
+    @classmethod
+    def validate_qdrant_collection(
+        cls,
+        value: str,
+    ) -> str:
+        """Qdrant Collection 이름에 경로나 공백이 포함되지 않도록 검증한다."""
+
+        if any(character.isspace() for character in value):
+            raise ValueError("Qdrant Collection 이름에는 공백을 사용할 수 없습니다.")
+
+        if any(
+            character in value
+            for character in (
+                "/",
+                "\\",
+                "?",
+                "#",
+            )
+        ):
+            raise ValueError("Qdrant Collection 이름에는 경로 문자를 사용할 수 없습니다.")
+
+        return value
+
     @field_validator("app_server_base_url")
     @classmethod
     def validate_app_server_base_url(
@@ -394,36 +626,10 @@ class Settings(BaseSettings):
     ) -> str:
         """애플리케이션 서버 기본 URL의 형식을 검증한다."""
 
-        if value.endswith("/"):
-            raise ValueError("애플리케이션 서버 기본 URL은 '/'로 끝날 수 없습니다.")
-
-        parsed = urlsplit(value)
-
-        if parsed.scheme not in {
-            "http",
-            "https",
-        }:
-            raise ValueError("애플리케이션 서버 기본 URL은 http 또는 https 스킴을 사용해야 합니다.")
-
-        if not parsed.netloc:
-            raise ValueError("애플리케이션 서버 기본 URL에는 호스트가 필요합니다.")
-
-        if parsed.username is not None or parsed.password is not None:
-            raise ValueError("애플리케이션 서버 기본 URL에 인증 정보를 포함할 수 없습니다.")
-
-        if parsed.query or parsed.fragment:
-            raise ValueError(
-                "애플리케이션 서버 기본 URL에 query 또는 fragment를 포함할 수 없습니다."
-            )
-
-        try:
-            parsed_port = parsed.port
-        except ValueError as error:
-            raise ValueError("애플리케이션 서버 기본 URL의 포트가 올바르지 않습니다.") from error
-
-        if parsed_port is not None and not 1 <= parsed_port <= 65535:
-            raise ValueError("애플리케이션 서버 포트는 1부터 65535 사이여야 합니다.")
-
+        _parse_http_base_url(
+            value,
+            setting_name="애플리케이션 서버 기본 URL",
+        )
         return value
 
     @property
