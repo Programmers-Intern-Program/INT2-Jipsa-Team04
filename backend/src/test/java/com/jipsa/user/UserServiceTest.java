@@ -234,4 +234,54 @@ class UserServiceTest {
         // 신규 registrationService는 이 경로에서 쓰이지 않는다
         verify(userRegistrationService, never()).register(any(), any());
     }
+
+    // --- verifyLoginable(userId): 토큰 재발급 등에서 재사용하는 상태 검사 ---
+
+    @Test
+    void verifyLoginable_ACTIVE_del아님이면_사용자_반환() {
+        Users active = userWith(11L, "ACTIVE", false);
+        when(usersRepository.findById(11L)).thenReturn(Optional.of(active));
+
+        assertThat(userService.verifyLoginable(11L)).isSameAs(active);
+    }
+
+    @Test
+    void verifyLoginable_del이면_403차단() {
+        when(usersRepository.findById(12L)).thenReturn(Optional.of(userWith(12L, "ACTIVE", true)));
+
+        assertThatThrownBy(() -> userService.verifyLoginable(12L))
+                .isInstanceOf(AccountLoginBlockedException.class);
+    }
+
+    @Test
+    void verifyLoginable_LOCKED면_403차단() {
+        when(usersRepository.findById(13L)).thenReturn(Optional.of(userWith(13L, "LOCKED", false)));
+
+        assertThatThrownBy(() -> userService.verifyLoginable(13L))
+                .isInstanceOf(AccountLoginBlockedException.class);
+    }
+
+    @Test
+    void verifyLoginable_SUSPENDED면_403차단() {
+        when(usersRepository.findById(14L)).thenReturn(Optional.of(userWith(14L, "SUSPENDED", false)));
+
+        assertThatThrownBy(() -> userService.verifyLoginable(14L))
+                .isInstanceOf(AccountLoginBlockedException.class);
+    }
+
+    @Test
+    void verifyLoginable_WITHDRAWN이면_403차단() {
+        when(usersRepository.findById(15L)).thenReturn(Optional.of(userWith(15L, "WITHDRAWN", false)));
+
+        assertThatThrownBy(() -> userService.verifyLoginable(15L))
+                .isInstanceOf(AccountLoginBlockedException.class);
+    }
+
+    @Test
+    void verifyLoginable_사용자가_없으면_IllegalState() {
+        when(usersRepository.findById(404L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> userService.verifyLoginable(404L))
+                .isInstanceOf(IllegalStateException.class);
+    }
 }

@@ -32,6 +32,10 @@ public class SecurityConfig {
                 .requestMatchers("/", "/health").permitAll()   // public paths
                 // 구글 로그인은 토큰 발급 전 호출되므로 인증 없이 열어둔다.
                 .requestMatchers(HttpMethod.POST, "/api/v1/auth/oauth/google").permitAll()
+                // 토큰 재발급은 만료된 Access Token 상태에서 호출되므로 인증 없이 열어둔다.
+                .requestMatchers(HttpMethod.POST, "/api/v1/auth/refresh").permitAll()
+                // 로그아웃도 만료된 Access Token 상태에서 호출될 수 있으므로 인증 없이 열어둔다.
+                .requestMatchers(HttpMethod.POST, "/api/v1/auth/logout").permitAll()
                 .anyRequest().authenticated()                  // <-- STRICT default
                 // To leave everything open while you have no endpoints yet, swap the
                 // two lines above for a single:  .anyRequest().permitAll()

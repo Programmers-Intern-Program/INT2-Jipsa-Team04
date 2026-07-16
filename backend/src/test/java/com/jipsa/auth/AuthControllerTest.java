@@ -1,6 +1,7 @@
 package com.jipsa.auth;
 
 import com.jipsa.auth.google.GoogleAuthException;
+import com.jipsa.common.exception.UnauthorizedException;
 import com.jipsa.user.AccountLoginBlockedException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -105,5 +106,124 @@ class AuthControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"authorizationCode\":\"blocked-code\"}"))
                 .andExpect(status().isForbidden());
+    }
+
+    // --- POST /api/v1/auth/refresh ---
+
+    @Test
+    void 정상_재발급시_200과_accessToken을_ApiResponse로_반환한다() throws Exception {
+        given(authService.refreshAccessToken("refresh-raw"))
+                .willReturn(new AccessTokenResponse("new-access-jwt"));
+
+        mockMvc.perform(post("/api/v1/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"refresh-raw\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.accessToken").value("new-access-jwt"))
+                .andExpect(jsonPath("$.error").value(nullValue()));
+
+        verify(authService).refreshAccessToken("refresh-raw");
+    }
+
+    @Test
+    void refreshToken이_누락되면_400() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void refreshToken이_null이면_400() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":null}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void refreshToken이_blank면_400() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"   \"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void 잘못된_토큰이면_UnauthorizedException으로_401() throws Exception {
+        given(authService.refreshAccessToken(any()))
+                .willThrow(new UnauthorizedException("유효하지 않은 리프레시 토큰입니다."));
+
+        mockMvc.perform(post("/api/v1/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"bad-token\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    void 로그인_불가_계정이면_AccountLoginBlockedException으로_403() throws Exception {
+        given(authService.refreshAccessToken(any()))
+                .willThrow(new AccountLoginBlockedException("로그인할 수 없는 계정 상태입니다."));
+
+        mockMvc.perform(post("/api/v1/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"blocked-user-token\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error.code").value("ACCOUNT_LOGIN_BLOCKED"));
+    }
+
+    // --- POST /api/v1/auth/logout ---
+
+    @Test
+    void 정상_로그아웃시_200과_success_true를_ApiResponse로_반환한다() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/logout")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"refresh-raw\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.success").value(true))
+                .andExpect(jsonPath("$.error").value(nullValue()));
+
+        verify(authService).logout("refresh-raw");
+    }
+
+    @Test
+    void 로그아웃_refreshToken이_누락되면_400() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/logout")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void 로그아웃_refreshToken이_null이면_400() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/logout")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":null}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void 로그아웃_refreshToken이_blank면_400() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/logout")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"   \"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void 미존재_또는_위조_토큰이면_UnauthorizedException으로_401() throws Exception {
+        org.mockito.BDDMockito.willThrow(new UnauthorizedException("유효하지 않은 리프레시 토큰입니다."))
+                .given(authService).logout(any());
+
+        mockMvc.perform(post("/api/v1/auth/logout")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"forged-token\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
     }
 }

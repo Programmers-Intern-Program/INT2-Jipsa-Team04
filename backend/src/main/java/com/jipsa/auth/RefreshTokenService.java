@@ -1,5 +1,6 @@
 package com.jipsa.auth;
 
+import com.jipsa.common.exception.UnauthorizedException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +26,9 @@ public class RefreshTokenService {
     /** 스레드 세이프. 랜덤 원문 32바이트(=256비트) 생성용. */
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final int TOKEN_BYTES = 32;
+
+    /** 로그아웃으로 폐기된 토큰의 사유. {@code Refresh_Tokens.Revoked_Reason}에 저장한다. */
+    static final String REVOKED_REASON_LOGOUT = "LOGOUT";
 
     private final RefreshTokensRepository refreshTokensRepository;
     private final long refreshValidityMs;
@@ -58,6 +62,67 @@ public class RefreshTokenService {
         refreshTokensRepository.save(entity);
 
         return rawToken;
+    }
+
+    /**
+     * Refresh Token 원문을 검증하고 사용자 식별자를 반환한다. 회전(rotation)은 하지 않는다.
+     *
+     * <p>원문을 SHA-256 해시해 {@code Token_Hash}로 조회하고, 폐기({@code Revoked_At})·
+     * 만료({@code Expires_At})를 검사한다. 만료 기준은 <b>현재 시각과 같거나 이전이면 만료</b>
+     * ({@code !expiresAt.isAfter(now)})다. 검증에 성공하면 조회한 <b>관리 엔티티</b>의
+     * {@code Last_Used_At}를 갱신한다 — dirty checking으로 호출자 트랜잭션 커밋 시에만 flush된다.
+     *
+     * <p><b>반드시 호출자(예: {@code AuthService.refreshAccessToken})의 트랜잭션 안에서
+     * 호출되어야 한다.</b> 그래야 {@code Last_Used_At} 갱신이 그 트랜잭션과 함께 커밋/롤백된다.
+     * 원문은 예외 메시지·로그에 절대 출력하지 않는다.
+     *
+     * @param rawRefreshToken 클라이언트가 보낸 Refresh Token 원문
+     * @return 토큰 소유자 (Users.Users_IDX)
+     * @throws UnauthorizedException 토큰이 없거나(위조/오타 포함), 폐기되었거나, 만료된 경우
+     */
+    Long validateAndTouch(String rawRefreshToken) {
+        RefreshToken token = refreshTokensRepository.findByTokenHash(sha256Hex(rawRefreshToken))
+                .orElseThrow(() -> new UnauthorizedException("유효하지 않은 리프레시 토큰입니다."));
+        if (token.getRevokedAt() != null) {
+            throw new UnauthorizedException("폐기된 리프레시 토큰입니다.");
+        }
+        if (!token.getExpiresAt().isAfter(LocalDateTime.now())) {   // 현재와 같거나 이전이면 만료
+            throw new UnauthorizedException("만료된 리프레시 토큰입니다.");
+        }
+        token.setLastUsedAt(LocalDateTime.now());                   // 관리 엔티티 → 커밋 시 flush
+        return token.getUsersId();
+    }
+
+    /**
+     * Refresh Token 원문을 검증하고 로그아웃 처리(폐기)한다. 하이브리드 멱등 정책을 따른다.
+     *
+     * <p>원문을 SHA-256 해시해 {@code Token_Hash}로 조회한 뒤, 상태별로 다음과 같이 처리한다:
+     * <ol>
+     *   <li>미존재/위조 — 조회 실패 시 {@link UnauthorizedException}(401). 폐기할 세션이 없다.</li>
+     *   <li>이미 폐기됨({@code Revoked_At != null}) — <b>기존 값을 덮어쓰지 않고</b> no-op로 반환한다(멱등).</li>
+     *   <li>만료됨 — 죽은 토큰이라도 {@code Revoked_At}/{@code Revoked_Reason}을 기록하고 정상 반환한다.</li>
+     *   <li>정상 — {@code Revoked_At=현재시각}, {@code Revoked_Reason="LOGOUT"} 기록.</li>
+     * </ol>
+     *
+     * <p>로그인 가능 여부(계정 상태)는 검사하지 않는다 — 정지/탈퇴 계정도 자기 세션은 폐기할 수 있어야 한다.
+     * 조회한 <b>관리 엔티티</b>를 수정하므로 dirty checking으로 호출자 트랜잭션 커밋 시에만 flush된다.
+     * Refresh Token 행은 삭제하지 않는다.
+     *
+     * <p><b>반드시 호출자(예: {@code AuthService.logout})의 트랜잭션 안에서 호출되어야 한다.</b>
+     * 그래야 폐기 갱신이 그 트랜잭션과 함께 커밋된다. 원문·해시는 예외 메시지·로그에 출력하지 않는다.
+     *
+     * @param rawRefreshToken 클라이언트가 보낸 Refresh Token 원문
+     * @throws UnauthorizedException 토큰이 존재하지 않거나 위조된 경우
+     */
+    void revoke(String rawRefreshToken) {
+        RefreshToken token = refreshTokensRepository.findByTokenHash(sha256Hex(rawRefreshToken))
+                .orElseThrow(() -> new UnauthorizedException("유효하지 않은 리프레시 토큰입니다."));
+        if (token.getRevokedAt() != null) {
+            return;   // 이미 폐기됨 — 기존 Revoked_At/Revoked_Reason 보존(멱등 no-op)
+        }
+        // 정상·만료 모두 동일하게 폐기 기록 (만료 토큰도 200으로 폐기 이력을 남긴다)
+        token.setRevokedAt(LocalDateTime.now());
+        token.setRevokedReason(REVOKED_REASON_LOGOUT);   // 관리 엔티티 → 커밋 시 flush
     }
 
     /** SecureRandom 32바이트 → base64url(패딩 없음) 원문. */

@@ -5,6 +5,7 @@ import com.jipsa.auth.google.GoogleIdTokenValidator;
 import com.jipsa.auth.google.GoogleOAuthClient;
 import com.jipsa.auth.google.GoogleTokenResponse;
 import com.jipsa.auth.google.GoogleUserInfo;
+import com.jipsa.common.exception.UnauthorizedException;
 import com.jipsa.user.AccountLoginBlockedException;
 import com.jipsa.user.UserFindOrCreateResult;
 import com.jipsa.user.UserService;
@@ -45,6 +46,10 @@ class AuthServiceTest {
     private UserService userService;
     @Mock
     private LoginTokenService loginTokenService;
+    @Mock
+    private RefreshTokenService refreshTokenService;
+    @Mock
+    private JwtService jwtService;
 
     @InjectMocks
     private AuthService authService;
@@ -134,6 +139,75 @@ class AuthServiceTest {
         when(loginTokenService.issueTokens(findOrCreateResult)).thenThrow(original);
 
         assertThatThrownBy(() -> authService.loginWithGoogle(AUTH_CODE))
+                .isSameAs(original);
+    }
+
+    // --- refreshAccessToken ---
+    // 참고: @Transactional은 스프링 프록시 경유 호출에서만 적용되므로 이 단위 테스트에서는
+    // 롤백이 검증되지 않는다(오케스트레이션·순서·전파만 검증). 실제 롤백은 통합 테스트 소관이다.
+
+    private static final String REFRESH_RAW = "refresh-raw-xyz";
+
+    @Test
+    void 재발급은_validateAndTouch_verifyLoginable_generateToken_순서로_연결되고_새_AccessToken을_반환한다() {
+        when(refreshTokenService.validateAndTouch(REFRESH_RAW)).thenReturn(42L);
+        when(jwtService.generateToken(42L)).thenReturn("new-access-jwt");
+
+        AccessTokenResponse result = authService.refreshAccessToken(REFRESH_RAW);
+
+        assertThat(result.accessToken()).isEqualTo("new-access-jwt");
+
+        // 호출 순서: validateAndTouch → verifyLoginable → generateToken,
+        // 그리고 generateToken은 validateAndTouch가 준 userId로 호출된다(새 Access Token userId 검증).
+        InOrder order = inOrder(refreshTokenService, userService, jwtService);
+        order.verify(refreshTokenService).validateAndTouch(REFRESH_RAW);
+        order.verify(userService).verifyLoginable(42L);
+        order.verify(jwtService).generateToken(42L);
+        order.verifyNoMoreInteractions();
+    }
+
+    @Test
+    void 토큰_검증에서_Unauthorized면_전파되고_이후단계는_호출되지_않는다() {
+        UnauthorizedException original = new UnauthorizedException("만료된 리프레시 토큰입니다.");
+        when(refreshTokenService.validateAndTouch(REFRESH_RAW)).thenThrow(original);
+
+        assertThatThrownBy(() -> authService.refreshAccessToken(REFRESH_RAW))
+                .isSameAs(original);
+
+        verify(userService, never()).verifyLoginable(org.mockito.ArgumentMatchers.any());
+        verify(jwtService, never()).generateToken(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void 사용자_상태검사에서_AccountLoginBlocked면_전파되고_AccessToken은_발급되지_않는다() {
+        AccountLoginBlockedException original = new AccountLoginBlockedException("로그인할 수 없는 계정 상태입니다.");
+        when(refreshTokenService.validateAndTouch(REFRESH_RAW)).thenReturn(42L);
+        when(userService.verifyLoginable(42L)).thenThrow(original);
+
+        assertThatThrownBy(() -> authService.refreshAccessToken(REFRESH_RAW))
+                .isSameAs(original);
+
+        verify(jwtService, never()).generateToken(org.mockito.ArgumentMatchers.any());
+    }
+
+    // --- logout ---
+
+    @Test
+    void 로그아웃은_revoke에만_위임하고_상태검사나_토큰발급을_하지_않는다() {
+        authService.logout(REFRESH_RAW);
+
+        verify(refreshTokenService).revoke(REFRESH_RAW);
+        // 로그아웃은 계정 상태 검사·토큰 발급을 하지 않는다.
+        verify(userService, never()).verifyLoginable(org.mockito.ArgumentMatchers.any());
+        verify(jwtService, never()).generateToken(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void 로그아웃_토큰_검증에서_Unauthorized면_그대로_전파된다() {
+        UnauthorizedException original = new UnauthorizedException("유효하지 않은 리프레시 토큰입니다.");
+        org.mockito.Mockito.doThrow(original).when(refreshTokenService).revoke(REFRESH_RAW);
+
+        assertThatThrownBy(() -> authService.logout(REFRESH_RAW))
                 .isSameAs(original);
     }
 }

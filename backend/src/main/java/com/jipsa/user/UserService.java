@@ -79,6 +79,18 @@ public class UserService {
         }
     }
 
+    /**
+     * userId로 사용자를 로드하고 로그인 가능한 상태(ACTIVE, del=false)인지 검사해 반환한다.
+     *
+     * <p>토큰 재발급 등 이미 사용자 식별자를 확보한 흐름에서 재사용하기 위한 공개 진입점이다.
+     * find-or-create 로직과 무관하며, 내부 상태 검사는 기존 {@link #loadAndVerifyLoginable}를
+     * 그대로 재사용한다. 차단 시 {@link AccountLoginBlockedException}(403), 사용자가 없으면
+     * {@link IllegalStateException}을 던진다.
+     */
+    public Users verifyLoginable(Long userId) {
+        return loadAndVerifyLoginable(userId);
+    }
+
     /** OAuth 연결이 가리키는 사용자를 로드하고, 로그인 가능한 상태(ACTIVE, del=false)인지 검사한다. */
     private Users loadAndVerifyLoginable(Long usersId) {
         Users user = usersRepository.findById(usersId)
