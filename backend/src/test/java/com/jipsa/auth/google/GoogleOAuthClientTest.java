@@ -7,6 +7,8 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
+import java.net.SocketTimeoutException;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
@@ -29,7 +31,7 @@ class GoogleOAuthClientTest {
         server = MockRestServiceServer.bindTo(builder).build();
         RestClient restClient = builder.build();
         GoogleOAuthProperties properties =
-                new GoogleOAuthProperties("client-id", "client-secret", "https://app/callback", TOKEN_URI);
+                new GoogleOAuthProperties("client-id", "client-secret", "https://app/callback", TOKEN_URI, 3000, 5000);
         client = new GoogleOAuthClient(restClient, properties);
     }
 
@@ -58,14 +60,47 @@ class GoogleOAuthClientTest {
     }
 
     @Test
-    void throwsWhenGoogleReturnsError() {
+    void throwsAuthFailedWhenGoogleReturns4xx() {
+        // 잘못된 authorization code 등 클라이언트 인증 실패 → 401 흐름 유지.
         server.expect(requestTo(TOKEN_URI))
                 .andRespond(withStatus(HttpStatus.BAD_REQUEST)
                         .body("{\"error\":\"invalid_grant\"}")
                         .contentType(MediaType.APPLICATION_JSON));
 
         assertThatThrownBy(() -> client.exchangeAuthorizationCode("bad-code"))
-                .isInstanceOf(GoogleAuthException.class);
+                .isInstanceOf(GoogleAuthException.class)
+                .extracting(ex -> ((GoogleAuthException) ex).getStatus())
+                .isEqualTo(HttpStatus.UNAUTHORIZED);
+        server.verify();
+    }
+
+    @Test
+    void throwsUnavailableAsBadGatewayWhenGoogleReturns5xx() {
+        // 구글 측 장애(5xx)는 인증 실패가 아니라 upstream 오류 → 502.
+        server.expect(requestTo(TOKEN_URI))
+                .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body("{\"error\":\"internal_failure\"}")
+                        .contentType(MediaType.APPLICATION_JSON));
+
+        assertThatThrownBy(() -> client.exchangeAuthorizationCode("auth-code-123"))
+                .isInstanceOf(GoogleAuthUnavailableException.class)
+                .extracting(ex -> ((GoogleAuthUnavailableException) ex).getStatus())
+                .isEqualTo(HttpStatus.BAD_GATEWAY);
+        server.verify();
+    }
+
+    @Test
+    void throwsUnavailableAsServiceUnavailableOnNetworkFailure() {
+        // timeout·DNS·connection·I/O 오류는 ResourceAccessException으로 올라온다 → 503.
+        server.expect(requestTo(TOKEN_URI))
+                .andRespond(request -> {
+                    throw new SocketTimeoutException("Read timed out");
+                });
+
+        assertThatThrownBy(() -> client.exchangeAuthorizationCode("auth-code-123"))
+                .isInstanceOf(GoogleAuthUnavailableException.class)
+                .extracting(ex -> ((GoogleAuthUnavailableException) ex).getStatus())
+                .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
         server.verify();
     }
 

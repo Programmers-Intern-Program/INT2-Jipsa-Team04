@@ -8,6 +8,9 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
@@ -43,7 +46,9 @@ public class GoogleOAuthClient {
      *
      * @param authorizationCode 구글에서 발급받은 authorization code
      * @return 구글 토큰 엔드포인트 응답({@link GoogleTokenResponse})
-     * @throws GoogleAuthException 구글이 오류를 반환하거나 응답에 id_token이 없을 때
+     * @throws GoogleAuthException 구글이 4xx(잘못된 code 등)를 반환하거나 응답에 id_token이 없을 때 — 401
+     * @throws GoogleAuthUnavailableException 구글 5xx·비정상 응답(502)이나 timeout·네트워크 오류(503)로
+     *         교환에 실패했을 때 — 클라이언트 인증 정보 문제가 아닌 구글 측/네트워크 장애
      */
     public GoogleTokenResponse exchangeAuthorizationCode(String authorizationCode) {
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
@@ -61,10 +66,24 @@ public class GoogleOAuthClient {
                     .body(form)
                     .retrieve()
                     .body(GoogleTokenResponse.class);
-        } catch (RestClientException e) {
-            // 구글의 4xx/5xx 응답은 물론 전송/파싱 실패까지 모두 여기서 처리한다.
+        } catch (HttpClientErrorException e) {
+            // 구글 4xx: 잘못된 authorization code 등 클라이언트 인증 실패 → 401 흐름 유지.
             logTokenExchangeFailure(e);
             throw new GoogleAuthException("Google 토큰 교환에 실패했습니다.");
+        } catch (HttpServerErrorException e) {
+            // 구글 5xx: 구글 측 장애 → 인증 실패가 아니라 upstream 오류(502).
+            logTokenExchangeFailure(e);
+            throw GoogleAuthUnavailableException.badGateway("Google 인증 서버 오류로 토큰 교환에 실패했습니다.");
+        } catch (ResourceAccessException e) {
+            // timeout·DNS 실패·connection refused·I/O 오류: 구글에 닿지 못함 → 503.
+            // ResourceAccessException은 원인 예외(SocketTimeoutException 등)를 메시지에 담을 수 있으므로
+            // 여기서는 원인을 로깅하지 않고 예외 타입만 남긴다(민감값 노출 방지 + 요청 폼은 어차피 미포함).
+            log.warn("Google 토큰 교환 실패 - 네트워크 오류: {}", e.getClass().getSimpleName());
+            throw GoogleAuthUnavailableException.serviceUnavailable("Google 인증 서버에 연결하지 못했습니다.");
+        } catch (RestClientException e) {
+            // 그 외(응답 파싱 실패·비정상 Content-Type 등): 신뢰할 수 없는 upstream 응답 → 502.
+            logTokenExchangeFailure(e);
+            throw GoogleAuthUnavailableException.badGateway("Google 토큰 응답을 처리하지 못했습니다.");
         }
 
         if (response == null || response.idToken() == null || response.idToken().isBlank()) {
