@@ -6,10 +6,13 @@ import com.google.api.client.json.gson.GsonFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 import java.security.GeneralSecurityException;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Collections;
 
 /**
@@ -22,14 +25,30 @@ import java.util.Collections;
 public class GoogleOAuthConfig {
 
     /**
-     * authorization code를 구글 토큰 엔드포인트로 POST할 때 쓰는 평범한 RestClient.
-     * 주입받은 {@code RestClient.Builder} 대신 {@code RestClient.create()}로 직접 만든다 —
-     * 이 프로젝트의 webmvc 스타터는 해당 빌더 빈을 자동 구성하지 않으며, 이 협력 객체는
-     * 공유 커스터마이징이 필요 없기 때문이다.
+     * authorization code를 구글 토큰 엔드포인트로 POST할 때 쓰는 RestClient.
+     * {@code RestClient.create()} 대신 {@code RestClient.builder()}로 만들어,
+     * connect/read 타임아웃이 적용된 {@link ClientHttpRequestFactory}를 주입한다 —
+     * 응답 없는 구글/네트워크가 로그인 요청 스레드를 무한정 점유하지 못하게 하기 위함이다.
+     * 이 프로젝트의 webmvc 스타터는 공유 {@code RestClient.Builder} 빈을 자동 구성하지 않으므로
+     * 여기서 직접 빌더를 생성한다.
      */
     @Bean
-    public RestClient googleRestClient() {
-        return RestClient.create();
+    public RestClient googleRestClient(GoogleOAuthProperties properties) {
+        return RestClient.builder()
+                .requestFactory(googleTokenRequestFactory(properties))
+                .build();
+    }
+
+    /**
+     * 구글 토큰 엔드포인트 호출용 요청 팩토리. connect/read 타임아웃을 명시해
+     * 애플리케이션 레벨에서 대기 시간을 제한한다. 타임아웃 값은 {@code google.oauth.connect-timeout-ms}
+     * / {@code google.oauth.read-timeout-ms}로 외부에서 조정할 수 있다(기본값 3000ms / 5000ms).
+     */
+    ClientHttpRequestFactory googleTokenRequestFactory(GoogleOAuthProperties properties) {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofMillis(properties.connectTimeoutMs()));
+        factory.setReadTimeout(Duration.ofMillis(properties.readTimeoutMs()));
+        return factory;
     }
 
     /**
