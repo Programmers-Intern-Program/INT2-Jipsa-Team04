@@ -19,6 +19,8 @@ spring:
   jpa:
     hibernate:
       ddl-auto: none
+      naming:
+        physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
     properties:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
@@ -27,6 +29,14 @@ app:
     bucket: ${S3_BUCKET}
   aws:
     region: ${AWS_REGION:ap-northeast-2}
+  ingest:
+    enabled: true
+    poll-interval-ms: 2000
+    batch-size: 5
+    ownership-ttl-ms: 60000
+    retry-backoff-ms: 5000
+  storage:
+    quota-bytes: 107374182400
 
 # Google OAuth (authorization-code flow, backend-side token exchange).
 # Values come from env vars; empty defaults let the app start without .env

@@ -7,6 +7,8 @@ import com.jipsa.common.exception.UploadLimitExceededException;
 import com.jipsa.file.File;
 import com.jipsa.file.FileRepository;
 import com.jipsa.file.S3Service;
+import com.jipsa.folder.FolderNotFoundException;
+import com.jipsa.folder.FolderRepository;
 import com.jipsa.job.JobService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -30,6 +32,7 @@ public class UploadService {
 
     private final UploadsRepository uploadsRepository;
     private final FileRepository fileRepository;
+    private final FolderRepository folderRepository;
     private final S3Service s3Service;
     private final JobService jobService;
     private final TransactionTemplate transactionTemplate;
@@ -37,20 +40,26 @@ public class UploadService {
 
     public UploadService(UploadsRepository uploadsRepository,
                          FileRepository fileRepository,
+                         FolderRepository folderRepository,
                          S3Service s3Service,
                          JobService jobService,
                          PlatformTransactionManager transactionManager,
                          @Value("${app.s3.bucket}") String bucket) {
         this.uploadsRepository = uploadsRepository;
         this.fileRepository = fileRepository;
+        this.folderRepository = folderRepository;
         this.s3Service = s3Service;
         this.jobService = jobService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.bucket = bucket;
     }
 
-    public UploadResponse upload(Long userId, List<MultipartFile> files) {
+    public UploadResponse upload(Long userId, List<MultipartFile> files, Long folderId) {
         validate(files);
+        if (folderId != null) {
+            folderRepository.findByIdAndUsersId(folderId, userId)
+                    .orElseThrow(() -> new FolderNotFoundException(folderId));
+        }
 
         Long uploadsId = transactionTemplate.execute(status -> createBatch(userId, files.size()));
 
@@ -62,7 +71,7 @@ public class UploadService {
                         extensionOf(file.getOriginalFilename()), file.getSize()));
             }
             List<Long> fileIds = transactionTemplate.execute(status ->
-                    persistFiles(userId, uploadsId, uploaded));
+                    persistFiles(userId, uploadsId, folderId, uploaded));
             return new UploadResponse(uploadsId, fileIds);
         } catch (RuntimeException e) {
             for (UploadedFile file : uploaded) {
@@ -96,12 +105,12 @@ public class UploadService {
         return uploads.getId();
     }
 
-    private List<Long> persistFiles(Long userId, Long uploadsId, List<UploadedFile> uploaded) {
+    private List<Long> persistFiles(Long userId, Long uploadsId, Long folderId, List<UploadedFile> uploaded) {
         List<Long> fileIds = new ArrayList<>();
         for (UploadedFile file : uploaded) {
             File entity = new File();
             entity.setUsersId(userId);
-            entity.setFolderId(null);
+            entity.setFolderId(folderId);
             entity.setUploadsId(uploadsId);
             entity.setName(file.name());
             entity.setS3Key(file.key());
