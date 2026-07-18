@@ -6,9 +6,14 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 
+import java.util.Optional;
+
 public interface UsersRepository extends JpaRepository<Users, Long> {
     // Spring Data generates all the basic CRUD (save, findById, ...) for you.
     // We'll add finders here as features need them.
+
+    /** GET /api/v1/users/me — 삭제되지 않은(Del=false) 사용자만 조회한다. */
+    Optional<Users> findByIdAndDelFalse(Long id);
 
     /**
      * GET /api/v1/admin/users — 사용자 목록 + 문서 수를 JOIN/GROUP BY 하나로 집계해서 가져온다

@@ -2,6 +2,10 @@ package com.jipsa.user;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 
-/** 3단계에서는 가입 시 저장(save)만 필요해 커스텀 쿼리는 두지 않는다. */
+import java.util.Optional;
+
 public interface UsersInformationRepository extends JpaRepository<UsersInformation, Long> {
+
+    /** GET /api/v1/users/me — 삭제되지 않은(Del=false) 프로필 정보를 userId로 조회한다. */
+    Optional<UsersInformation> findByUsersIdAndDelFalse(Long usersId);
 }
