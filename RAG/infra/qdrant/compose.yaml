@@ -1,0 +1,73 @@
+name: jipsa-rag-infra
+
+services:
+  # ============================================================
+  # Qdrant Vector Database
+  # ============================================================
+  qdrant:
+    image: qdrant/qdrant:v1.18.2
+    container_name: jipsa-qdrant
+    restart: unless-stopped
+
+    ports:
+      # RAG 서버가 실행되는 로컬 PC에서만 접근할 수 있도록
+      # 모든 네트워크 인터페이스가 아닌 127.0.0.1에만 바인딩합니다.
+      - "127.0.0.1:6333:6333"
+
+      # Qdrant gRPC 포트입니다.
+      # 초기 구현은 REST를 사용하지만 이후 대량 적재 최적화에 대비해 노출합니다.
+      - "127.0.0.1:6334:6334"
+
+    volumes:
+      # Collection, 벡터, payload, index 등 Qdrant 데이터를 보존합니다.
+      - jipsa_qdrant_storage:/qdrant/storage
+
+      # Qdrant Snapshot 파일을 컨테이너 재생성 이후에도 보존합니다.
+      - jipsa_qdrant_snapshots:/qdrant/snapshots
+
+  # ============================================================
+  # Hugging Face Text Embeddings Inference
+  # ============================================================
+  embedding:
+    # NVIDIA CUDA를 사용하는 Hugging Face TEI 이미지입니다.
+    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
+    container_name: jipsa-embedding
+    restart: unless-stopped
+
+    ports:
+      # 로컬 애플리케이션 서버가 사용하는 8080 포트와 충돌하지 않도록
+      # 호스트 포트 18081을 컨테이너의 HTTP 포트 80에 연결합니다.
+      - "127.0.0.1:18081:80"
+
+    volumes:
+      # 다운로드한 Hugging Face 모델 파일을 Docker Volume에 보존합니다.
+      # 컨테이너를 재생성하더라도 동일 모델을 다시 다운로드하지 않습니다.
+      - jipsa_embedding_cache:/data
+
+    command:
+      # RTX 3060 Ti 8GB 환경에서 사용할 다국어 임베딩 모델입니다.
+      - "--model-id"
+      - "Qwen/Qwen3-Embedding-0.6B"
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            # embedding 컨테이너에 NVIDIA GPU 1개를 할당합니다.
+            - driver: nvidia
+              count: 1
+              capabilities:
+                - gpu
+
+volumes:
+  # Qdrant의 Collection, 벡터, payload 및 index 데이터입니다.
+  jipsa_qdrant_storage:
+    name: jipsa_qdrant_storage
+
+  # Qdrant Snapshot 백업 데이터입니다.
+  jipsa_qdrant_snapshots:
+    name: jipsa_qdrant_snapshots
+
+  # Hugging Face 임베딩 모델 캐시 데이터입니다.
+  jipsa_embedding_cache:
+    name: jipsa_embedding_cache

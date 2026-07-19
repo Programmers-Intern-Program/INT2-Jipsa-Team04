@@ -2,6 +2,9 @@
 
 from fastapi import APIRouter
 
+from jipsa_rag.api.v1.endpoints.file_processing import (
+    router as file_processing_router,
+)
 from jipsa_rag.api.v1.endpoints.health import router as health_router
 
 # main.py에 등록할 API v1 통합 라우터이다.
@@ -9,3 +12,6 @@ router = APIRouter()
 
 # 헬스 체크 관련 엔드포인트를 API v1 라우터에 등록한다.
 router.include_router(health_router)
+
+# 파일 처리 관련 엔드포인트를 API v1 라우터에 등록한다.
+router.include_router(file_processing_router)
