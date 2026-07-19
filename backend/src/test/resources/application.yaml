@@ -14,3 +14,7 @@ app:
     region: ap-northeast-2
   ingest:
     enabled: false
+# 테스트 전용 AES-GCM 필드 암호화 키(Base64 32바이트). 실제 키가 아니라 고정 더미다 —
+# 프로덕션은 환경변수 JIPSA_FIELD_ENC_KEY로 주입한다.
+jipsa:
+  field-enc-key: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
