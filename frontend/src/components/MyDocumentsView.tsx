@@ -25,12 +25,14 @@ import {
   ShieldAlert,
   Undo2
 } from "lucide-react";
-import type { Document, Folder as FolderType } from "../types";
+import type { Document, Folder as FolderType, OrganizeProposal, ProposedFolder } from "../types";
 import { formatBytes } from "../utils/formatBytes";
 import { mockFolders } from "../mocks/mockData";
 import { getFolderPath, getFolderAncestors, isDescendantOrSelf, ensureFolderPath } from "../utils/folderTree";
 import { listFolders, createFolder, deleteFolder } from "../api/folders";
 import { getStorageUsage, listFiles, listTrash, moveFiles, restoreFile, toDocument } from "../api/files";
+import { proposeOrganization, applyOrganization } from "../api/organize";
+import { ApiError } from "../api/client";
 
 interface MyDocumentsViewProps {
   documents: Document[];
@@ -62,14 +64,10 @@ export default function MyDocumentsView({
 
   // AI Organize state
   const [isSmartMenuOpen, setIsSmartMenuOpen] = useState(false);
-  const [organizeCriteria, setOrganizeCriteria] = useState<"topic" | "department" | "security" | "project">("topic");
   const [isOrganizing, setIsOrganizing] = useState(false);
   const [organizeStep, setOrganizeStep] = useState(0);
-  const [organizeResult, setOrganizeResult] = useState<{
-    generalReport: string;
-    reorganizations: { id: string; newFolder: string; reason: string }[];
-  } | null>(null);
-  const [canUndoOrganize, setCanUndoOrganize] = useState(false);
+  const [organizeResult, setOrganizeResult] = useState<OrganizeProposal | null>(null);
+  const [isApplyingOrganize, setIsApplyingOrganize] = useState(false);
 
   // AI Smart Upload specialized state
   const [isSpecialUploadMode, setIsSpecialUploadMode] = useState(false);
@@ -469,7 +467,9 @@ export default function MyDocumentsView({
     }
   };
 
-  // Trigger folder reorganization sequence
+  // Trigger folder reorganization sequence — POST /api/v1/organize/propose 호출.
+  // 로그인 연동 전이라 401이 나면(정상) 안내만 하고 종료 — 폴더처럼 mock으로
+  // 폴백할 수 없다(AI 제안 자체가 서버에서만 생성 가능하므로).
   const handleOrganizeFolders = async () => {
     setIsOrganizing(true);
     setOrganizeStep(1);
@@ -479,27 +479,15 @@ export default function MyDocumentsView({
     const step2 = setTimeout(() => setOrganizeStep(3), 1600);
 
     try {
-      const res = await fetch("/api/documents/organize", { 
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ criteria: organizeCriteria })
-      });
-      const data = await res.json();
-      
-      // Delay slightly for dramatic satisfaction
-      await new Promise(resolve => setTimeout(resolve, 2400));
-
-      if (data.success) {
-        setOrganizeResult({
-          generalReport: data.generalReport,
-          reorganizations: data.reorganizations
-        });
-      }
+      const proposal = await proposeOrganization();
+      setOrganizeResult(proposal);
     } catch (err) {
-      console.error("Smart reorg error:", err);
-      alert("스마트 정리 수행 중 일시적 통신 오류가 발생했습니다.");
+      console.error("스마트 정리 제안 생성 실패:", err);
+      const message =
+        err instanceof ApiError && err.status === 401
+          ? "로그인 연동 전이라 아직 호출할 수 없습니다. (로그인 API 연결 후 정상 동작 예정)"
+          : "스마트 정리 제안 생성 중 오류가 발생했습니다.";
+      alert(message);
     } finally {
       setIsOrganizing(false);
       clearTimeout(step1);
@@ -507,50 +495,44 @@ export default function MyDocumentsView({
     }
   };
 
+  // POST /api/v1/organize/apply — 제안을 그대로 백엔드에 되돌려보내 실제 파일 이동/이름변경 반영.
   const handleApplyOrganization = async () => {
     if (!organizeResult) return;
+    setIsApplyingOrganize(true);
     try {
-      const res = await fetch("/api/documents/organize/apply", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ reorganizations: organizeResult.reorganizations })
-      });
-      const data = await res.json();
-      if (data.success) {
-        onUpdateDocuments(data.documents);
-        setOrganizeResult(null);
-        setSelectedFolder(null);
-        setCanUndoOrganize(true);
-        alert(`🎉 AI 스마트 폴더 정리가 드라이브 메타데이터에 전격 반영되었습니다!\n\n선택하신 분류 기준으로 전체 ${data.documents.length}개 문서의 가상 디렉터리 경로가 재설정되었습니다.`);
-      } else {
-        alert("정리를 적용하는 중 오류가 발생했습니다.");
-      }
+      await applyOrganization(organizeResult);
+      setOrganizeResult(null);
+      setSelectedFolder(null);
+      // 폴더 목록이 서버에서 바뀌었으니 다시 조회 — 실패해도(로그인 전) 기존 상태 유지.
+      listFolders()
+        .then(setFolders)
+        .catch(() => {});
+      alert("🎉 AI 스마트 정리 제안이 실제로 반영되었습니다.");
     } catch (err) {
-      console.error("Apply organize error:", err);
-      alert("정리를 적용하는 중 일시적 통신 오류가 발생했습니다.");
+      console.error("스마트 정리 적용 실패:", err);
+      alert("정리를 적용하는 중 오류가 발생했습니다.");
+    } finally {
+      setIsApplyingOrganize(false);
     }
   };
 
-  const handleUndoOrganization = async () => {
-    try {
-      const res = await fetch("/api/documents/organize/undo", {
-        method: "POST"
-      });
-      const data = await res.json();
-      if (data.success) {
-        onUpdateDocuments(data.documents);
-        setCanUndoOrganize(false);
-        setSelectedFolder(null);
-        alert("↩️ 이전 가상 폴더 구조가 성공적으로 복구되었습니다. (정리 실행 취소 완료)");
-      } else {
-        alert("실행 취소를 적용하는 중 오류가 발생했습니다.");
-      }
-    } catch (err) {
-      console.error("Undo organize error:", err);
-      alert("실행 취소를 적용하는 중 일시적 통신 오류가 발생했습니다.");
+  // 제안 안의 새 폴더(tempId 체인)를 실제 표시용 전체 경로 문자열로 풀어준다.
+  // parentTempId를 따라 올라가다 parentFolderId(기존 폴더)를 만나면 거기서부터는
+  // 기존 folders 배열 기준 getFolderPath로 이어붙인다.
+  const resolveProposedFolderPath = (folder: ProposedFolder, newFolders: ProposedFolder[]): string => {
+    const segments: string[] = [folder.name];
+    let current: ProposedFolder | undefined = folder;
+    while (current?.parentTempId) {
+      const parent = newFolders.find((f) => f.tempId === current!.parentTempId);
+      if (!parent) break;
+      segments.unshift(parent.name);
+      current = parent;
     }
+    if (current?.parentFolderId != null) {
+      const basePath = getFolderPath(current.parentFolderId, folders);
+      return basePath ? `${basePath}/${segments.join("/")}` : segments.join("/");
+    }
+    return segments.join("/");
   };
 
   const handleSmartUploadTrigger = () => {
@@ -755,63 +737,8 @@ export default function MyDocumentsView({
                       <h5 className="font-extrabold text-xs text-primary uppercase tracking-wider">지능형 자동 정리 도구</h5>
                     </div>
 
-                    {/* Criteria Selector Grid */}
-                    <div className="p-3 bg-surface-container-low/50 border-b border-outline-variant/30 space-y-2">
-                      <p className="text-[10px] font-extrabold text-secondary uppercase tracking-wider px-1">AI 정리 분류 기준 선택</p>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setOrganizeCriteria("topic")}
-                          className={`p-2 rounded-xl text-left border transition-all text-[11px] cursor-pointer ${
-                            organizeCriteria === "topic" 
-                              ? "bg-primary text-white font-bold border-primary shadow-sm" 
-                              : "bg-white text-on-surface border-outline-variant hover:bg-surface-container-low"
-                          }`}
-                        >
-                          <span className="block font-bold">📂 업무 주제별</span>
-                          <span className="block text-[8.5px] opacity-85 leading-tight mt-0.5">내용/성격 단위 분류</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setOrganizeCriteria("department")}
-                          className={`p-2 rounded-xl text-left border transition-all text-[11px] cursor-pointer ${
-                            organizeCriteria === "department" 
-                              ? "bg-primary text-white font-bold border-primary shadow-sm" 
-                              : "bg-white text-on-surface border-outline-variant hover:bg-surface-container-low"
-                          }`}
-                        >
-                          <span className="block font-bold">🏢 부서 조직별</span>
-                          <span className="block text-[8.5px] opacity-85 leading-tight mt-0.5">인사/재무/개발 등</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setOrganizeCriteria("security")}
-                          className={`p-2 rounded-xl text-left border transition-all text-[11px] cursor-pointer ${
-                            organizeCriteria === "security" 
-                              ? "bg-primary text-white font-bold border-primary shadow-sm" 
-                              : "bg-white text-on-surface border-outline-variant hover:bg-surface-container-low"
-                          }`}
-                        >
-                          <span className="block font-bold">🛡️ 보안 등급별</span>
-                          <span className="block text-[8.5px] opacity-85 leading-tight mt-0.5">기밀/대외비/일반</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setOrganizeCriteria("project")}
-                          className={`p-2 rounded-xl text-left border transition-all text-[11px] cursor-pointer ${
-                            organizeCriteria === "project" 
-                              ? "bg-primary text-white font-bold border-primary shadow-sm" 
-                              : "bg-white text-on-surface border-outline-variant hover:bg-surface-container-low"
-                          }`}
-                        >
-                          <span className="block font-bold">🎯 프로젝트별</span>
-                          <span className="block text-[8.5px] opacity-85 leading-tight mt-0.5">바우처/과제 단위</span>
-                        </button>
-                      </div>
-                    </div>
-                    
                     <div className="p-2 space-y-1">
-                      <button 
+                      <button
                         onClick={() => {
                           setIsSmartMenuOpen(false);
                           handleOrganizeFolders();
@@ -824,7 +751,7 @@ export default function MyDocumentsView({
                         <div className="min-w-0 flex-1">
                           <p className="font-bold text-xs text-on-surface group-hover:text-primary transition-colors">1) 현재 폴더 정리하기</p>
                           <p className="text-[10px] text-outline mt-0.5 leading-relaxed">
-                            선택한 <span className="text-primary font-bold">[{organizeCriteria === "topic" ? "업무 주제별" : organizeCriteria === "department" ? "부서 조직별" : organizeCriteria === "security" ? "보안 등급별" : "프로젝트별"}]</span> 기준으로 전체 문서를 결합 및 분류 정돈합니다.
+                            AI가 전체 문서를 분석해 새 폴더 구조와 파일 이동을 제안합니다.
                           </p>
                         </div>
                       </button>
@@ -850,18 +777,6 @@ export default function MyDocumentsView({
               )}
             </AnimatePresence>
           </div>
-
-          {canUndoOrganize && (
-            <button 
-              onClick={handleUndoOrganization}
-              className="py-3 px-4 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-xl font-bold text-body-sm flex items-center gap-2 transition-colors cursor-pointer border border-rose-200 shadow-sm"
-              title="이전 폴더 구조로 되돌리기"
-              id="btn-undo-organize"
-            >
-              <Clock className="w-4 h-4 text-rose-500 animate-pulse" />
-              <span>정리 실행 취소 (Undo)</span>
-            </button>
-          )}
 
           {/* Quick Upload Action */}
           <button 
@@ -1841,100 +1756,56 @@ export default function MyDocumentsView({
 
               {/* Scrollable Content Area */}
               <div className="p-8 space-y-6 overflow-y-auto flex-1 custom-scrollbar bg-surface-bright">
-                {/* Criteria Badge & Top Summary */}
+                {/* Top Summary */}
                 <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between p-4 bg-gradient-to-br from-primary/[0.03] to-secondary/[0.03] rounded-2xl border border-outline-variant/60">
                   <div className="space-y-1">
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-secondary/10 text-secondary text-[11px] font-extrabold rounded-full tracking-wider uppercase border border-secondary/15">
-                      💡 {organizeCriteria === "topic" ? "업무 주제 및 성격별 분류" : organizeCriteria === "department" ? "부서 및 조직 체계별 분류" : organizeCriteria === "security" ? "보안 등급 및 중요도별 분류" : "프로젝트 및 실증 사업별 분류"}
+                      💡 AI 폴더 구조 재편 제안
                     </span>
-                    <p className="text-body-sm font-extrabold text-on-surface">분류 체계 대대적 자동 재편</p>
+                    <p className="text-body-sm font-extrabold text-on-surface">새 폴더 생성 및 파일 이동 제안</p>
                   </div>
                   <div className="text-[11px] text-outline font-sans bg-white px-3 py-1.5 rounded-lg border border-outline-variant/40">
-                    전체 가상 클라우드 내 <span className="font-bold text-primary">{organizeResult.reorganizations.length}개</span>의 파일 일괄 경로 변경 추천
+                    새 폴더 <span className="font-bold text-primary">{organizeResult.newFolders.length}개</span> ·
+                    파일 <span className="font-bold text-primary">{organizeResult.mappings.length}건</span> 이동/이름변경 제안
                   </div>
                 </div>
 
-                {/* General summary report from AI */}
-                <div className="p-4 bg-white rounded-2xl border border-outline-variant/60 shadow-sm relative overflow-hidden">
-                  <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-secondary"></div>
-                  <p className="text-xs text-secondary font-extrabold mb-1 tracking-wider uppercase pl-1">AI 지능형 분석 총평 리포트</p>
-                  <p className="text-xs font-semibold text-on-surface-variant leading-relaxed pl-1">
-                    "{organizeResult.generalReport}"
-                  </p>
+                {/* New folders list */}
+                <div className="space-y-3">
+                  <h4 className="font-extrabold text-xs text-on-surface uppercase tracking-wider mb-2">새로 생성될 폴더</h4>
+
+                  {organizeResult.newFolders.length === 0 ? (
+                    <div className="p-4 bg-surface-container-low/40 border border-outline-variant/20 rounded-xl text-[11px] text-outline">
+                      새로 생성할 폴더는 없습니다. 기존 폴더 안에서 파일 이동/이름변경만 제안되었습니다.
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {organizeResult.newFolders.map((folder) => (
+                        <div
+                          key={folder.tempId}
+                          className="flex items-center gap-3 p-3.5 bg-secondary/5 border border-secondary/20 rounded-xl relative overflow-hidden"
+                        >
+                          <div className="absolute right-0 bottom-0 opacity-[0.03] pointer-events-none text-secondary">
+                            <Sparkles className="w-10 h-10" />
+                          </div>
+                          <span className="text-[9px] bg-secondary text-white font-extrabold px-1.5 py-0.5 rounded shrink-0">
+                            신규
+                          </span>
+                          <p className="text-[11px] font-extrabold text-secondary truncate">
+                            📂 {resolveProposedFolderPath(folder, organizeResult.newFolders)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
-                {/* side-by-side comparative table list */}
-                <div className="space-y-3">
-                  <h4 className="font-extrabold text-xs text-on-surface uppercase tracking-wider mb-2">문서 대조 미리보기 내역</h4>
-                  
-                  <div className="space-y-3.5">
-                    {organizeResult.reorganizations.map((item) => {
-                      const doc = documents.find(d => d.id === item.id);
-                      if (!doc) return null;
-                      return (
-                        <div key={item.id} className="bg-white border border-outline-variant/60 rounded-2xl shadow-sm overflow-hidden hover:border-outline transition-all">
-                          {/* File header title */}
-                          <div className="px-5 py-3.5 border-b border-outline-variant/30 bg-surface-container-low/20 flex items-center justify-between">
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              {doc.fileType === "pdf" ? (
-                                <FileText className="w-4.5 h-4.5 text-rose-500 shrink-0" />
-                              ) : doc.fileType === "xlsx" ? (
-                                <FileText className="w-4.5 h-4.5 text-emerald-500 shrink-0" />
-                              ) : (
-                                <FileText className="w-4.5 h-4.5 text-blue-500 shrink-0" />
-                              )}
-                              <span className="text-xs font-extrabold text-on-surface truncate" title={doc.name}>
-                                {doc.name}
-                              </span>
-                            </div>
-                            <span className="text-[9.5px] text-outline font-mono bg-surface-container px-2 py-0.5 rounded shrink-0">
-                              {formatBytes(doc.sizeBytes)}
-                            </span>
-                          </div>
-
-                          {/* Comparative visual body */}
-                          <div className="p-5 space-y-3 bg-white">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-center">
-                              {/* Before structure */}
-                              <div className="flex items-center gap-3 p-3 bg-surface-container-lowest border border-outline-variant/40 rounded-xl">
-                                <span className="text-[9px] bg-outline-variant/60 text-outline-variant-on font-extrabold px-1.5 py-0.5 rounded shrink-0">
-                                  기존 폴더
-                                </span>
-                                <div className="min-w-0">
-                                  <p className="text-[11px] font-bold text-on-surface-variant truncate">
-                                    📂 {getFolderPath(doc.folderId, folders) || "루트 드라이브"}
-                                  </p>
-                                </div>
-                              </div>
-
-                              {/* After structure */}
-                              <div className="flex items-center gap-3 p-3 bg-secondary/5 border border-secondary/20 rounded-xl relative overflow-hidden">
-                                <div className="absolute right-0 bottom-0 opacity-[0.03] pointer-events-none text-secondary">
-                                  <Sparkles className="w-10 h-10" />
-                                </div>
-                                <span className="text-[9px] bg-secondary text-white font-extrabold px-1.5 py-0.5 rounded shrink-0 animate-pulse">
-                                  추천 폴더
-                                </span>
-                                <div className="min-w-0">
-                                  <p className="text-[11px] font-extrabold text-secondary truncate">
-                                    📂 {item.newFolder}
-                                  </p>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Reason for change */}
-                            <div className="bg-surface-container-low/40 border border-outline-variant/20 rounded-xl p-3 text-[11px] text-outline leading-relaxed flex items-start gap-1.5">
-                              <span className="text-secondary shrink-0">💡</span>
-                              <div>
-                                <span className="font-extrabold text-on-surface-variant">추천 가이드라인: </span>
-                                {item.reason}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                {/* File mapping notice — v0에서는 파일별 상세 대조가 아니라 건수만 안내 */}
+                <div className="bg-surface-container-low/40 border border-outline-variant/20 rounded-xl p-4 text-[11px] text-outline leading-relaxed flex items-start gap-1.5">
+                  <span className="text-secondary shrink-0">💡</span>
+                  <div>
+                    <span className="font-extrabold text-on-surface-variant">파일별 상세 미리보기는 아직 지원되지 않습니다. </span>
+                    총 {organizeResult.mappings.length}건의 파일 이동/이름변경이 적용 시 함께 반영됩니다.
                   </div>
                 </div>
               </div>
@@ -1950,14 +1821,15 @@ export default function MyDocumentsView({
 
                 <div className="flex items-center gap-3">
                   <span className="text-[10px] text-outline hidden md:inline-block">
-                    * 가상 디렉터리 경로 메타데이터만 갱신됩니다 (S3 객체는 유지)
+                    * 실제 폴더 생성 및 파일 이동/이름변경이 반영됩니다 (되돌리기 미지원)
                   </span>
-                  <button 
+                  <button
                     onClick={handleApplyOrganization}
-                    className="px-6 py-3 bg-primary hover:bg-opacity-95 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-primary/10 flex items-center gap-1.5 transition-all cursor-pointer hover:scale-[1.01] active:scale-95"
+                    disabled={isApplyingOrganize}
+                    className="px-6 py-3 bg-primary hover:bg-opacity-95 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-primary/10 flex items-center gap-1.5 transition-all cursor-pointer hover:scale-[1.01] active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
                   >
                     <Sparkles className="w-4 h-4 text-secondary-container fill-secondary-container/20 animate-pulse" />
-                    추천 폴더 배치 적용하기
+                    {isApplyingOrganize ? "적용 중..." : "추천 폴더 배치 적용하기"}
                   </button>
                 </div>
               </div>
