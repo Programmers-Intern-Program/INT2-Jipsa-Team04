@@ -73,6 +73,47 @@ export interface ChatSession {
   selectedDocIds: string[];
 }
 
+/** GET /api/v1/organize/current-tree, propose/apply 공용 폴더 트리 노드. backend FolderTreeNode와 1:1. */
+export interface OrganizeFolderTreeNode {
+  folderId: number;
+  name: string;
+  children: OrganizeFolderTreeNode[];
+}
+
+/**
+ * AI가 제안한, 아직 실제로 존재하지 않는 새 폴더. backend ProposedFolder와 1:1.
+ * parentTempId/parentFolderId는 동시에 채워지지 않음(정확히 하나만 사용).
+ */
+export interface ProposedFolder {
+  tempId: string;
+  name: string;
+  parentTempId: string | null;
+  parentFolderId: number | null;
+}
+
+/**
+ * 파일 하나를 어디로 옮기고 어떤 이름으로 바꿀지에 대한 AI 제안. backend FileMapping과 1:1.
+ * targetFolderId/targetTempId 동시 사용 불가, 둘 다 null이면 루트로 이동.
+ */
+export interface FileMapping {
+  fileId: number;
+  targetFolderId: number | null;
+  targetTempId: string | null;
+  newName: string | null;
+}
+
+/** POST /api/v1/organize/propose 응답, POST /api/v1/organize/apply 요청 바디. backend OrganizeProposal과 1:1. */
+export interface OrganizeProposal {
+  newFolders: ProposedFolder[];
+  mappings: FileMapping[];
+  /**
+   * apply 요청에만 실어 보내는 재시도 방지용 키(propose 응답엔 없음, undefined).
+   * 같은 승인 동작을 재시도할 때 항상 같은 값을 보내야 서버가 중복 반영을 막을 수 있다 —
+   * handleApplyOrganization에서 제안을 받을 때 한 번만 생성해 organizeResult에 붙여둔다.
+   */
+  idempotencyKey?: string;
+}
+
 /** GET /api/v1/admin/users 목록 항목. 필드명은 backend AdminUserListItem과 1:1. */
 export interface AdminUser {
   userId: number;

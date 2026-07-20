@@ -42,6 +42,23 @@ export function listFiles(params: FileListParams = {}): Promise<FileListResponse
     return apiFetch<FileListResponse>(`/files${qs ? `?${qs}` : ""}`);
 }
 
+/**
+ * /api/v1/files 전체 페이지를 순회해 로그인 사용자의 전체 문서를 Document[]로 모아 돌려준다.
+ * 스마트 정리 적용처럼 폴더/파일이 서버에서 바뀐 뒤 App.tsx의 documents 상태 전체를
+ * 새로 채워야 할 때 사용 — listFiles()는 한 페이지(PAGE_SIZE=20)만 주기 때문에 그대로 쓰면
+ * 21번째 문서부터 documents 상태에서 사라지는 문제가 생긴다.
+ */
+export async function listAllFiles(): Promise<Document[]> {
+    const first = await listFiles({ page: 0 });
+    const items = [...first.items];
+    const totalPages = first.size > 0 ? Math.ceil(first.total / first.size) : 1;
+    for (let page = 1; page < totalPages; page++) {
+        const res = await listFiles({ page });
+        items.push(...res.items);
+    }
+    return items.map(toDocument);
+}
+
 export function toDocument(item: FileListItem): Document {
     return {
         id: String(item.fileId),
