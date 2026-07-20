@@ -3,12 +3,14 @@ package com.jipsa.common;
 import com.jipsa.common.exception.ApiException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -77,6 +79,20 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex) {
         return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
                 .body(ApiResponse.fail(new ApiError("METHOD_NOT_ALLOWED", "지원하지 않는 HTTP 메서드입니다.")));
+    }
+
+    // @PathVariable/@RequestParam 값이 선언된 타입으로 변환 불가능한 경우(예: Long 파라미터에 "abc").
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.fail(new ApiError("BAD_REQUEST", "요청 값의 형식이 올바르지 않습니다.")));
+    }
+
+    // 요청 본문이 비어있거나 JSON 파싱/타입 변환에 실패한 경우(예: Long 필드에 문자열 전달).
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMessageNotReadable(HttpMessageNotReadableException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.fail(new ApiError("BAD_REQUEST", "요청 본문의 형식이 올바르지 않습니다.")));
     }
 
     @ExceptionHandler(Exception.class)

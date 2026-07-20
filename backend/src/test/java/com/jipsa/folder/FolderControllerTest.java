@@ -206,4 +206,25 @@ class FolderControllerTest {
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.error.code").value("METHOD_NOT_ALLOWED"));
     }
+
+    @Test
+    void pathVariable가_숫자로_변환불가능하면_500이_아니라_400() throws Exception {
+        // {id}는 Long — 숫자로 못 바꾸는 값이 오면 MethodArgumentTypeMismatchException.
+        mockMvc.perform(delete("/api/v1/folders/{id}", "abc"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("BAD_REQUEST"));
+    }
+
+    @Test
+    void create_parentFolderId가_JSON에서_숫자타입이_아니면_500이_아니라_400() throws Exception {
+        // CreateFolderRequest.parentFolderId는 Long — 컨트롤러 진입 전 Jackson 역직렬화 단계에서
+        // HttpMessageNotReadableException이 발생한다.
+        mockMvc.perform(post("/api/v1/folders")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"새 폴더\", \"parentFolderId\": \"abc\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("BAD_REQUEST"));
+    }
 }
