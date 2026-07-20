@@ -30,6 +30,24 @@ _SETTING_ENVIRONMENT_VARIABLES = (
     "JIPSA_RAG_DATABASE_ECHO",
     "JIPSA_RAG_DATABASE_CHECK_ON_STARTUP",
     "JIPSA_RAG_S3_ALLOWED_KEY_PREFIX",
+    "JIPSA_RAG_FILE_DOWNLOAD_ALLOWED_HOST_SUFFIXES",
+    "JIPSA_RAG_FILE_DOWNLOAD_CONNECT_TIMEOUT_SECONDS",
+    "JIPSA_RAG_FILE_DOWNLOAD_READ_TIMEOUT_SECONDS",
+    "JIPSA_RAG_FILE_DOWNLOAD_MAX_SIZE_BYTES",
+    "JIPSA_RAG_EMBEDDING_PROVIDER",
+    "JIPSA_RAG_EMBEDDING_BASE_URL",
+    "JIPSA_RAG_EMBEDDING_MODEL",
+    "JIPSA_RAG_EMBEDDING_DIM",
+    "JIPSA_RAG_EMBEDDING_BATCH_SIZE",
+    "JIPSA_RAG_EMBEDDING_DISTANCE",
+    "JIPSA_RAG_EMBEDDING_TIMEOUT_SECONDS",
+    "JIPSA_RAG_VECTOR_DB_PROVIDER",
+    "JIPSA_RAG_QDRANT_URL",
+    "JIPSA_RAG_QDRANT_COLLECTION",
+    "JIPSA_RAG_QDRANT_GRPC_PORT",
+    "JIPSA_RAG_QDRANT_PREFER_GRPC",
+    "JIPSA_RAG_QDRANT_API_KEY",
+    "JIPSA_RAG_QDRANT_TIMEOUT_SECONDS",
     "JIPSA_RAG_APP_SERVER_BASE_URL",
     "JIPSA_RAG_APP_SERVER_API_V1_PREFIX",
     "JIPSA_RAG_APP_SERVER_CONNECT_TIMEOUT_SECONDS",
@@ -75,6 +93,24 @@ def _write_test_env_file(
                 "JIPSA_RAG_DATABASE_ECHO=false",
                 "JIPSA_RAG_DATABASE_CHECK_ON_STARTUP=false",
                 "JIPSA_RAG_S3_ALLOWED_KEY_PREFIX=files/",
+                ("JIPSA_RAG_FILE_DOWNLOAD_ALLOWED_HOST_SUFFIXES=.amazonaws.com"),
+                ("JIPSA_RAG_FILE_DOWNLOAD_CONNECT_TIMEOUT_SECONDS=5.0"),
+                ("JIPSA_RAG_FILE_DOWNLOAD_READ_TIMEOUT_SECONDS=60.0"),
+                ("JIPSA_RAG_FILE_DOWNLOAD_MAX_SIZE_BYTES=52428800"),
+                "JIPSA_RAG_EMBEDDING_PROVIDER=tei",
+                ("JIPSA_RAG_EMBEDDING_BASE_URL=http://127.0.0.1:18081"),
+                ("JIPSA_RAG_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B"),
+                "JIPSA_RAG_EMBEDDING_DIM=1024",
+                "JIPSA_RAG_EMBEDDING_BATCH_SIZE=32",
+                "JIPSA_RAG_EMBEDDING_DISTANCE=cosine",
+                "JIPSA_RAG_EMBEDDING_TIMEOUT_SECONDS=60",
+                "JIPSA_RAG_VECTOR_DB_PROVIDER=qdrant",
+                "JIPSA_RAG_QDRANT_URL=http://127.0.0.1:6333",
+                ("JIPSA_RAG_QDRANT_COLLECTION=rag_chunk_vector_qwen3_embedding_0_6b_1024"),
+                "JIPSA_RAG_QDRANT_GRPC_PORT=6334",
+                "JIPSA_RAG_QDRANT_PREFER_GRPC=false",
+                "JIPSA_RAG_QDRANT_API_KEY=",
+                "JIPSA_RAG_QDRANT_TIMEOUT_SECONDS=10",
                 ("JIPSA_RAG_APP_SERVER_BASE_URL=http://127.0.0.1:8080"),
                 "JIPSA_RAG_APP_SERVER_API_V1_PREFIX=/api/v1",
                 ("JIPSA_RAG_APP_SERVER_CONNECT_TIMEOUT_SECONDS=5.0"),
@@ -108,6 +144,24 @@ def _create_settings(
         "database_echo": False,
         "database_check_on_startup": False,
         "s3_allowed_key_prefix": "files/",
+        "file_download_allowed_host_suffixes": ".amazonaws.com",
+        "file_download_connect_timeout_seconds": 5.0,
+        "file_download_read_timeout_seconds": 60.0,
+        "file_download_max_size_bytes": 52_428_800,
+        "embedding_provider": "tei",
+        "embedding_base_url": "http://127.0.0.1:18081",
+        "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+        "embedding_dim": 1024,
+        "embedding_batch_size": 32,
+        "embedding_distance": "cosine",
+        "embedding_timeout_seconds": 60.0,
+        "vector_db_provider": "qdrant",
+        "qdrant_url": "http://127.0.0.1:6333",
+        "qdrant_collection": "rag_chunk_vector_qwen3_embedding_0_6b_1024",
+        "qdrant_grpc_port": 6334,
+        "qdrant_prefer_grpc": False,
+        "qdrant_api_key": None,
+        "qdrant_timeout_seconds": 10.0,
         "app_server_base_url": "http://127.0.0.1:8080",
         "app_server_api_v1_prefix": "/api/v1",
         "app_server_connect_timeout_seconds": 5.0,
@@ -262,6 +316,27 @@ def test_settings_loads_selected_env_file(
 
     assert settings.s3_allowed_key_prefix == "files/"
 
+    assert settings.file_download_allowed_host_suffixes == ".amazonaws.com"
+    assert settings.file_download_connect_timeout_seconds == 5.0
+    assert settings.file_download_read_timeout_seconds == 60.0
+    assert settings.file_download_max_size_bytes == 52_428_800
+
+    assert settings.embedding_provider == "tei"
+    assert settings.embedding_base_url == "http://127.0.0.1:18081"
+    assert settings.embedding_model == "Qwen/Qwen3-Embedding-0.6B"
+    assert settings.embedding_dim == 1024
+    assert settings.embedding_batch_size == 32
+    assert settings.embedding_distance == "cosine"
+    assert settings.embedding_timeout_seconds == 60.0
+
+    assert settings.vector_db_provider == "qdrant"
+    assert settings.qdrant_url == "http://127.0.0.1:6333"
+    assert settings.qdrant_collection == "rag_chunk_vector_qwen3_embedding_0_6b_1024"
+    assert settings.qdrant_grpc_port == 6334
+    assert settings.qdrant_prefer_grpc is False
+    assert settings.qdrant_api_key is None
+    assert settings.qdrant_timeout_seconds == 10.0
+
     assert settings.app_server_base_url == "http://127.0.0.1:8080"
     assert settings.app_server_api_v1_prefix == "/api/v1"
     assert settings.app_server_connect_timeout_seconds == 5.0
@@ -277,6 +352,10 @@ def test_settings_strips_non_secret_text() -> None:
         database_name="  Jipsa_Local_RAG  ",
         database_user="  test_user  ",
         s3_allowed_key_prefix="  files/  ",
+        embedding_base_url="  http://127.0.0.1:18081  ",
+        embedding_model="  Qwen/Qwen3-Embedding-0.6B  ",
+        qdrant_url="  http://127.0.0.1:6333  ",
+        qdrant_collection="  rag_chunk_vector_test_1024  ",
         app_server_base_url="  http://127.0.0.1:8080  ",
     )
 
@@ -285,6 +364,10 @@ def test_settings_strips_non_secret_text() -> None:
     assert settings.database_name == "Jipsa_Local_RAG"
     assert settings.database_user == "test_user"
     assert settings.s3_allowed_key_prefix == "files/"
+    assert settings.embedding_base_url == "http://127.0.0.1:18081"
+    assert settings.embedding_model == "Qwen/Qwen3-Embedding-0.6B"
+    assert settings.qdrant_url == "http://127.0.0.1:6333"
+    assert settings.qdrant_collection == "rag_chunk_vector_test_1024"
     assert settings.app_server_base_url == "http://127.0.0.1:8080"
 
 
@@ -516,3 +599,365 @@ def test_s3_allowed_key_prefix_rejects_unknown_prefix() -> None:
         _create_settings(
             s3_allowed_key_prefix="uploads/",
         )
+
+
+def test_embedding_and_vector_db_choices_are_normalized() -> None:
+    """provider와 거리 함수의 공백 및 대소문자를 정규화해야 한다."""
+
+    settings = _create_settings(
+        embedding_provider="  TEI  ",
+        embedding_distance="  COSINE  ",
+        vector_db_provider="  QDRANT  ",
+    )
+
+    assert settings.embedding_provider == "tei"
+    assert settings.embedding_distance == "cosine"
+    assert settings.vector_db_provider == "qdrant"
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("embedding_provider", "sentence-transformers"),
+        ("embedding_distance", "euclid"),
+        ("vector_db_provider", "chroma"),
+    ],
+)
+def test_embedding_and_vector_db_reject_unsupported_choice(
+    field_name: str,
+    invalid_value: str,
+) -> None:
+    """현재 구현에서 지원하지 않는 provider와 거리 함수를 거부해야 한다."""
+
+    with pytest.raises(ValidationError):
+        _create_settings(
+            **{
+                field_name: invalid_value,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "embedding_base_url",
+        "qdrant_url",
+    ],
+)
+def test_external_service_base_url_accepts_https(
+    field_name: str,
+) -> None:
+    """TEI와 Qdrant 기본 URL은 HTTPS 스킴도 허용해야 한다."""
+
+    settings = _create_settings(
+        **{
+            field_name: "https://service.example.com:8443",
+        }
+    )
+
+    assert getattr(settings, field_name) == "https://service.example.com:8443"
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "embedding_base_url",
+        "qdrant_url",
+    ],
+)
+def test_external_service_base_url_must_not_end_with_slash(
+    field_name: str,
+) -> None:
+    """TEI와 Qdrant 기본 URL은 슬래시로 끝날 수 없어야 한다."""
+
+    with pytest.raises(
+        ValidationError,
+        match="'/'로 끝날 수 없습니다",
+    ):
+        _create_settings(
+            **{
+                field_name: "http://127.0.0.1:18081/",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "embedding_base_url",
+        "qdrant_url",
+    ],
+)
+def test_external_service_base_url_requires_http_scheme(
+    field_name: str,
+) -> None:
+    """TEI와 Qdrant 기본 URL은 HTTP 또는 HTTPS를 사용해야 한다."""
+
+    with pytest.raises(
+        ValidationError,
+        match="http 또는 https 스킴",
+    ):
+        _create_settings(
+            **{
+                field_name: "grpc://127.0.0.1:6334",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "embedding_base_url",
+        "qdrant_url",
+    ],
+)
+def test_external_service_base_url_requires_host(
+    field_name: str,
+) -> None:
+    """TEI와 Qdrant 기본 URL에는 호스트가 포함되어야 한다."""
+
+    with pytest.raises(
+        ValidationError,
+        match="호스트가 필요합니다",
+    ):
+        _create_settings(
+            **{
+                field_name: "http:///service",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "embedding_base_url",
+        "qdrant_url",
+    ],
+)
+def test_external_service_base_url_rejects_credentials(
+    field_name: str,
+) -> None:
+    """TEI와 Qdrant 기본 URL 안에 인증 정보를 포함할 수 없어야 한다."""
+
+    with pytest.raises(
+        ValidationError,
+        match="인증 정보를 포함할 수 없습니다",
+    ):
+        _create_settings(
+            **{
+                field_name: "http://user:password@127.0.0.1:6333",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "embedding_base_url",
+        "qdrant_url",
+    ],
+)
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://127.0.0.1:6333?collection=test",
+        "http://127.0.0.1:6333#dashboard",
+    ],
+)
+def test_external_service_base_url_rejects_query_and_fragment(
+    field_name: str,
+    base_url: str,
+) -> None:
+    """TEI와 Qdrant 기본 URL에 query 또는 fragment를 포함할 수 없어야 한다."""
+
+    with pytest.raises(
+        ValidationError,
+        match="query 또는 fragment",
+    ):
+        _create_settings(
+            **{
+                field_name: base_url,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "embedding_base_url",
+        "qdrant_url",
+    ],
+)
+def test_external_service_base_url_rejects_path(
+    field_name: str,
+) -> None:
+    """TEI와 Qdrant 기본 URL에 API 경로를 포함할 수 없어야 한다."""
+
+    with pytest.raises(
+        ValidationError,
+        match="경로를 포함할 수 없습니다",
+    ):
+        _create_settings(
+            **{
+                field_name: "http://127.0.0.1:6333/api",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "embedding_base_url",
+        "qdrant_url",
+    ],
+)
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://127.0.0.1:not-a-port",
+        "http://127.0.0.1:70000",
+    ],
+)
+def test_external_service_base_url_rejects_invalid_port(
+    field_name: str,
+    base_url: str,
+) -> None:
+    """TEI와 Qdrant 기본 URL의 포트가 유효하지 않으면 거부해야 한다."""
+
+    with pytest.raises(ValidationError):
+        _create_settings(
+            **{
+                field_name: base_url,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "embedding_dim",
+        "embedding_timeout_seconds",
+        "qdrant_timeout_seconds",
+    ],
+)
+@pytest.mark.parametrize(
+    "invalid_value",
+    [
+        0,
+        -1,
+    ],
+)
+def test_embedding_and_qdrant_positive_settings_reject_invalid_value(
+    field_name: str,
+    invalid_value: int,
+) -> None:
+    """임베딩 차원과 외부 서비스 제한 시간은 0보다 커야 한다."""
+
+    with pytest.raises(ValidationError):
+        _create_settings(
+            **{
+                field_name: invalid_value,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "embedding_batch_size",
+    [
+        1,
+        32,
+    ],
+)
+def test_embedding_batch_size_accepts_supported_boundary(
+    embedding_batch_size: int,
+) -> None:
+    """TEI 요청 배치 크기의 최소값과 최대값을 허용해야 한다."""
+
+    settings = _create_settings(
+        embedding_batch_size=embedding_batch_size,
+    )
+
+    assert settings.embedding_batch_size == embedding_batch_size
+
+
+@pytest.mark.parametrize(
+    "embedding_batch_size",
+    [
+        0,
+        33,
+    ],
+)
+def test_embedding_batch_size_rejects_unsupported_boundary(
+    embedding_batch_size: int,
+) -> None:
+    """TEI 요청 배치 크기가 1부터 32 범위를 벗어나면 거부해야 한다."""
+
+    with pytest.raises(ValidationError):
+        _create_settings(
+            embedding_batch_size=embedding_batch_size,
+        )
+
+
+@pytest.mark.parametrize(
+    "invalid_port",
+    [
+        0,
+        65_536,
+    ],
+)
+def test_qdrant_grpc_port_must_be_valid(
+    invalid_port: int,
+) -> None:
+    """Qdrant gRPC 포트는 유효한 TCP 포트 범위에 있어야 한다."""
+
+    with pytest.raises(ValidationError):
+        _create_settings(
+            qdrant_grpc_port=invalid_port,
+        )
+
+
+@pytest.mark.parametrize(
+    "invalid_collection",
+    [
+        "",
+        "   ",
+        "rag chunk vector",
+        "rag/chunk/vector",
+        "rag\\chunk\\vector",
+        "rag?chunk",
+        "rag#chunk",
+    ],
+)
+def test_qdrant_collection_rejects_invalid_name(
+    invalid_collection: str,
+) -> None:
+    """Qdrant Collection 이름에서 빈 값, 공백 및 경로 문자를 거부해야 한다."""
+
+    with pytest.raises(ValidationError):
+        _create_settings(
+            qdrant_collection=invalid_collection,
+        )
+
+
+def test_blank_qdrant_api_key_is_normalized_to_none() -> None:
+    """빈 Qdrant API Key는 인증 미사용 상태로 처리해야 한다."""
+
+    settings = _create_settings(
+        qdrant_api_key="   ",
+    )
+
+    assert settings.qdrant_api_key is None
+
+
+def test_qdrant_api_key_is_masked_in_settings_output() -> None:
+    """Qdrant API Key 원문이 Settings 문자열에 노출되지 않아야 한다."""
+
+    api_key = "qdrant-secret-api-key"
+    settings = _create_settings(
+        qdrant_api_key=api_key,
+    )
+
+    assert settings.qdrant_api_key is not None
+    assert settings.qdrant_api_key.get_secret_value() == api_key
+    assert api_key not in repr(settings)
+    assert api_key not in str(settings)

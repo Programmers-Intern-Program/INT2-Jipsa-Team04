@@ -37,3 +37,24 @@ app:
     retry-backoff-ms: 5000
   storage:
     quota-bytes: 107374182400
+  internal:
+    presign-ttl-seconds: 900
+    token: ${INTERNAL_TOKEN:}
+    allowed-ips: ${INTERNAL_ALLOWED_IPS:}
+  rag:
+    base-url: ${RAG_BASE_URL:}
+    token: ${RAG_INGEST_TOKEN:}
+
+# Google OAuth (authorization-code flow, backend-side token exchange).
+# Values come from env vars; empty defaults let the app start without .env
+# (the JwtService uses the same ${VAR:default} tolerance pattern).
+google:
+  oauth:
+    client-id: ${GOOGLE_CLIENT_ID:}
+    client-secret: ${GOOGLE_CLIENT_SECRET:}
+    redirect-uri: ${GOOGLE_REDIRECT_URI:}
+    token-uri: ${GOOGLE_TOKEN_URI:https://oauth2.googleapis.com/token}
+    # 구글 토큰 엔드포인트 호출 타임아웃(ms). 응답 없는 구글/네트워크가 로그인 스레드를
+    # 오래 점유하지 못하도록 애플리케이션 레벨에서 제한한다.
+    connect-timeout-ms: ${GOOGLE_OAUTH_CONNECT_TIMEOUT_MS:3000}
+    read-timeout-ms: ${GOOGLE_OAUTH_READ_TIMEOUT_MS:5000}

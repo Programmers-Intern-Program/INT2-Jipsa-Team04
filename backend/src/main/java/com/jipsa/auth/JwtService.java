@@ -23,7 +23,9 @@ public class JwtService {
             // dev-only fallback so tests/local runs without .env still start. NEVER
             // rely on the default for anything real — always set JWT_SECRET.
             @Value("${JWT_SECRET:dev-only-insecure-change-me-0123456789-abcdefghij}") String secret,
-            @Value("${JWT_EXPIRATION_MS:86400000}") long validityMs   // default: 24h
+            // Access Token 전용 만료. OS/.env 환경변수를 직접 읽는다(application.yaml 미사용).
+            // 기본값 2700000ms = 45분. Refresh Token 만료는 RefreshTokenService가 별도로 관리한다.
+            @Value("${JWT_ACCESS_EXPIRATION_MS:2700000}") long validityMs
     ) {
         // HS256 needs a >=256-bit (32-byte) key. A proper `openssl rand -base64 48`
         // value is ~64 UTF-8 bytes, comfortably above the minimum.

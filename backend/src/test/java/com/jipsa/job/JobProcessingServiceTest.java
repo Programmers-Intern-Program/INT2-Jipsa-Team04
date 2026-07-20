@@ -3,7 +3,7 @@ package com.jipsa.job;
 import com.jipsa.file.File;
 import com.jipsa.file.FileRepository;
 import com.jipsa.file.FileStatus;
-import com.jipsa.file.ProcessingStage;
+import com.jipsa.internal.IngestManifestService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,13 +26,16 @@ class JobProcessingServiceTest {
     @Mock
     private FileRepository fileRepository;
     @Mock
-    private IngestStageExecutor stageExecutor;
+    private IngestManifestService ingestManifestService;
+    @Mock
+    private RagIngestClient ragIngestClient;
 
     private JobProcessingService service;
 
     @BeforeEach
     void setUp() {
-        service = new JobProcessingService(jobRepository, fileRepository, stageExecutor, 1000L);
+        service = new JobProcessingService(jobRepository, fileRepository,
+                ingestManifestService, ragIngestClient, 1000L);
     }
 
     private Job runningJob(int attempts) {
@@ -55,7 +58,7 @@ class JobProcessingServiceTest {
     }
 
     @Test
-    void successMarksFileReadyAndJobSuccess() {
+    void successHandsOffToRagAndLeavesFileProcessing() {
         Job job = runningJob(1);
         File file = uploadedFile();
         when(jobRepository.findById(1L)).thenReturn(Optional.of(job));
@@ -63,7 +66,7 @@ class JobProcessingServiceTest {
 
         service.process(1L);
 
-        assertThat(file.getStatus()).isEqualTo(FileStatus.READY);
+        assertThat(file.getStatus()).isEqualTo(FileStatus.PROCESSING);
         assertThat(file.getProcessingStage()).isNull();
         assertThat(job.getJobStatus()).isEqualTo(JobStatus.SUCCESS);
         assertThat(job.getFinishedAt()).isNotNull();
@@ -75,7 +78,7 @@ class JobProcessingServiceTest {
         File file = uploadedFile();
         when(jobRepository.findById(1L)).thenReturn(Optional.of(job));
         when(fileRepository.findById(10L)).thenReturn(Optional.of(file));
-        doThrow(new RuntimeException("boom")).when(stageExecutor).execute(any(), any());
+        doThrow(new RuntimeException("boom")).when(ragIngestClient).push(any());
 
         service.process(1L);
 
@@ -92,7 +95,7 @@ class JobProcessingServiceTest {
         File file = uploadedFile();
         when(jobRepository.findById(1L)).thenReturn(Optional.of(job));
         when(fileRepository.findById(10L)).thenReturn(Optional.of(file));
-        doThrow(new RuntimeException("boom")).when(stageExecutor).execute(any(), any());
+        doThrow(new RuntimeException("boom")).when(ragIngestClient).push(any());
 
         service.process(1L);
 
