@@ -31,6 +31,7 @@ import type { Document, AISettings, ChatMessage, ChatSession } from "./types";
 // GET /api/v1/users/me/settings로 즉시 덮어쓴다(로그인 안 한 상태면 실패하고 이 값 유지).
 import { mockDocuments, mockAISettings } from "./mocks/mockData";
 import { getUserSettings, updateUserSettings } from "./api/userSettings";
+import { listAllFiles } from "./api/files";
 
 function getInitialSelectedDocIds(docs: Document[]): string[] {
   if (docs.length > 2) {
@@ -68,14 +69,25 @@ export default function App() {
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
 
-  // 실제 설정 조회 시도 — 프론트 구글 로그인이 아직 mock이라(LandingView 참고, 실제 OAuth
-  // 리다이렉트/토큰 저장 미구현) 지금은 항상 토큰이 없어 401로 실패하는 게 정상이고, 그 경우
-  // 위에서 초기화한 mockAISettings를 그대로 유지한다(Folder와 동일 패턴).
+  // 실제 설정 조회 시도 — 비로그인 상태면 401로 실패하는 게 정상이고, 그 경우 위에서
+  // 초기화한 mockAISettings를 그대로 유지한다(Folder와 동일 패턴).
   useEffect(() => {
     getUserSettings()
       .then(setCommittedSettings)
       .catch((err) => {
         console.warn("[settings] GET /api/v1/users/me/settings 실패 - mock 데이터 유지(비로그인 상태면 정상):", err);
+      });
+  }, []);
+
+  // 실제 문서 목록 조회 시도 — 지금까지는 스마트 정리 적용 등 특정 동작 후에만 documents가
+  // 실제 데이터로 갱신되고, 앱을 처음 열 때는 아무도 실제 목록을 불러오지 않아서 로그인한
+  // 뒤에도 documents가 계속 mockDocuments로 남아있던 문제(폴더 안 파일이 계속 mock으로
+  // 보이던 원인). 비로그인 상태면 401로 실패하는 게 정상이고, 그 경우 mockDocuments 유지.
+  useEffect(() => {
+    listAllFiles()
+      .then(setDocuments)
+      .catch((err) => {
+        console.warn("[files] GET /api/v1/files 실패 - mock 데이터 유지(비로그인 상태면 정상):", err);
       });
   }, []);
 
