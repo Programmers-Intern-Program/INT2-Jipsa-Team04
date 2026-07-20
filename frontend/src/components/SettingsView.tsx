@@ -8,12 +8,12 @@ import {
   ChevronDown, 
   Zap
 } from "lucide-react";
-import type { AISettings } from "../types";
+import type { AISettings, SessionUser } from "../types";
 import { getStorageUsage } from "../api/files";
 import { formatBytes } from "../utils/formatBytes";
 
 interface SettingsViewProps {
-  user: { name: string; email: string; role: string } | null;
+  user: SessionUser | null;
   committedSettings: AISettings;
   onSaveSettings: (settings: AISettings) => Promise<void>;
 }
