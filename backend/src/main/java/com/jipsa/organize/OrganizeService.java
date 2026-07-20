@@ -44,7 +44,7 @@ public class OrganizeService {
     /**
      * applyProposal 중복 반영 방지용 임시 캐시(userId:idempotencyKey → 마지막 반영 시각).
      * 정식 처리 이력 테이블(예: Reorg_Snapshot)이 아직 없어서 우선 인메모리로
-     * 막아둔 것 — 서버가 여러 인스턴스로 뜨거나 재시작되면 이 방어는 사라진다. 멘토 질문 리스트 참고.
+     * 막아둔 것 — 서버가 여러 인스턴스로 뜨거나 재시작되면 이 방어는 사라진다(멘토링 때 확인 필요).
      */
     private static final Duration IDEMPOTENCY_TTL = Duration.ofMinutes(5);
     private final Map<String, Instant> recentlyAppliedKeys = new ConcurrentHashMap<>();
