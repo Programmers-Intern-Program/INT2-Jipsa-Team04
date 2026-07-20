@@ -28,7 +28,7 @@ import type { Document, AISettings, ChatMessage, ChatSession } from "./types";
 
 // mockDocuments: 정적 mock 데이터, 백엔드 API 연동은 별도 이슈에서 처리.
 // mockAISettings: 최초 렌더링용 fallback 초기값일 뿐 — 실제 값은 아래 useEffect가
-// GET /api/v1/users/me/settings로 즉시 덮어쓴다(로그인 연동 전이면 실패하고 이 값 유지).
+// GET /api/v1/users/me/settings로 즉시 덮어쓴다(로그인 안 한 상태면 실패하고 이 값 유지).
 import { mockDocuments, mockAISettings } from "./mocks/mockData";
 import { getUserSettings, updateUserSettings } from "./api/userSettings";
 
@@ -68,13 +68,14 @@ export default function App() {
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
 
-  // 실제 설정 조회 시도 — 로그인 연동 전(토큰 없음)이면 401로 실패하는 게 정상이고,
-  // 그 경우 위에서 초기화한 mockAISettings를 그대로 유지한다(Folder와 동일 패턴).
+  // 실제 설정 조회 시도 — 프론트 구글 로그인이 아직 mock이라(LandingView 참고, 실제 OAuth
+  // 리다이렉트/토큰 저장 미구현) 지금은 항상 토큰이 없어 401로 실패하는 게 정상이고, 그 경우
+  // 위에서 초기화한 mockAISettings를 그대로 유지한다(Folder와 동일 패턴).
   useEffect(() => {
     getUserSettings()
       .then(setCommittedSettings)
       .catch((err) => {
-        console.warn("[settings] GET /api/v1/users/me/settings 실패 - mock 데이터 유지(로그인 연동 전이면 정상):", err);
+        console.warn("[settings] GET /api/v1/users/me/settings 실패 - mock 데이터 유지(비로그인 상태면 정상):", err);
       });
   }, []);
 
@@ -171,14 +172,14 @@ export default function App() {
   };
 
   // Save Settings — 로컬 상태 먼저 반영(데모 흐름 유지) 후 실제 API 호출 시도.
-  // 로그인 연동 전(토큰 없음)이면 PATCH가 401로 실패하는 게 정상이며, 그 경우
+  // 비로그인 상태면 PATCH가 401로 실패하는 게 정상이며, 그 경우
   // 로컬 상태만 갱신된 채로 남는다(Folder의 create/delete와 동일한 폴백 패턴).
   const handleSaveSettings = async (newSettings: AISettings) => {
     setCommittedSettings(newSettings);
     try {
       await updateUserSettings(newSettings);
     } catch (err) {
-      console.warn("[settings] PATCH /api/v1/users/me/settings 실패 - 로컬 상태만 갱신됨(로그인 연동 전이면 정상):", err);
+      console.warn("[settings] PATCH /api/v1/users/me/settings 실패 - 로컬 상태만 갱신됨(비로그인 상태면 정상):", err);
     }
   };
 

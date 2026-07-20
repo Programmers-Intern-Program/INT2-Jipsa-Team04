@@ -88,8 +88,8 @@ export default function MyDocumentsView({
   const [isUploading, setIsUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
 
-  // 로그인(OAuth) 연동은 별도 이슈라 지금은 토큰이 없어 401로
-  // 실패하는 게 정상 — 그 경우 기존 mock 상태를 그대로 유지해 데모가 안 깨지게 한다.
+  // 프론트 구글 로그인이 아직 mock이라(LandingView 참고) 지금은 항상 토큰이 없어 401로
+  // 실패하는 게 정상. 그 경우 기존 mock 상태를 그대로 유지해 데모가 안 깨지게 한다.
   const [folders, setFolders] = useState<FolderType[]>(() => {
     const saved = localStorage.getItem("aidrive_folders");
     return saved ? JSON.parse(saved) : mockFolders;
@@ -99,7 +99,7 @@ export default function MyDocumentsView({
     listFolders()
       .then(setFolders)
       .catch((err) => {
-        console.warn("[folders] GET /api/v1/folders 실패 - mock 데이터 유지(로그인 연동 전이면 정상):", err);
+        console.warn("[folders] GET /api/v1/folders 실패 - mock 데이터 유지(비로그인 상태면 정상):", err);
       });
   }, []);
 
@@ -108,8 +108,8 @@ export default function MyDocumentsView({
     localStorage.setItem("aidrive_folders", JSON.stringify(folders));
   }, [folders]);
 
-  // 인증 토큰이 아직 없어 API가 실패하면(401 등) 기존 로컬 mock 로직(ensureFolderPath)으로
-  // 폴백 — 로그인 연동 전에도 "폴더 생성" 데모 흐름은 그대로 동작해야 하기 때문이다.
+  // 비로그인 상태라 인증 토큰이 없어 API가 실패하면(401 등) 기존 로컬 mock 로직(ensureFolderPath)으로
+  // 폴백 — 로그인 안 한 사용자도 "폴더 생성" 데모 흐름은 그대로 동작해야 하기 때문이다.
   const createFolderPathViaApi = async (
     currentFolders: FolderType[],
     segments: string[]
@@ -138,7 +138,7 @@ export default function MyDocumentsView({
 
       return { folders: working, leafId };
     } catch (err) {
-      console.warn("[folders] POST /api/v1/folders 실패 - 로컬 mock으로 폴백(로그인 연동 전이면 정상):", err);
+      console.warn("[folders] POST /api/v1/folders 실패 - 로컬 mock으로 폴백(비로그인 상태면 정상):", err);
       return ensureFolderPath(currentFolders, segments);
     }
   };
@@ -193,7 +193,7 @@ export default function MyDocumentsView({
           })
           .catch((err) => {
             if (cancelled) return;
-            console.warn("[files] GET /api/v1/files 실패 - mock 데이터로 폴백(로그인 연동 전이면 정상):", err);
+            console.warn("[files] GET /api/v1/files 실패 - mock 데이터로 폴백(비로그인 상태면 정상):", err);
             setServerSearchDocs(null);
             setSearchTotal(0);
           });
@@ -217,7 +217,7 @@ export default function MyDocumentsView({
         })
         .catch((err) => {
           if (cancelled) return;
-          console.warn("[files] GET /api/v1/files/trash 실패 - 빈 목록 표시(로그인 연동 전이면 정상):", err);
+          console.warn("[files] GET /api/v1/files/trash 실패 - 빈 목록 표시(비로그인 상태면 정상):", err);
           setTrashDocs([]);
         });
     return () => {
@@ -229,7 +229,7 @@ export default function MyDocumentsView({
     getStorageUsage()
         .then(setStorage)
         .catch((err) => {
-          console.warn("[files] GET /api/v1/files/storage 실패 - 사용량 표시 보류(로그인 연동 전이면 정상):", err);
+          console.warn("[files] GET /api/v1/files/storage 실패 - 사용량 표시 보류(비로그인 상태면 정상):", err);
           setStorage(null);
         });
   }, []);
@@ -381,7 +381,7 @@ export default function MyDocumentsView({
     try {
       await moveFiles(fileIds, targetFolder);
     } catch (err) {
-      console.warn("[files] PATCH /api/v1/files/batch/move 실패 - 로컬 상태만 갱신됨(로그인 연동 전이면 정상):", err);
+      console.warn("[files] PATCH /api/v1/files/batch/move 실패 - 로컬 상태만 갱신됨(비로그인 상태면 정상):", err);
     }
     onUpdateDocuments(
         documents.map((d) => (docIds.includes(d.id) ? { ...d, folderId: targetFolder } : d))
@@ -396,7 +396,7 @@ export default function MyDocumentsView({
     const restoredIds = ids.filter((_, i) => results[i].status === "fulfilled").map(String);
     const failed = results.length - restoredIds.length;
     if (failed > 0) {
-      console.warn("[files] PATCH /api/v1/files/{id}/restore 일부 실패(로그인 연동 전이면 정상):", failed);
+      console.warn("[files] PATCH /api/v1/files/{id}/restore 일부 실패(비로그인 상태면 정상):", failed);
     }
     if (restoredIds.length > 0) {
       setTrashDocs((prev) => (prev ? prev.filter((d) => !restoredIds.includes(d.id)) : prev));
@@ -468,8 +468,8 @@ export default function MyDocumentsView({
   };
 
   // Trigger folder reorganization sequence — POST /api/v1/organize/propose 호출.
-  // 로그인 연동 전이라 401이 나면(정상) 안내만 하고 종료 — 폴더처럼 mock으로
-  // 폴백할 수 없다(AI 제안 자체가 서버에서만 생성 가능하므로).
+  // 비로그인 상태면 401이 나는 게 정상 — 안내만 하고 종료한다. 폴더 목록처럼
+  // mock으로 폴백할 수 없다(AI 제안 자체가 서버에서만 생성 가능하므로).
   const handleOrganizeFolders = async () => {
     setIsOrganizing(true);
     setOrganizeStep(1);
@@ -488,7 +488,7 @@ export default function MyDocumentsView({
       console.error("스마트 정리 제안 생성 실패:", err);
       const message =
         err instanceof ApiError && err.status === 401
-          ? "로그인 연동 전이라 아직 호출할 수 없습니다. (로그인 API 연결 후 정상 동작 예정)"
+          ? "로그인 후 이용할 수 있는 기능입니다."
           : "스마트 정리 제안 생성 중 오류가 발생했습니다.";
       alert(message);
     } finally {
@@ -572,7 +572,7 @@ export default function MyDocumentsView({
     }
   };
 
-  // DELETE /api/v1/folders/{id}를 fire-and-forget으로 호출한다 — 로그인 연동 전이라
+  // DELETE /api/v1/folders/{id}를 fire-and-forget으로 호출한다 — 비로그인 상태면
   // 401이 정상일 수 있어 로컬 상태 갱신은 API 응답을 기다리지 않는다.
   // 하위 폴더까지 함께 삭제하고, 포함된 문서는 미분류(루트, folderId: null)로 옮긴다.
   const handleDeleteFolder = (folderId: number, folderName: string) => {
@@ -600,11 +600,11 @@ export default function MyDocumentsView({
 
     reassign
         .catch((err) => {
-          console.warn("[files] PATCH /api/v1/files/batch/move 실패 - 로컬 상태만 갱신됨(로그인 연동 전이면 정상):", err);
+          console.warn("[files] PATCH /api/v1/files/batch/move 실패 - 로컬 상태만 갱신됨(비로그인 상태면 정상):", err);
         })
         .then(() => deleteFolder(folderId))
         .catch((err) => {
-          console.warn("[folders] DELETE /api/v1/folders 실패 - 로컬 상태만 갱신됨(로그인 연동 전이면 정상):", err);
+          console.warn("[folders] DELETE /api/v1/folders 실패 - 로컬 상태만 갱신됨(비로그인 상태면 정상):", err);
         });
 
     setFolders((prev) => prev.filter((f) => !idsToDelete.includes(f.folderId)));
