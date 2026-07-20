@@ -25,7 +25,7 @@ import {
   ShieldAlert,
   Undo2
 } from "lucide-react";
-import type { Document, Folder as FolderType, OrganizeProposal, ProposedFolder } from "../types";
+import type { Document, FileMapping, Folder as FolderType, OrganizeProposal, ProposedFolder } from "../types";
 import { formatBytes } from "../utils/formatBytes";
 import { mockFolders } from "../mocks/mockData";
 import { getFolderPath, getFolderAncestors, isDescendantOrSelf, ensureFolderPath } from "../utils/folderTree";
@@ -88,8 +88,8 @@ export default function MyDocumentsView({
   const [isUploading, setIsUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
 
-  // 프론트 구글 로그인이 아직 mock이라(LandingView 참고) 지금은 항상 토큰이 없어 401로
-  // 실패하는 게 정상. 그 경우 기존 mock 상태를 그대로 유지해 데모가 안 깨지게 한다.
+  // 비로그인 상태면 토큰이 없어 401로 실패하는 게 정상. 그 경우 기존 mock 상태를
+  // 그대로 유지해 데모가 안 깨지게 한다.
   const [folders, setFolders] = useState<FolderType[]>(() => {
     const saved = localStorage.getItem("aidrive_folders");
     return saved ? JSON.parse(saved) : mockFolders;
@@ -541,6 +541,26 @@ export default function MyDocumentsView({
       return basePath ? `${basePath}/${segments.join("/")}` : segments.join("/");
     }
     return segments.join("/");
+  };
+
+  // 파일 매핑 하나의 "현재 위치/이름 → 목표 위치(/새 이름)"을 미리보기용으로 풀어준다.
+  // documents에 없는 fileId(예: 목록을 아직 못 불러온 경우)는 방어적으로 "알 수 없음"으로 표시.
+  const resolveMappingDisplay = (mapping: FileMapping, newFolders: ProposedFolder[]) => {
+    const doc = documents.find((d) => Number(d.id) === mapping.fileId);
+    const currentPath = doc ? (getFolderPath(doc.folderId, folders) || "루트") : "알 수 없음";
+    const currentName = doc?.name ?? `(fileId: ${mapping.fileId})`;
+
+    let targetPath: string;
+    if (mapping.targetTempId) {
+      const targetFolder = newFolders.find((f) => f.tempId === mapping.targetTempId);
+      targetPath = targetFolder ? resolveProposedFolderPath(targetFolder, newFolders) : "알 수 없음";
+    } else if (mapping.targetFolderId != null) {
+      targetPath = getFolderPath(mapping.targetFolderId, folders) || "루트";
+    } else {
+      targetPath = "루트";
+    }
+
+    return { currentName, currentPath, targetPath, newName: mapping.newName };
   };
 
   const handleSmartUploadTrigger = () => {
@@ -1808,13 +1828,40 @@ export default function MyDocumentsView({
                   )}
                 </div>
 
-                {/* File mapping notice — v0에서는 파일별 상세 대조가 아니라 건수만 안내 */}
-                <div className="bg-surface-container-low/40 border border-outline-variant/20 rounded-xl p-4 text-[11px] text-outline leading-relaxed flex items-start gap-1.5">
-                  <span className="text-secondary shrink-0">💡</span>
-                  <div>
-                    <span className="font-extrabold text-on-surface-variant">파일별 상세 미리보기는 아직 지원되지 않습니다. </span>
-                    총 {organizeResult.mappings.length}건의 파일 이동/이름변경이 적용 시 함께 반영됩니다.
-                  </div>
+                {/* File mapping detail — 파일별로 현재 위치/이름 → 목표 위치/이름을 대조해서 보여준다. */}
+                <div className="space-y-3">
+                  <h4 className="font-extrabold text-xs text-on-surface uppercase tracking-wider mb-2">
+                    파일 이동/이름변경 상세 ({organizeResult.mappings.length}건)
+                  </h4>
+
+                  {organizeResult.mappings.length === 0 ? (
+                    <div className="p-4 bg-surface-container-low/40 border border-outline-variant/20 rounded-xl text-[11px] text-outline">
+                      이동하거나 이름을 바꿀 파일이 없습니다.
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar pr-1">
+                      {organizeResult.mappings.map((mapping) => {
+                        const { currentName, currentPath, targetPath, newName } =
+                            resolveMappingDisplay(mapping, organizeResult.newFolders);
+                        return (
+                          <div
+                            key={mapping.fileId}
+                            className="p-3 bg-white border border-outline-variant/40 rounded-xl text-[11px]"
+                          >
+                            <p className="font-extrabold text-on-surface truncate">
+                              📄 {currentName}
+                              {newName && newName !== currentName && (
+                                <span className="text-secondary"> → {newName}</span>
+                              )}
+                            </p>
+                            <p className="text-outline mt-1">
+                              {currentPath || "루트"} <span className="mx-1">→</span> <span className="font-bold text-primary">{targetPath}</span>
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
 
