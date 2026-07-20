@@ -116,7 +116,7 @@ class ErrorCode(Enum):
     DOCUMENT_CHUNKS_NOT_FOUND = ErrorDefinition(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         code="DOCUMENT_CHUNKS_NOT_FOUND",
-        message="No searchable text chunks could be created from the document.",
+        message=("No searchable text chunks could be created from the document."),
     )
 
     # 청크 크기와 중첩 크기 같은 서버 내부 청킹 설정이 잘못되었거나
@@ -174,7 +174,7 @@ class ErrorCode(Enum):
     LOCAL_RAG_STORAGE_FAILED = ErrorDefinition(
         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         code="LOCAL_RAG_STORAGE_FAILED",
-        message="The document index could not be stored in the Local RAG database.",
+        message=("The document index could not be stored in the Local RAG database."),
     )
 
     # Qdrant 연결 실패, 시간 초과, 429 또는 5xx처럼
@@ -233,6 +233,38 @@ class ErrorCode(Enum):
         status_code=HTTPStatus.BAD_GATEWAY,
         code="FILE_DOWNLOAD_FAILED",
         message="The source file could not be downloaded.",
+    )
+
+    # 애플리케이션 서버 manifest 또는 완료 콜백 요청이
+    # 설정된 제한 시간 안에 완료되지 않은 경우 사용한다.
+    APPLICATION_SERVER_TIMEOUT = ErrorDefinition(
+        status_code=HTTPStatus.GATEWAY_TIMEOUT,
+        code="APPLICATION_SERVER_TIMEOUT",
+        message="The application server request timed out.",
+    )
+
+    # 애플리케이션 서버 연결 실패, 429 또는 5xx 응답으로
+    # 현재 내부 API를 정상적으로 사용할 수 없는 경우 사용한다.
+    APPLICATION_SERVER_UNAVAILABLE = ErrorDefinition(
+        status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+        code="APPLICATION_SERVER_UNAVAILABLE",
+        message="The application server is temporarily unavailable.",
+    )
+
+    # 애플리케이션 서버가 내부 토큰, IP allowlist, 요청값 또는
+    # 예상 상태 코드 문제로 RAG 요청을 거부한 경우 사용한다.
+    APPLICATION_SERVER_REQUEST_REJECTED = ErrorDefinition(
+        status_code=HTTPStatus.BAD_GATEWAY,
+        code="APPLICATION_SERVER_REQUEST_REJECTED",
+        message="The application server rejected the internal request.",
+    )
+
+    # manifest 응답이 JSON 또는 RAG 요청 스키마와 일치하지 않는 경우
+    # 애플리케이션 서버와 RAG 사이의 계약 오류로 처리한다.
+    INVALID_APPLICATION_SERVER_RESPONSE = ErrorDefinition(
+        status_code=HTTPStatus.BAD_GATEWAY,
+        code="INVALID_APPLICATION_SERVER_RESPONSE",
+        message="The application server returned an invalid response.",
     )
 
     SERVICE_UNAVAILABLE = ErrorDefinition(
