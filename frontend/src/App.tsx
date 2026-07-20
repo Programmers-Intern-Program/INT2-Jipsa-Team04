@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Sparkles,
@@ -84,7 +84,14 @@ export default function App() {
     if (!localStorage.getItem(TOKEN_KEY)) return null;
 
     const saved = localStorage.getItem(USER_KEY);
-    return saved ? JSON.parse(saved) : null;
+    if (!saved) return null;
+    try {
+      return JSON.parse(saved) as SessionUser;
+    } catch {
+      // aidrive_user가 깨져 있어도 첫 렌더에서 크래시하지 않도록 제거하고 로그아웃 상태로 시작한다.
+      localStorage.removeItem(USER_KEY);
+      return null;
+    }
   });
   // OAuth 콜백 처리 중이거나(=/oauth/callback), 저장된 토큰으로 세션 복원 중일 때 true.
   // 이 동안에는 랜딩/메인 대신 로딩 화면을 보여줘 깜빡임을 막는다.
@@ -102,10 +109,18 @@ export default function App() {
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
 
+  // StrictMode(dev)에서 아래 useEffect가 2번 실행돼 같은 authorization code가 두 번
+  // 교환(POST /auth/oauth/google)되는 것을 막는다. ref는 StrictMode의 mount→cleanup→mount
+  // 재실행 사이에도 같은 컴포넌트 인스턴스에서 유지되므로 최초 1회만 처리된다.
+  const authInitialized = useRef(false);
+
   // 로그인 상태 초기화(앱 mount 1회):
   //  (1) /oauth/callback로 복귀한 경우 → code/state 검증 후 토큰 교환·사용자 조회
   //  (2) 이미 토큰이 있는 경우 → getMe로 세션 복원(실패 시 토큰·사용자 정리)
   useEffect(() => {
+    if (authInitialized.current) return;
+    authInitialized.current = true;
+
     const isCallback = window.location.pathname === OAUTH_CALLBACK_PATH;
 
     async function handleOAuthCallback() {
