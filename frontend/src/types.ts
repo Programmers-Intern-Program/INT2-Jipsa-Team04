@@ -106,6 +106,12 @@ export interface FileMapping {
 export interface OrganizeProposal {
   newFolders: ProposedFolder[];
   mappings: FileMapping[];
+  /**
+   * apply 요청에만 실어 보내는 재시도 방지용 키(propose 응답엔 없음, undefined).
+   * 같은 승인 동작을 재시도할 때 항상 같은 값을 보내야 서버가 중복 반영을 막을 수 있다 —
+   * handleApplyOrganization에서 제안을 받을 때 한 번만 생성해 organizeResult에 붙여둔다.
+   */
+  idempotencyKey?: string;
 }
 
 /** GET /api/v1/admin/users 목록 항목. 필드명은 backend AdminUserListItem과 1:1. */

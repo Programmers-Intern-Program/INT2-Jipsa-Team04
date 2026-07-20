@@ -30,7 +30,6 @@ import { formatBytes } from "../utils/formatBytes";
 import { mockFolders } from "../mocks/mockData";
 import { getFolderPath, getFolderAncestors, isDescendantOrSelf, ensureFolderPath } from "../utils/folderTree";
 import { listFolders, createFolder, deleteFolder } from "../api/folders";
-import { getStorageUsage, listFiles, listTrash, moveFiles, restoreFile, toDocument } from "../api/files";
 import { getStorageUsage, listAllFiles, listFiles, listTrash, moveFiles, restoreFile, toDocument } from "../api/files";
 import { proposeOrganization, applyOrganization } from "../api/organize";
 import { ApiError } from "../api/client";
@@ -481,7 +480,10 @@ export default function MyDocumentsView({
 
     try {
       const proposal = await proposeOrganization();
-      setOrganizeResult(proposal);
+      // apply 재시도(응답 유실 후 재요청 등) 시 서버가 같은 요청인지 판단할 수 있도록,
+      // 이 제안을 승인 대상으로 받는 시점에 키를 한 번만 만들어 붙여둔다 — 재시도해도
+      // handleApplyOrganization은 이 organizeResult를 그대로 재사용하므로 키가 바뀌지 않는다.
+      setOrganizeResult({ ...proposal, idempotencyKey: crypto.randomUUID() });
     } catch (err) {
       console.error("스마트 정리 제안 생성 실패:", err);
       const message =
@@ -504,7 +506,6 @@ export default function MyDocumentsView({
       await applyOrganization(organizeResult);
       setOrganizeResult(null);
       setSelectedFolder(null);
-      // 폴더 목록이 서버에서 바뀌었으니 다시 조회 — 실패해도(로그인 전) 기존 상태 유지.
       // 폴더 목록/파일 목록이 서버에서 실제로 바뀌었으니 둘 다 다시 조회 — 실패해도(로그인 전) 기존 상태 유지.
       // documents는 App.tsx 상태라 여기서 직접 못 고치고 onUpdateDocuments로 통째로 갱신해야
       // 일반 문서 화면/폴더별 개수/대시보드/채팅이 전부 최신 상태를 보게 된다.

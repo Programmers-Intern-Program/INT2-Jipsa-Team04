@@ -13,6 +13,8 @@ import com.jipsa.folder.FolderService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashMap;
@@ -20,6 +22,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -37,6 +40,14 @@ public class OrganizeService {
     private final FileService fileService;
     private final OrganizeInputAssembler organizeInputAssembler;
     private final AiOrganizeClient aiOrganizeClient;
+
+    /**
+     * applyProposal 중복 반영 방지용 임시 캐시(userId:idempotencyKey → 마지막 반영 시각).
+     * 정식 처리 이력 테이블(예: Reorg_Snapshot)이 아직 없어서 우선 인메모리로
+     * 막아둔 것 — 서버가 여러 인스턴스로 뜨거나 재시작되면 이 방어는 사라진다. 멘토 질문 리스트 참고.
+     */
+    private static final Duration IDEMPOTENCY_TTL = Duration.ofMinutes(5);
+    private final Map<String, Instant> recentlyAppliedKeys = new ConcurrentHashMap<>();
 
     public OrganizeService(FolderRepository folderRepository,
                             FileRepository fileRepository,
@@ -89,6 +100,13 @@ public class OrganizeService {
      */
     @Transactional
     public void applyProposal(Long userId, OrganizeProposal proposal) {
+        String idempotencyCacheKey = idempotencyCacheKey(userId, proposal.idempotencyKey());
+        if (idempotencyCacheKey != null && wasRecentlyApplied(idempotencyCacheKey)) {
+            // 같은 승인 동작이 짧은 시간 안에 재요청됨(예: 응답 유실 후 프론트 재시도) — 새 폴더를
+            // 또 만들지 않고 이미 반영된 것으로 간주하고 조용히 성공 처리한다.
+            return;
+        }
+
         // newFolders/mappings는 요청 JSON에서 필드 자체가 생략되면 null로 역직렬화되므로,
         // 검증과 반영 양쪽에서 같은 정규화된 리스트를 쓰도록 여기서 한 번만 null을 걷어낸다.
         List<ProposedFolder> newFolders = proposal.newFolders() == null ? List.of() : proposal.newFolders();
@@ -105,6 +123,28 @@ public class OrganizeService {
                 fileService.rename(userId, mapping.fileId(), mapping.newName());
             }
         }
+
+        if (idempotencyCacheKey != null) {
+            recentlyAppliedKeys.put(idempotencyCacheKey, Instant.now());
+            evictExpiredIdempotencyKeys();
+        }
+    }
+
+    private String idempotencyCacheKey(Long userId, String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            return null;
+        }
+        return userId + ":" + idempotencyKey;
+    }
+
+    private boolean wasRecentlyApplied(String cacheKey) {
+        Instant appliedAt = recentlyAppliedKeys.get(cacheKey);
+        return appliedAt != null && appliedAt.isAfter(Instant.now().minus(IDEMPOTENCY_TTL));
+    }
+
+    private void evictExpiredIdempotencyKeys() {
+        Instant cutoff = Instant.now().minus(IDEMPOTENCY_TTL);
+        recentlyAppliedKeys.entrySet().removeIf(entry -> entry.getValue().isBefore(cutoff));
     }
 
     // ---- 검증 ----
