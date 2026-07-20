@@ -31,6 +31,7 @@ import { mockFolders } from "../mocks/mockData";
 import { getFolderPath, getFolderAncestors, isDescendantOrSelf, ensureFolderPath } from "../utils/folderTree";
 import { listFolders, createFolder, deleteFolder } from "../api/folders";
 import { getStorageUsage, listFiles, listTrash, moveFiles, restoreFile, toDocument } from "../api/files";
+import { getStorageUsage, listAllFiles, listFiles, listTrash, moveFiles, restoreFile, toDocument } from "../api/files";
 import { proposeOrganization, applyOrganization } from "../api/organize";
 import { ApiError } from "../api/client";
 
@@ -504,8 +505,14 @@ export default function MyDocumentsView({
       setOrganizeResult(null);
       setSelectedFolder(null);
       // 폴더 목록이 서버에서 바뀌었으니 다시 조회 — 실패해도(로그인 전) 기존 상태 유지.
+      // 폴더 목록/파일 목록이 서버에서 실제로 바뀌었으니 둘 다 다시 조회 — 실패해도(로그인 전) 기존 상태 유지.
+      // documents는 App.tsx 상태라 여기서 직접 못 고치고 onUpdateDocuments로 통째로 갱신해야
+      // 일반 문서 화면/폴더별 개수/대시보드/채팅이 전부 최신 상태를 보게 된다.
       listFolders()
         .then(setFolders)
+        .catch(() => {});
+      listAllFiles()
+        .then(onUpdateDocuments)
         .catch(() => {});
       alert("🎉 AI 스마트 정리 제안이 실제로 반영되었습니다.");
     } catch (err) {
