@@ -3,6 +3,7 @@ package com.jipsa.config;
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -24,9 +25,12 @@ public class AnthropicConfig {
      * 이 프로젝트의 Spring Boot 4 Jackson 자동 설정은 tools.jackson(Jackson 3) 기반이라
      * com.fasterxml.jackson.databind.ObjectMapper 빈을 자동으로 만들어주지 않는다 — 그래서 직접 등록.
      * 앱 전체의 HTTP 메시지 컨버터(Jackson 3)에는 영향 없다.
+     *
+     * JavaTimeModule 등록: OrganizeFileInput.uploadedAt이 LocalDateTime이라 기본 ObjectMapper로는
+     * 직렬화가 안 되고 InvalidDefinitionException이 난다(파일이 하나라도 있으면 /organize/propose가 500).
      */
     @Bean
     public ObjectMapper objectMapper() {
-        return new ObjectMapper();
+        return new ObjectMapper().registerModule(new JavaTimeModule());
     }
 }
