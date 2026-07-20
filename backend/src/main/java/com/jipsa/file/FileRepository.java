@@ -13,7 +13,8 @@ import java.util.Optional;
 public interface FileRepository extends JpaRepository<File, Long> {
 
     Optional<File> findByIdAndDeletedAtIsNull(Long id);
-Page<File> findByUsersIdAndDeletedAtIsNotNullOrderByDeletedAtDesc(Long userId, Pageable pageable);
+
+    Page<File> findByUsersIdAndDeletedAtIsNotNullOrderByDeletedAtDesc(Long userId, Pageable pageable);
 
     @Query("select coalesce(sum(f.sizeBytes), 0) from File f " +
             "where f.usersId = :userId and f.deletedAt is null")
