@@ -24,6 +24,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -172,5 +173,37 @@ class FolderControllerTest {
 
         mockMvc.perform(delete("/api/v1/folders/{id}", 3))
                 .andExpect(status().isNotFound());
+    }
+
+    // --- GlobalExceptionHandler 공백 보강 (#36) ---
+
+    @Test
+    void update_parentFolderId가_숫자로_변환불가능하면_400() throws Exception {
+        given(currentUserProvider.requireUserId()).willReturn(USER_ID);
+
+        mockMvc.perform(patch("/api/v1/folders/{id}", 5)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"parentFolderId\": \"abc\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("BAD_REQUEST"));
+    }
+
+    @Test
+    void 존재하지_않는_경로면_500이_아니라_404() throws Exception {
+        mockMvc.perform(get("/api/v1/nope"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+    }
+
+    @Test
+    void 존재하는_경로에_지원하지_않는_메서드면_500이_아니라_405() throws Exception {
+        // /api/v1/folders/{id}는 PATCH, DELETE만 지원 — PUT은 미지원 메서드다.
+        mockMvc.perform(put("/api/v1/folders/{id}", 5)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error.code").value("METHOD_NOT_ALLOWED"));
     }
 }

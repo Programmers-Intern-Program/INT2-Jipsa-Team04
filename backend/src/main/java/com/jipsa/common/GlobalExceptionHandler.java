@@ -5,10 +5,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -57,6 +60,23 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleMediaType(HttpMediaTypeNotSupportedException ex) {
         return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
                 .body(ApiResponse.fail(new ApiError("UNSUPPORTED_MEDIA_TYPE", "지원하지 않는 Content-Type입니다.")));
+    }
+
+    // 정적 리소스 매핑이 없는(=존재하지 않는) 경로 요청 시 Spring이 던지는 404 예외.
+    // Spring Boot 3.2+에서는 기본적으로 NoResourceFoundException이 던져지고, throwExceptionIfNoHandlerFound가
+    // 켜져 있는 구성이면 NoHandlerFoundException이 던져진다 — 둘 다 여기서 잡아 catch(Exception.class)로
+    // 새지 않게 한다.
+    @ExceptionHandler({NoHandlerFoundException.class, NoResourceFoundException.class})
+    public ResponseEntity<ApiResponse<Void>> handleNoHandlerFound(Exception ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.fail(new ApiError("NOT_FOUND", "요청한 경로를 찾을 수 없습니다.")));
+    }
+
+    // 존재하는 경로에 지원하지 않는 HTTP 메서드로 요청한 경우(405).
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex) {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
+                .body(ApiResponse.fail(new ApiError("METHOD_NOT_ALLOWED", "지원하지 않는 HTTP 메서드입니다.")));
     }
 
     @ExceptionHandler(Exception.class)
