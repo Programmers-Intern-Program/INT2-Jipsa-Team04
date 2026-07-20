@@ -37,6 +37,13 @@ app:
     retry-backoff-ms: 5000
   storage:
     quota-bytes: 107374182400
+  internal:
+    presign-ttl-seconds: 900
+    token: ${INTERNAL_TOKEN:}
+    allowed-ips: ${INTERNAL_ALLOWED_IPS:}
+  rag:
+    base-url: ${RAG_BASE_URL:}
+    token: ${RAG_INGEST_TOKEN:}
 
 # Google OAuth (authorization-code flow, backend-side token exchange).
 # Values come from env vars; empty defaults let the app start without .env

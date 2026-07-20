@@ -3,7 +3,7 @@ package com.jipsa.job;
 import com.jipsa.file.File;
 import com.jipsa.file.FileRepository;
 import com.jipsa.file.FileStatus;
-import com.jipsa.file.ProcessingStage;
+import com.jipsa.internal.IngestManifestService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,16 +20,19 @@ public class JobProcessingService {
 
     private final JobRepository jobRepository;
     private final FileRepository fileRepository;
-    private final IngestStageExecutor stageExecutor;
+    private final IngestManifestService ingestManifestService;
+    private final RagIngestClient ragIngestClient;
     private final long retryBackoffMs;
 
     public JobProcessingService(JobRepository jobRepository,
                                 FileRepository fileRepository,
-                                IngestStageExecutor stageExecutor,
+                                IngestManifestService ingestManifestService,
+                                RagIngestClient ragIngestClient,
                                 @Value("${app.ingest.retry-backoff-ms:5000}") long retryBackoffMs) {
         this.jobRepository = jobRepository;
         this.fileRepository = fileRepository;
-        this.stageExecutor = stageExecutor;
+        this.ingestManifestService = ingestManifestService;
+        this.ragIngestClient = ragIngestClient;
         this.retryBackoffMs = retryBackoffMs;
     }
 
@@ -46,17 +49,13 @@ public class JobProcessingService {
             if (file != null) {
                 file.setStatus(FileStatus.PROCESSING);
                 file.setErrorMessage(null);
-                for (ProcessingStage stage : ProcessingStage.values()) {
-                    file.setProcessingStage(stage.name());
-                    stageExecutor.execute(stage, file);
-                }
-                file.setStatus(FileStatus.READY);
                 file.setProcessingStage(null);
+                ragIngestClient.push(ingestManifestService.build(file));
             }
             job.setJobStatus(JobStatus.SUCCESS);
             job.setErrorMessage(null);
             job.setFinishedAt(LocalDateTime.now());
-            log.info("Job {} completed (file {})", jobId, job.getFileId());
+            log.info("Job {} handed off to RAG (file {})", jobId, job.getFileId());
         } catch (RuntimeException e) {
             handleFailure(job, file, e);
         }
