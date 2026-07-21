@@ -2,7 +2,6 @@ package com.jipsa.admin;
 
 import com.jipsa.auth.JwtService;
 import com.jipsa.common.CurrentUserProvider;
-import com.jipsa.common.exception.ForbiddenException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -23,6 +22,12 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+/**
+ * AdminController 웹 레이어 슬라이스 테스트. ADMIN 권한 게이트(@PreAuthorize)는 필터/메서드보안
+ * 빈이 로드되지 않는 이 슬라이스에서 검증 대상이 아니다 — 실제 토큰으로 ADMIN=200/USERS=403을
+ * 확인하는 건 {@code AdminAuthorizationIntegrationTest} 쪽. 여기서는 요청 검증·응답 매핑·
+ * 서비스 예외 → HTTP 상태 매핑만 본다.
+ */
 @WebMvcTest(AdminController.class)
 @AutoConfigureMockMvc(addFilters = false)
 class AdminControllerTest {
@@ -53,17 +58,6 @@ class AdminControllerTest {
                 .andExpect(jsonPath("$.total").value(1))
                 .andExpect(jsonPath("$.items[0].userId").value(2))
                 .andExpect(jsonPath("$.items[0].documentCount").value(3));
-    }
-
-    @Test
-    void list_관리자가아니면_403() throws Exception {
-        when(currentUserProvider.requireUserId()).thenReturn(ADMIN_ID);
-        when(adminService.listUsers(eq(ADMIN_ID), any(), any()))
-                .thenThrow(new ForbiddenException("관리자 권한이 필요합니다."));
-
-        mockMvc.perform(get("/api/v1/admin/users"))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
     }
 
     @Test
