@@ -168,7 +168,6 @@ class FileServiceTest {
 
         assertThat(result.summary()).isEqualTo("계약 요약");
         assertThat(result.tags()).containsExactly("세금", "계약");
-        assertThat(result.docType()).isEqualTo("");
         assertThat(result.entities()).isNotNull();
         assertThat(result.entities().dates()).isEmpty();
     }

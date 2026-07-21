@@ -23,16 +23,19 @@ import {
   Clock,
   Trash2,
   ShieldAlert,
-  Undo2
+  Undo2,
+  Info
 } from "lucide-react";
 import type { Document, FileMapping, Folder as FolderType, OrganizeProposal, ProposedFolder } from "../types";
 import { formatBytes } from "../utils/formatBytes";
 import { mockFolders } from "../mocks/mockData";
 import { getFolderPath, getFolderAncestors, isDescendantOrSelf, ensureFolderPath } from "../utils/folderTree";
 import { listFolders, createFolder, deleteFolder } from "../api/folders";
-import { getStorageUsage, listAllFiles, listFiles, listTrash, moveFiles, restoreFile, toDocument } from "../api/files";
+import { deleteFile, downloadFile, getFileDetail, getFileStatus, getStorageUsage, listAllFiles, listFiles, listTrash, moveFiles, renameFile, restoreFile, toDocument, toggleStar } from "../api/files";
 import { proposeOrganization, applyOrganization } from "../api/organize";
 import { ApiError } from "../api/client";
+import FileDetailPanel from "./FileDetailPanel";
+import { uploadFiles, getUploadStatus } from "../api/uploads";
 
 interface MyDocumentsViewProps {
   documents: Document[];
@@ -84,8 +87,8 @@ export default function MyDocumentsView({
   // New document form state
   const [uploadName, setUploadName] = useState("");
   const [uploadContent, setUploadContent] = useState("");
-  const [uploadType, setUploadType] = useState("pdf");
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
   // 비로그인 상태면 토큰이 없어 401로 실패하는 게 정상. 그 경우 기존 mock 상태를
@@ -149,18 +152,10 @@ export default function MyDocumentsView({
   // Google Drive Mimicry States
   const [currentTab, setCurrentTab] = useState<"mydrive" | "starred" | "secure" | "recent" | "trash">("mydrive");
   const [isMyDriveExpanded, setIsMyDriveExpanded] = useState(true);
-  const [starredDocIds, setStarredDocIds] = useState<string[]>(() => {
-    const saved = localStorage.getItem("aidrive_starred_docs");
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  // Save starredDocIds to localStorage on change
-  useEffect(() => {
-    localStorage.setItem("aidrive_starred_docs", JSON.stringify(starredDocIds));
-  }, [starredDocIds]);
 
   // Document checkbox selection state for batch actions
   const [checkedDocIds, setCheckedDocIds] = useState<string[]>([]);
+  const [detailFileId, setDetailFileId] = useState<number | null>(null);
 
   // Modals state
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
@@ -234,6 +229,34 @@ export default function MyDocumentsView({
         });
   }, []);
 
+  useEffect(() => {
+    const pending = documents.filter((d) => d.status === "PROCESSING" || d.status === "UPLOADED");
+    if (pending.length === 0) return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      const results = await Promise.allSettled(
+          pending.map((d) => getFileStatus(Number(d.id)).then((s) => ({ id: d.id, status: s.status })))
+      );
+      if (cancelled) return;
+      const done = results
+          .filter((r): r is PromiseFulfilledResult<{ id: string; status: string }> => r.status === "fulfilled")
+          .map((r) => r.value)
+          .filter((u) => u.status !== "PROCESSING" && u.status !== "UPLOADED");
+      if (done.length > 0) {
+        onUpdateDocuments(
+            documents.map((d) => {
+              const u = done.find((x) => x.id === d.id);
+              return u ? { ...d, status: u.status } : d;
+            })
+        );
+      }
+    }, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [documents, onUpdateDocuments]);
+
   const storagePercent = storage && storage.quotaBytes > 0
       ? Math.min(100, Math.round((storage.usedBytes / storage.quotaBytes) * 100))
       : 0;
@@ -255,7 +278,7 @@ export default function MyDocumentsView({
         matchesTabAndFolder = selectedFolder === null ||
             isDescendantOrSelf(doc.folderId, selectedFolder, folders);
       } else if (currentTab === "starred") {
-        matchesTabAndFolder = starredDocIds.includes(doc.id);
+        matchesTabAndFolder = !!doc.star;
       } else if (currentTab === "secure") {
         matchesTabAndFolder = doc.securityRank === "기밀";
       } else if (currentTab === "recent") {
@@ -269,7 +292,7 @@ export default function MyDocumentsView({
 
       return matchesSearch && matchesTabAndFolder && matchesType && matchesSecurity;
     });
-  }, [documents, serverSearchDocs, trashDocs, searchQuery, selectedFolder, selectedType, selectedSecurity, currentTab, starredDocIds, folders]);
+  }, [documents, serverSearchDocs, trashDocs, searchQuery, selectedFolder, selectedType, selectedSecurity, currentTab, folders]);
 
   const sortedFilteredDocuments = useMemo(() => {
     if (currentTab === "recent") {
@@ -356,23 +379,42 @@ export default function MyDocumentsView({
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const file = e.dataTransfer.files[0];
       setUploadName(file.name);
-      
-      // Auto-set extension
-      const ext = file.name.split(".").pop()?.toLowerCase();
-      if (ext && ["pdf", "docx", "xlsx", "txt"].includes(ext)) {
-        setUploadType(ext);
-      } else {
-        setUploadType("txt");
-      }
 
       // Read text content
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setUploadContent(event.target.result as string);
-        }
-      };
-      reader.readAsText(file);
+      setUploadFile(file);
+    }
+  };
+
+  const handleToggleStar = async (docId: string) => {
+    const doc = documents.find((d) => d.id === docId);
+    if (!doc) return;
+    const current = !!doc.star;
+    const next = !current;
+    onUpdateDocuments(
+        documents.map((d) => (d.id === docId ? { ...d, star: next } : d))
+    );
+    try {
+      await toggleStar(Number(docId), next);
+    } catch (err) {
+      console.warn("[files] PATCH /api/v1/files/{id}/star 실패 - 롤백:", err);
+      onUpdateDocuments(
+          documents.map((d) => (d.id === docId ? { ...d, star: current } : d))
+      );
+      alert("중요 문서 설정에 실패했습니다.");
+    }
+  };
+
+  const handleRenameDocument = async (docId: string, currentName: string) => {
+    const name = window.prompt("새 파일 이름을 입력하세요.", currentName);
+    if (!name || !name.trim() || name.trim() === currentName) return;
+    try {
+      await renameFile(Number(docId), name.trim());
+      onUpdateDocuments(
+          documents.map((d) => (d.id === docId ? { ...d, name: name.trim() } : d))
+      );
+    } catch (err) {
+      console.warn("[files] PATCH /api/v1/files/{id}/name 실패:", err);
+      alert("이름 변경에 실패했습니다.");
     }
   };
 
@@ -381,13 +423,28 @@ export default function MyDocumentsView({
     try {
       await moveFiles(fileIds, targetFolder);
     } catch (err) {
-      console.warn("[files] PATCH /api/v1/files/batch/move 실패 - 로컬 상태만 갱신됨(비로그인 상태면 정상):", err);
+      console.warn("[files] PATCH /api/v1/files/batch/move 실패:", err);
+      alert("문서 이동에 실패했습니다.");
+      return;
     }
     onUpdateDocuments(
         documents.map((d) => (docIds.includes(d.id) ? { ...d, folderId: targetFolder } : d))
     );
     setCheckedDocIds([]);
     alert(`선택하신 ${docIds.length}개의 문서가 '${getFolderPath(targetFolder, folders) || "내 드라이브"}' 폴더로 성공적으로 이동되었습니다.`);
+  };
+
+  const handleDeleteDocuments = async (docIds: string[]) => {
+    if (!window.confirm(`${docIds.length}개의 문서를 휴지통으로 이동하시겠습니까?`)) return;
+    const ids = docIds.map(Number).filter((id) => Number.isFinite(id));
+    const results = await Promise.allSettled(ids.map((id) => deleteFile(id)));
+    const deletedIds = ids.filter((_, i) => results[i].status === "fulfilled").map(String);
+    if (deletedIds.length < ids.length) {
+      console.warn("[files] DELETE /api/v1/files/{id} 일부 실패(로그인 연동 전이면 정상):", ids.length - deletedIds.length);
+    }
+    onUpdateDocuments(documents.filter((d) => !deletedIds.includes(d.id)));
+    setCheckedDocIds([]);
+    alert(`${deletedIds.length}개의 문서를 휴지통으로 이동했습니다.`);
   };
 
   const handleRestoreDocuments = async (docIds: string[]) => {
@@ -407,61 +464,76 @@ export default function MyDocumentsView({
     setCheckedDocIds([]);
   };
 
+  const mimeByType: Record<string, string> = {
+    pdf: "application/pdf",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    txt: "text/plain",
+  };
+
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!uploadName || !uploadContent) {
-      alert("문서 이름과 내용을 입력해 주세요.");
+    if (!uploadFile && !uploadContent.trim()) {
+      alert("문서 파일을 첨부하거나 내용을 입력해 주세요.");
       return;
     }
 
+    const sourceExt = uploadFile
+        ? (uploadFile.name.split(".").pop()?.toLowerCase() || "txt")
+        : "txt";
+    const baseName = uploadName.replace(/\.(pdf|docx|xlsx|txt)$/i, "");
+    const formattedName = `${baseName}.${sourceExt}`;
+    const file = uploadFile
+        ? new File([uploadFile], formattedName, { type: uploadFile.type || mimeByType[sourceExt] || "text/plain" })
+        : new File([uploadContent], formattedName, { type: mimeByType[sourceExt] ?? "text/plain" });
+
     setIsUploading(true);
     try {
-      const formattedName = uploadName.endsWith(`.${uploadType}`) ? uploadName : `${uploadName}.${uploadType}`;
-      
-      // Hit actual upload endpoint to take advantage of backend LLM logic
-      const response = await fetch("/api/documents/upload", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          name: formattedName,
-          content: uploadContent,
-          type: uploadType,
-          owner: "김민수",
-          size: `${(uploadContent.length / 1024).toFixed(1)} KB`
-        })
-      });
+      const { uploadId, fileIds } = await uploadFiles([file], selectedFolder);
 
-      const result = await response.json();
-      if (result.success && result.document) {
-        // Update documents list in parent state
-        onUpdateDocuments([result.document, ...documents]);
+      let status: string = "PENDING";
+      for (let i = 0; i < 20 && status !== "COMPLETED" && status !== "FAILED" && status !== "CANCELLED"; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        status = (await getUploadStatus(uploadId)).status;
+      }
 
-        if (isSpecialUploadMode) {
-          // Store results for the highly visual auto organize summary card
+      onUpdateDocuments(await listAllFiles());
+
+      if (isSpecialUploadMode && fileIds[0] != null) {
+        try {
+          const detail = await getFileDetail(fileIds[0]);
           setAutoResultData({
-            fileName: result.document.name,
-            targetFolder: getFolderPath(result.document.folderId, folders),
-            targetFolderId: result.document.folderId,
-            summary: result.document.summary,
-            tags: result.document.tags,
-            security: result.document.securityRank
+            fileName: detail.name,
+            targetFolder: getFolderPath(detail.folderId, folders),
+            targetFolderId: detail.folderId,
+            summary: detail.summary,
+            tags: detail.tags ?? [],
+            security: detail.securityRank,
           });
           setIsUploadOpen(false);
           setShowAutoResultModal(true);
-        } else {
+        } catch {
           setIsUploadOpen(false);
-          alert(`AI 분류 성공!\n\n• 파일명: ${result.document.name}\n• 분류된 폴더: [${getFolderPath(result.document.folderId, folders)}]\n• 보안 조치 등급: [${result.document.securityRank}]\n\n자동 생성된 3줄 요약이 보관함 카드에 반영되었습니다.`);
+        }
+      } else {
+        setIsUploadOpen(false);
+        if (status === "COMPLETED") {
+          alert(`업로드 완료: ${formattedName}`);
+        } else if (status === "FAILED") {
+          alert(`업로드는 되었으나 문서 처리에 실패했습니다: ${formattedName}`);
+        } else if (status === "CANCELLED") {
+          alert(`업로드가 취소되었습니다: ${formattedName}`);
+        } else {
+          alert(`업로드됨 · 문서 처리가 진행 중입니다: ${formattedName}`);
         }
       }
-      
+    } catch (err) {
+      console.warn("[uploads] POST /api/v1/uploads 실패:", err);
+      alert("업로드 중 오류가 발생했습니다. (로그인 연동 전이면 401로 실패할 수 있습니다)");
+    } finally {
+      setUploadFile(null);
       setUploadName("");
       setUploadContent("");
-      setUploadType("pdf");
-    } catch (err) {
-      alert("문서 분석 업로드 중 오류가 발생했습니다.");
-    } finally {
       setIsUploading(false);
       setIsSpecialUploadMode(false);
     }
@@ -571,7 +643,6 @@ export default function MyDocumentsView({
   const handleLoadSample = (key: string) => {
     if (key === "sample1") {
       setUploadName("2024년_인공지능_클라우드_바우처_결과보고서");
-      setUploadType("pdf");
       setUploadContent(`[2024년 정보통신산업진흥원 클라우드 서비스 바우처 최종 보고서]
 과제명: AI-Drive 지능형 협업 솔루션 개발 및 실증 사업.
 총 예산: 480,000,000원 (정부지원금 3억 5천만 원, 민간부담금 1억 3천만 원)
@@ -582,7 +653,6 @@ export default function MyDocumentsView({
 연구 책임자: 김민수 수석 (010-4433-2211, minsoo.kim@aidrive.ai)`);
     } else if (key === "sample2") {
       setUploadName("사내_복리후생_규정집_수정본");
-      setUploadType("docx");
       setUploadContent(`[사내 복리후생 가이드 - 인사운영팀 편찬]
 인재의 건강한 균형 발전을 위한 주요 혜택:
 1. 연간 선택적 복지 포인트 240만 원 지급 (매분기 60만 원 분할 부여)
@@ -909,7 +979,7 @@ export default function MyDocumentsView({
                 <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold shrink-0 ${
                   currentTab === "starred" ? "bg-primary/20 text-primary" : "bg-surface-container-low text-outline"
                 }`}>
-                  {starredDocIds.length}
+                  {documents.filter((d) => d.star).length}
                 </span>
               </div>
 
@@ -1206,6 +1276,12 @@ export default function MyDocumentsView({
                           <FolderInput className="w-3.5 h-3.5" /> 폴더로 일괄 이동
                         </button>
                         <button
+                            onClick={() => handleDeleteDocuments(checkedDocIds)}
+                            className="px-3.5 py-2 bg-red-500 text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> 휴지통으로 이동
+                        </button>
+                        <button
                             onClick={() => onNavigateToChat(checkedDocIds)}
                             className="px-3.5 py-2 bg-secondary text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
                         >
@@ -1345,19 +1421,17 @@ export default function MyDocumentsView({
                                   )}
                                   <div className="min-w-0 flex-1">
                                     <div className="flex items-center gap-1.5">
-                                      <p className="font-bold text-body-sm text-on-surface leading-tight truncate" title={doc.name}>{doc.name}</p>
+                                      <p className="font-bold text-body-sm text-on-surface leading-tight truncate cursor-text" title="더블클릭하여 이름 변경" onDoubleClick={() => handleRenameDocument(doc.id, doc.name)}>{doc.name}</p>
                                       <button
                                         type="button"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          setStarredDocIds(prev => 
-                                            prev.includes(doc.id) ? prev.filter(id => id !== doc.id) : [...prev, doc.id]
-                                          );
+                                          handleToggleStar(doc.id);
                                         }}
                                         className="shrink-0 p-0.5 hover:bg-surface-container rounded-md transition-colors text-outline hover:text-amber-500 cursor-pointer"
-                                        title={starredDocIds.includes(doc.id) ? "중요 문서 해제" : "중요 문서 추가"}
+                                        title={doc.star ? "중요 문서 해제" : "중요 문서 추가"}
                                       >
-                                        <Star className={`w-3.5 h-3.5 ${starredDocIds.includes(doc.id) ? "text-amber-500 fill-amber-400 stroke-amber-500" : "text-outline-variant group-hover:text-amber-500"}`} />
+                                        <Star className={`w-3.5 h-3.5 ${doc.star ? "text-amber-500 fill-amber-400 stroke-amber-500" : "text-outline-variant group-hover:text-amber-500"}`} />
                                       </button>
                                     </div>
                                     <p className="text-[10px] text-outline mt-1 font-sans truncate">{formatBytes(doc.sizeBytes)} · {getFolderPath(doc.folderId, folders) || "루트"}</p>
@@ -1443,8 +1517,15 @@ export default function MyDocumentsView({
                                 >
                                   <FolderInput className="w-4 h-4" />
                                 </button>
-                                <button 
-                                  onClick={() => alert(`'${doc.name}' 파일을 기기에 다운로드 저장하였습니다.`)}
+                                <button
+                                    onClick={() => setDetailFileId(Number(doc.id))}
+                                    className="p-2 border border-outline-variant text-outline hover:text-on-surface rounded-xl hover:bg-surface-container transition-colors cursor-pointer"
+                                    title="상세 정보"
+                                >
+                                  <Info className="w-4 h-4" />
+                                </button>
+                                <button
+                                    onClick={() => downloadFile(Number(doc.id), doc.name).catch(() => alert("다운로드에 실패했습니다."))}
                                   className="p-2 border border-outline-variant text-outline hover:text-on-surface rounded-xl hover:bg-surface-container transition-colors cursor-pointer"
                                   title="다운로드"
                                 >
@@ -1597,14 +1678,12 @@ export default function MyDocumentsView({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setStarredDocIds(prev => 
-                                    prev.includes(doc.id) ? prev.filter(id => id !== doc.id) : [...prev, doc.id]
-                                  );
+                                  handleToggleStar(doc.id);
                                 }}
                                 className="p-1 rounded-md hover:bg-surface-container transition-colors cursor-pointer text-outline hover:text-amber-500 shrink-0"
-                                title={starredDocIds.includes(doc.id) ? "중요 문서 해제" : "중요 문서 추가"}
+                                title={doc.star ? "중요 문서 해제" : "중요 문서 추가"}
                               >
-                                <Star className={`w-3.5 h-3.5 ${starredDocIds.includes(doc.id) ? "text-amber-500 fill-amber-400 stroke-amber-500" : "text-outline-variant group-hover:text-amber-500"}`} />
+                                <Star className={`w-3.5 h-3.5 ${doc.star ? "text-amber-500 fill-amber-400 stroke-amber-500" : "text-outline-variant group-hover:text-amber-500"}`} />
                               </button>
 
                               {doc.fileType === "pdf" ? (
@@ -1615,7 +1694,7 @@ export default function MyDocumentsView({
                                 <FileText className="w-6 h-6 text-blue-500 shrink-0" />
                               )}
                               <div className="truncate flex-1">
-                                <p className="font-bold text-xs text-on-surface leading-tight truncate" title={doc.name}>{doc.name}</p>
+                                <p className="font-bold text-xs text-on-surface leading-tight truncate cursor-text" title="더블클릭하여 이름 변경" onDoubleClick={() => handleRenameDocument(doc.id, doc.name)}>{doc.name}</p>
                                 <p className="text-[10px] text-outline mt-1 font-sans truncate">
                                   {getFolderPath(doc.folderId, folders) || "루트"} · {doc.ownerName}
                                 </p>
@@ -1669,8 +1748,15 @@ export default function MyDocumentsView({
                               >
                                 <FolderInput className="w-4 h-4" />
                               </button>
-                              <button 
-                                onClick={() => alert(`'${doc.name}' 파일을 기기에 저장하였습니다.`)}
+                              <button
+                                  onClick={() => setDetailFileId(Number(doc.id))}
+                                  className="p-1.5 hover:bg-surface-container rounded-lg text-outline hover:text-on-surface cursor-pointer"
+                                  title="상세 정보"
+                              >
+                                <Info className="w-4 h-4" />
+                              </button>
+                              <button
+                                  onClick={() => downloadFile(Number(doc.id), doc.name).catch(() => alert("다운로드에 실패했습니다."))}
                                 className="p-1.5 hover:bg-surface-container rounded-lg text-outline hover:text-on-surface cursor-pointer"
                                 title="다운로드"
                               >
@@ -2004,6 +2090,8 @@ export default function MyDocumentsView({
         )}
       </AnimatePresence>
 
+      <FileDetailPanel fileId={detailFileId} folders={folders} onClose={() => setDetailFileId(null)} />
+
       {/* Dynamic Upload Modal Form */}
       <AnimatePresence>
         {isUploadOpen && (
@@ -2071,7 +2159,7 @@ export default function MyDocumentsView({
 
                 <div className="grid grid-cols-3 gap-4">
                   {/* Document Name input */}
-                  <div className="col-span-2 flex flex-col gap-1.5">
+                  <div className="col-span-3 flex flex-col gap-1.5">
                     <label className="font-bold text-label-sm text-on-surface">문서 이름</label>
                     <input 
                       type="text"
@@ -2081,21 +2169,6 @@ export default function MyDocumentsView({
                       placeholder="예시: 2024년 사업실적_최종본"
                       className="w-full bg-white border border-outline-variant rounded-xl py-2.5 px-3 text-body-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                     />
-                  </div>
-
-                  {/* Extension selection */}
-                  <div className="col-span-1 flex flex-col gap-1.5">
-                    <label className="font-bold text-label-sm text-on-surface">확장자</label>
-                    <select 
-                      value={uploadType}
-                      onChange={(e) => setUploadType(e.target.value)}
-                      className="w-full bg-white border border-outline-variant rounded-xl py-2.5 px-3 text-body-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
-                    >
-                      <option value="pdf">.pdf (PDF)</option>
-                      <option value="docx">.docx (Word)</option>
-                      <option value="xlsx">.xlsx (Excel)</option>
-                      <option value="txt">.txt (Text)</option>
-                    </select>
                   </div>
                 </div>
 
@@ -2107,7 +2180,6 @@ export default function MyDocumentsView({
                   </div>
                   <textarea 
                     rows={6}
-                    required
                     value={uploadContent}
                     onChange={(e) => setUploadContent(e.target.value)}
                     placeholder="AI가 분석하고 요약할 본문 내용을 직접 붙여넣거나 위의 템플릿 샘플을 클릭하여 즉시 입력해 보세요."

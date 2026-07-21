@@ -1,0 +1,140 @@
+import { useEffect, useState } from "react";
+import { X, FileText, Tag, ShieldAlert, Calendar, Users, Coins, FolderClosed } from "lucide-react";
+import type { Folder as FolderType } from "../types";
+import { formatBytes } from "../utils/formatBytes";
+import { getFolderPath } from "../utils/folderTree";
+import { getFileDetail, type FileDetail } from "../api/files";
+
+interface FileDetailPanelProps {
+    fileId: number | null;
+    folders: FolderType[];
+    onClose: () => void;
+}
+
+export default function FileDetailPanel({ fileId, folders, onClose }: FileDetailPanelProps) {
+    const [detail, setDetail] = useState<FileDetail | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(false);
+
+    useEffect(() => {
+        if (fileId == null) {
+            setDetail(null);
+            return;
+        }
+        let cancelled = false;
+        setLoading(true);
+        setError(false);
+        getFileDetail(fileId)
+            .then((d) => { if (!cancelled) setDetail(d); })
+            .catch(() => { if (!cancelled) setError(true); })
+            .finally(() => { if (!cancelled) setLoading(false); });
+        return () => { cancelled = true; };
+    }, [fileId]);
+
+    if (fileId == null) return null;
+
+    const entities = detail?.entities;
+    const hasEntities = !!entities && (
+        entities.dates.length > 0 ||
+        entities.people.length > 0 ||
+        entities.amounts.length > 0 ||
+        (entities.project != null && entities.project !== "")
+    );
+
+    return (
+        <div className="fixed inset-0 z-[110] flex justify-end" id="file-detail-overlay">
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose}></div>
+            <aside className="relative w-full max-w-md h-full bg-white shadow-2xl overflow-y-auto" id="file-detail-panel">
+                <div className="sticky top-0 bg-white border-b border-outline-variant px-6 py-4 flex items-center justify-between z-10">
+                    <h2 className="font-bold text-title-sm text-on-surface">문서 상세 정보</h2>
+                    <button onClick={onClose} className="p-2 hover:bg-surface-container rounded-full text-outline hover:text-on-surface cursor-pointer" title="닫기">
+                        <X className="w-5 h-5" />
+                    </button>
+                </div>
+
+                {loading && <div className="p-8 text-center text-outline text-body-sm">불러오는 중...</div>}
+                {error && !loading && (
+                    <div className="p-8 text-center text-error text-body-sm">
+                        상세 정보를 불러오지 못했습니다. (로그인 연동 전이면 정상)
+                    </div>
+                )}
+
+                {detail && !loading && (
+                    <div className="p-6 space-y-6">
+                        <div className="flex items-start gap-3">
+                            <div className="w-12 h-12 rounded-xl bg-primary/5 flex items-center justify-center shrink-0">
+                                <FileText className="w-6 h-6 text-primary" />
+                            </div>
+                            <div className="min-w-0">
+                                <p className="font-bold text-body-md text-on-surface break-words">{detail.name}</p>
+                                <p className="text-[11px] text-outline mt-1">{detail.fileType?.toUpperCase()} · {formatBytes(detail.sizeBytes)}</p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 text-body-sm">
+                            <div>
+                                <p className="text-[11px] font-bold text-outline mb-1">상태</p>
+                                <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-bold bg-surface-container text-on-surface">{detail.status}</span>
+                            </div>
+                            <div>
+                                <p className="text-[11px] font-bold text-outline mb-1">보안 등급</p>
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold ${detail.securityRank === "기밀" ? "bg-rose-50 text-rose-600" : "bg-cyan-50 text-cyan-600"}`}>
+                  {detail.securityRank === "기밀" && <ShieldAlert className="w-3 h-3" />}
+                                    {detail.securityRank}
+                </span>
+                            </div>
+                            <div>
+                                <p className="text-[11px] font-bold text-outline mb-1">폴더</p>
+                                <p className="flex items-center gap-1 text-on-surface"><FolderClosed className="w-3.5 h-3.5 text-outline" />{getFolderPath(detail.folderId, folders) || "루트"}</p>
+                            </div>
+                            <div>
+                                <p className="text-[11px] font-bold text-outline mb-1">소유자</p>
+                                <p className="text-on-surface">{detail.ownerName || "-"}</p>
+                            </div>
+                            <div>
+                                <p className="text-[11px] font-bold text-outline mb-1">수정일</p>
+                                <p className="text-on-surface">{detail.modifiedAt?.slice(0, 10) || "-"}</p>
+                            </div>
+                        </div>
+
+                        <div>
+                            <p className="text-[11px] font-bold text-outline mb-1.5">AI 요약</p>
+                            <p className="text-body-sm text-on-surface leading-relaxed bg-surface-container/50 rounded-xl p-3">
+                                {detail.summary || "요약 정보가 아직 없습니다. (문서 처리 중이거나 미생성)"}
+                            </p>
+                        </div>
+
+                        <div>
+                            <p className="text-[11px] font-bold text-outline mb-1.5 flex items-center gap-1"><Tag className="w-3 h-3" /> 태그</p>
+                            {detail.tags && detail.tags.length > 0 ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                    {detail.tags.map((t, i) => (
+                                        <span key={i} className="px-2 py-0.5 rounded-lg bg-primary/5 text-primary text-[11px] font-semibold">#{t}</span>
+                                    ))}
+                                </div>
+                            ) : (
+                                <p className="text-body-sm text-outline">태그 없음</p>
+                            )}
+                        </div>
+
+                        {hasEntities && entities && (
+                            <div className="space-y-2">
+                                <p className="text-[11px] font-bold text-outline mb-1.5">추출된 정보</p>
+                                {entities.project && <p className="text-body-sm"><span className="font-bold text-outline">프로젝트:</span> {entities.project}</p>}
+                                {entities.dates.length > 0 && <p className="text-body-sm flex items-start gap-1.5"><Calendar className="w-3.5 h-3.5 text-outline mt-0.5 shrink-0" /> {entities.dates.join(", ")}</p>}
+                                {entities.people.length > 0 && <p className="text-body-sm flex items-start gap-1.5"><Users className="w-3.5 h-3.5 text-outline mt-0.5 shrink-0" /> {entities.people.join(", ")}</p>}
+                                {entities.amounts.length > 0 && <p className="text-body-sm flex items-start gap-1.5"><Coins className="w-3.5 h-3.5 text-outline mt-0.5 shrink-0" /> {entities.amounts.join(", ")}</p>}
+                            </div>
+                        )}
+
+                        {detail.piiDetected && (
+                            <div className="flex items-center gap-2 bg-rose-50 text-rose-600 rounded-xl px-3 py-2 text-body-sm font-semibold">
+                                <ShieldAlert className="w-4 h-4" /> 개인정보(PII)가 감지된 문서입니다.
+                            </div>
+                        )}
+                    </div>
+                )}
+            </aside>
+        </div>
+    );
+}
