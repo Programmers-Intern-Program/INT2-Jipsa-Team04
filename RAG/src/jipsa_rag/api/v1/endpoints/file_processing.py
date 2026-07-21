@@ -76,7 +76,7 @@ router = APIRouter(
 #
 # 청킹 정책이나 Chunk ID 생성 규칙을 변경할 경우 기존 벡터와
 # 충돌하지 않도록 이 버전도 함께 증가시켜야 한다.
-_DEFAULT_INDEX_VERSION: Final[int] = 1
+_DEFAULT_INDEX_VERSION: Final[int] = 2
 
 
 # 파일 처리 엔드포인트에서 사용할 Settings 의존성이다.
@@ -533,6 +533,10 @@ async def process_file_processing_request(
                 users_idx=request.user_idx,
                 file_idx=request.file_idx,
                 file_hash=calculated_file_hash,
+                # 같은 원본이라도 파서 버전 또는 임베딩 모델이 바뀌면
+                # 기존 Point ID와 겹치지 않도록 Chunk ID 식별 정보에 포함한다.
+                parser_version=document_parser.parser_version,
+                embedding_model=chunk_embedder.embedding_model,
                 index_version=_DEFAULT_INDEX_VERSION,
             ),
         )
@@ -560,14 +564,15 @@ async def process_file_processing_request(
 
         # 색인 서비스는 다음 작업이 모두 완료된 뒤 결과를 반환한다.
         #
-        # 1. Local RAG DB에 문서와 청크 저장
-        # 2. Qdrant에 청크 벡터 저장
-        # 3. Local RAG DB 문서 상태를 INDEXED로 확정
+        # 1. Local RAG DB에 신규 문서와 청크를 준비하거나 기존 정상 문서를 재사용
+        # 2. Qdrant에 신규 Point를 비활성 staging 상태로 저장
+        # 3. 신규 Point 활성화 및 이전 정상 Point 비활성화
+        # 4. Local RAG DB 문서 상태를 INDEXED로 확정하고 이전 문서를 soft delete
         #
         # 외부 응답에는 청크 원문, 계산된 파일 해시 또는 임베딩 벡터를
         # 포함하지 않고 처리 상태와 생성된 청크 수만 제공한다.
         response_data = FileProcessingCompletedResponse(
-            rag_document_idx=indexing_result.rag_document_idx,
+            rag_document_idx=(indexing_result.rag_document_idx),
             file_idx=request.file_idx,
             user_idx=request.user_idx,
             folder_idx=request.folder_idx,
@@ -575,10 +580,10 @@ async def process_file_processing_request(
             file_type=request.file_type,
             file_size_bytes=file_size_bytes,
             page_count=parsed_document.unit_count,
-            text_unit_count=parsed_document.text_unit_count,
+            text_unit_count=(parsed_document.text_unit_count),
             chunk_count=indexing_result.chunk_count,
-            embedding_model=embedded_document.embedding_model,
-            embedding_dim=embedded_document.embedding_dim,
+            embedding_model=(embedded_document.embedding_model),
+            embedding_dim=(embedded_document.embedding_dim),
             processing_status="INDEXED",
         )
 

@@ -63,22 +63,49 @@ class DocumentIndexMetadata:
         if not normalized_parser_version:
             raise ValueError("parser_version must not be empty.")
 
-        object.__setattr__(self, "file_name", normalized_file_name)
-        object.__setattr__(self, "file_hash", normalized_file_hash)
-        object.__setattr__(self, "parser_type", normalized_parser_type)
-        object.__setattr__(self, "parser_version", normalized_parser_version)
+        object.__setattr__(
+            self,
+            "file_name",
+            normalized_file_name,
+        )
+        object.__setattr__(
+            self,
+            "file_hash",
+            normalized_file_hash,
+        )
+        object.__setattr__(
+            self,
+            "parser_type",
+            normalized_parser_type,
+        )
+        object.__setattr__(
+            self,
+            "parser_version",
+            normalized_parser_version,
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedLocalIndex:
-    """Qdrant 적재 전에 Local RAG DB에 준비된 문서 색인 정보."""
+    """Qdrant 적재 전에 Local RAG DB에 준비된 문서 색인 정보.
+
+    previous_rag_document_idxs는 같은 사용자·파일에서 현재까지 정상적으로
+    검색되던 이전 INDEXED 문서 식별자다. 신규 색인이 완전히 성공한 뒤에만
+    해당 Qdrant Point를 비활성화하고 Local RAG 문서를 soft delete한다.
+
+    reuses_existing_index가 True이면 동일한 파일 해시·파서 버전·임베딩 모델·
+    색인 버전의 정상 문서를 재사용하는 멱등 실행이다. 이 경우 실패하더라도
+    기존 정상 문서와 Qdrant Point를 삭제하거나 FAILED로 바꾸면 안 된다.
+    """
 
     rag_document_idx: int
     rag_index_run_idx: int
     chunk_ids: tuple[str, ...]
+    previous_rag_document_idxs: tuple[int, ...] = ()
+    reuses_existing_index: bool = False
 
     def __post_init__(self) -> None:
-        """Local RAG PK와 저장 대상 청크 ID를 검증한다."""
+        """Local RAG PK, 청크 ID 및 이전 정상 문서 식별자를 검증한다."""
 
         if self.rag_document_idx <= 0:
             raise ValueError("rag_document_idx must be greater than zero.")
@@ -87,6 +114,7 @@ class PreparedLocalIndex:
             raise ValueError("rag_index_run_idx must be greater than zero.")
 
         normalized_chunk_ids = tuple(self.chunk_ids)
+        normalized_previous_document_ids = tuple(self.previous_rag_document_idxs)
 
         if not normalized_chunk_ids:
             raise ValueError("chunk_ids must contain at least one value.")
@@ -97,4 +125,25 @@ class PreparedLocalIndex:
         if len(set(normalized_chunk_ids)) != len(normalized_chunk_ids):
             raise ValueError("chunk_ids must be unique.")
 
-        object.__setattr__(self, "chunk_ids", normalized_chunk_ids)
+        if any(
+            isinstance(document_id, bool) or not isinstance(document_id, int) or document_id <= 0
+            for document_id in normalized_previous_document_ids
+        ):
+            raise ValueError("previous_rag_document_idxs must contain positive integers.")
+
+        if len(set(normalized_previous_document_ids)) != len(normalized_previous_document_ids):
+            raise ValueError("previous_rag_document_idxs must be unique.")
+
+        if self.rag_document_idx in normalized_previous_document_ids:
+            raise ValueError("The current document must not be included in previous documents.")
+
+        object.__setattr__(
+            self,
+            "chunk_ids",
+            normalized_chunk_ids,
+        )
+        object.__setattr__(
+            self,
+            "previous_rag_document_idxs",
+            normalized_previous_document_ids,
+        )

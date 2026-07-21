@@ -89,6 +89,11 @@ PDF_SHA256 = hashlib.sha256(PDF_CONTENT).hexdigest()
 
 TEST_EMBEDDING_MODEL = "test/embedding-model"
 TEST_EMBEDDING_DIM = 3
+TEST_PARSER_VERSION = "test-1.0.0"
+
+# Chunk ID 생성 규칙에 parser_version과 embedding_model이 추가되었으므로
+# 기존 버전의 Chunk ID와 충돌하지 않도록 색인 버전을 증가시킨다.
+TEST_INDEX_VERSION = 2
 
 VALID_FILE_PROCESSING_REQUEST: dict[str, object] = {
     "file_idx": 123,
@@ -127,9 +132,9 @@ class StubPdfDocumentParser:
 
     @property
     def parser_version(self) -> str:
-        """Local RAG 저장 테스트에 사용할 파서 버전을 반환한다."""
+        """Chunk ID와 Local RAG 문서 식별에 사용할 파서 버전을 반환한다."""
 
-        return "test-1.0.0"
+        return TEST_PARSER_VERSION
 
     async def parse(
         self,
@@ -203,7 +208,7 @@ class StubDocumentChunker:
             file_type=document.file_type,
             chunks=(
                 TextChunk(
-                    chunk_id=("11111111-1111-1111-1111-111111111111"),
+                    chunk_id="11111111-1111-1111-1111-111111111111",
                     chunk_index=0,
                     content=content,
                     content_hash=content_hash,
@@ -231,6 +236,17 @@ class StubChunkEmbedder:
         self.error: EmbeddingError | None = None
         self.received_documents: list[ChunkedDocument] = []
 
+    @property
+    def embedding_model(self) -> str:
+        """Chunk ID와 Local RAG 문서 식별에 사용할 임베딩 모델을 반환한다.
+
+        실제 TeiChunkEmbedder와 동일하게 임베딩 실행 전에도 모델명을
+        조회할 수 있어야 한다. 파일 처리 엔드포인트는 이 값을
+        ChunkingContext에 포함하여 결정적인 Chunk ID를 생성한다.
+        """
+
+        return TEST_EMBEDDING_MODEL
+
     async def embed(
         self,
         *,
@@ -256,7 +272,7 @@ class StubChunkEmbedder:
         )
 
         return EmbeddedDocument(
-            embedding_model=TEST_EMBEDDING_MODEL,
+            embedding_model=self.embedding_model,
             embedding_dim=TEST_EMBEDDING_DIM,
             chunks=embedded_chunks,
         )
@@ -444,6 +460,8 @@ def test_file_processing_request_returns_completed_response(
 
     # 파서가 반환한 ParsedDocument가 청커에 그대로 전달되어야 한다.
     assert len(document_chunker.received_documents) == 1
+    assert len(document_chunker.received_contexts) == 1
+
     chunking_context = document_chunker.received_contexts[0]
 
     # 외부 요청의 user_idx는 내부 모델의 users_idx로 변환되어야 한다.
@@ -453,7 +471,13 @@ def test_file_processing_request_returns_completed_response(
     # 요청에는 file_hash가 없지만 다운로더가 원본 바이트에서
     # 계산한 SHA-256이 결정적 Chunk ID 생성 컨텍스트에 전달되어야 한다.
     assert chunking_context.file_hash == PDF_SHA256
-    assert chunking_context.index_version == 1
+
+    # Chunk ID는 파일 정보뿐 아니라 실제 파서 버전과 임베딩 모델도
+    # 포함하여 생성해야 한다. 파서 또는 모델이 변경되면 동일 파일이라도
+    # 이전 색인의 Chunk ID와 다른 식별자가 생성되어야 한다.
+    assert chunking_context.parser_version == TEST_PARSER_VERSION
+    assert chunking_context.embedding_model == TEST_EMBEDDING_MODEL
+    assert chunking_context.index_version == TEST_INDEX_VERSION
 
     # 청커가 반환한 ChunkedDocument가 임베더에 그대로 전달되어야 한다.
     assert len(chunk_embedder.received_documents) == 1
@@ -465,6 +489,7 @@ def test_file_processing_request_returns_completed_response(
     assert len(file_indexing_service.received_documents) == 1
 
     indexing_metadata = file_indexing_service.received_metadata[0]
+    indexed_document = file_indexing_service.received_documents[0]
 
     assert indexing_metadata.users_idx == 45
     assert indexing_metadata.file_idx == 123
@@ -474,9 +499,17 @@ def test_file_processing_request_returns_completed_response(
 
     # Local RAG DB에는 다운로드 바이트에서 계산한 SHA-256을 저장한다.
     assert indexing_metadata.file_hash == PDF_SHA256
-    assert indexing_metadata.index_version == 1
+
+    # Chunk ID 생성에 사용한 색인 버전과 파서 버전이
+    # Local RAG 문서 메타데이터에도 동일하게 전달되어야 한다.
+    assert indexing_metadata.index_version == TEST_INDEX_VERSION
     assert indexing_metadata.parser_type == "PDF_TEXT"
-    assert indexing_metadata.parser_version == "test-1.0.0"
+    assert indexing_metadata.parser_version == TEST_PARSER_VERSION
+
+    # 청킹 컨텍스트와 임베딩 결과가 서로 다른 모델명을 사용하면
+    # Chunk ID와 실제 저장 벡터의 정체성이 불일치할 수 있다.
+    assert chunking_context.embedding_model == indexed_document.embedding_model
+    assert indexed_document.embedding_model == TEST_EMBEDDING_MODEL
 
     # Presigned URL과 S3_Key는 색인 메타데이터에 포함하지 않는다.
     assert not hasattr(indexing_metadata, "download_url")
@@ -636,7 +669,9 @@ def test_file_processing_request_maps_document_parser_error(
 
     # 파싱 실패 이후 단계는 실행하지 않아야 한다.
     assert document_chunker.received_documents == []
+    assert document_chunker.received_contexts == []
     assert chunk_embedder.received_documents == []
+    assert file_indexing_service.received_metadata == []
     assert file_indexing_service.received_documents == []
 
     assert len(pdf_document_parser.received_file_paths) == 1
@@ -659,7 +694,7 @@ def test_file_processing_request_maps_document_parser_error(
             NoDocumentChunksError(DocumentType.PDF),
             422,
             "DOCUMENT_CHUNKS_NOT_FOUND",
-            ("No searchable text chunks could be created from the document."),
+            "No searchable text chunks could be created from the document.",
         ),
         (
             InvalidChunkingConfigurationError(
@@ -713,8 +748,18 @@ def test_file_processing_request_maps_document_chunking_error(
 
     # 청킹은 실행되지만 실패 이후 임베딩과 저장 단계는 실행하지 않아야 한다.
     assert len(document_chunker.received_documents) == 1
+    assert len(document_chunker.received_contexts) == 1
     assert chunk_embedder.received_documents == []
+    assert file_indexing_service.received_metadata == []
     assert file_indexing_service.received_documents == []
+
+    # 청킹 실패 시점에도 parser_version과 embedding_model이
+    # 포함된 컨텍스트가 청커에 전달되어야 한다.
+    chunking_context = document_chunker.received_contexts[0]
+
+    assert chunking_context.parser_version == TEST_PARSER_VERSION
+    assert chunking_context.embedding_model == TEST_EMBEDDING_MODEL
+    assert chunking_context.index_version == TEST_INDEX_VERSION
 
     # 청킹은 다운로드 context 종료 후 실행되므로
     # 청킹 오류가 발생하더라도 임시 파일은 이미 삭제되어 있어야 한다.
@@ -813,8 +858,20 @@ def test_file_processing_request_maps_embedding_error(
 
     # 임베딩 오류 시점에는 파싱과 청킹이 모두 완료되어야 한다.
     assert len(document_chunker.received_documents) == 1
+    assert len(document_chunker.received_contexts) == 1
     assert len(chunk_embedder.received_documents) == 1
+
+    # 임베딩 실패 시 Local RAG DB와 Qdrant 저장은 시작하지 않아야 한다.
+    assert file_indexing_service.received_metadata == []
     assert file_indexing_service.received_documents == []
+
+    # 임베딩 실행 전에 결정적인 Chunk ID가 생성되므로
+    # 청킹 컨텍스트에는 실제 임베더의 모델명이 포함되어야 한다.
+    chunking_context = document_chunker.received_contexts[0]
+
+    assert chunking_context.parser_version == TEST_PARSER_VERSION
+    assert chunking_context.embedding_model == chunk_embedder.embedding_model
+    assert chunking_context.index_version == TEST_INDEX_VERSION
 
     # TEI 통신은 다운로드 context 종료 후 수행하므로
     # 임베딩 오류가 발생해도 임시 파일이 남지 않아야 한다.
@@ -834,7 +891,7 @@ def test_file_processing_request_maps_embedding_error(
             LocalRagStorageError("prepare_indexing"),
             500,
             "LOCAL_RAG_STORAGE_FAILED",
-            ("The document index could not be stored in the Local RAG database."),
+            "The document index could not be stored in the Local RAG database.",
         ),
         (
             VectorDatabaseUnavailableError(
@@ -855,7 +912,9 @@ def test_file_processing_request_maps_embedding_error(
             "The document vectors could not be stored.",
         ),
         (
-            VectorCollectionConfigurationError("embedding_dim_mismatch"),
+            VectorCollectionConfigurationError(
+                "embedding_dim_mismatch",
+            ),
             502,
             "VECTOR_STORAGE_FAILED",
             "The document vectors could not be stored.",
@@ -898,8 +957,24 @@ def test_file_processing_request_maps_index_storage_error(
 
     # 저장 오류는 파싱, 청킹 및 임베딩이 완료된 뒤 발생한다.
     assert len(document_chunker.received_documents) == 1
+    assert len(document_chunker.received_contexts) == 1
     assert len(chunk_embedder.received_documents) == 1
+    assert len(file_indexing_service.received_metadata) == 1
     assert len(file_indexing_service.received_documents) == 1
+
+    chunking_context = document_chunker.received_contexts[0]
+    indexing_metadata = file_indexing_service.received_metadata[0]
+    embedded_document = file_indexing_service.received_documents[0]
+
+    # 저장 단계에서 오류가 발생하더라도 Chunk ID 생성 컨텍스트와
+    # Local RAG 저장 메타데이터의 버전 정보는 일치해야 한다.
+    assert chunking_context.parser_version == indexing_metadata.parser_version
+    assert chunking_context.index_version == indexing_metadata.index_version
+    assert chunking_context.embedding_model == embedded_document.embedding_model
+
+    assert chunking_context.parser_version == TEST_PARSER_VERSION
+    assert chunking_context.embedding_model == TEST_EMBEDDING_MODEL
+    assert chunking_context.index_version == TEST_INDEX_VERSION
 
     # 저장 단계에서도 Presigned URL의 임시 파일은 이미 삭제되어야 한다.
     assert len(pdf_document_parser.received_file_paths) == 1

@@ -39,6 +39,12 @@ class TeiChunkEmbedder:
         self._settings = settings
         self._transport = transport
 
+    @property
+    def embedding_model(self) -> str:
+        """Chunk ID와 TEI 요청이 공유하는 임베딩 모델 식별자를 반환한다."""
+
+        return self._settings.embedding_model
+
     async def embed(
         self,
         *,
@@ -191,7 +197,7 @@ class TeiChunkEmbedder:
         for vector_offset, raw_vector in enumerate(raw_vectors):
             if not isinstance(raw_vector, list):
                 raise InvalidEmbeddingResponseError(
-                    reason=f"vector {vector_offset} must be a list",
+                    reason=(f"vector {vector_offset} must be a list"),
                     batch_start_index=batch_start_index,
                 )
 
