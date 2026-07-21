@@ -153,15 +153,10 @@ export default function MyDocumentsView({
   // Google Drive Mimicry States
   const [currentTab, setCurrentTab] = useState<"mydrive" | "starred" | "secure" | "recent" | "trash">("mydrive");
   const [isMyDriveExpanded, setIsMyDriveExpanded] = useState(true);
-  const [starredDocIds, setStarredDocIds] = useState<string[]>(() => {
-    const saved = localStorage.getItem("aidrive_starred_docs");
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [starOverrides, setStarOverrides] = useState<Record<string, boolean>>({});
 
-  // Save starredDocIds to localStorage on change
-  useEffect(() => {
-    localStorage.setItem("aidrive_starred_docs", JSON.stringify(starredDocIds));
-  }, [starredDocIds]);
+  const isStarred = (doc: Document) =>
+      doc.id in starOverrides ? starOverrides[doc.id] : !!doc.star;
 
   // Document checkbox selection state for batch actions
   const [checkedDocIds, setCheckedDocIds] = useState<string[]>([]);
@@ -288,7 +283,7 @@ export default function MyDocumentsView({
         matchesTabAndFolder = selectedFolder === null ||
             isDescendantOrSelf(doc.folderId, selectedFolder, folders);
       } else if (currentTab === "starred") {
-        matchesTabAndFolder = starredDocIds.includes(doc.id);
+        matchesTabAndFolder = isStarred(doc);
       } else if (currentTab === "secure") {
         matchesTabAndFolder = doc.securityRank === "기밀";
       } else if (currentTab === "recent") {
@@ -302,7 +297,7 @@ export default function MyDocumentsView({
 
       return matchesSearch && matchesTabAndFolder && matchesType && matchesSecurity;
     });
-  }, [documents, serverSearchDocs, trashDocs, searchQuery, selectedFolder, selectedType, selectedSecurity, currentTab, starredDocIds, folders]);
+  }, [documents, serverSearchDocs, trashDocs, searchQuery, selectedFolder, selectedType, selectedSecurity, currentTab, starOverrides, folders]);
 
   const sortedFilteredDocuments = useMemo(() => {
     if (currentTab === "recent") {
@@ -404,14 +399,17 @@ export default function MyDocumentsView({
   };
 
   const handleToggleStar = async (docId: string) => {
-    const nextStarred = !starredDocIds.includes(docId);
-    setStarredDocIds((prev) =>
-        nextStarred ? [...prev, docId] : prev.filter((id) => id !== docId)
-    );
+    const doc = documents.find((d) => d.id === docId);
+    if (!doc) return;
+    const current = isStarred(doc);
+    const next = !current;
+    setStarOverrides((prev) => ({ ...prev, [docId]: next }));
     try {
-      await toggleStar(Number(docId), nextStarred);
+      await toggleStar(Number(docId), next);
     } catch (err) {
-      console.warn("[files] PATCH /api/v1/files/{id}/star 실패 - 로컬 상태만 반영:", err);
+      console.warn("[files] PATCH /api/v1/files/{id}/star 실패 - 롤백:", err);
+      setStarOverrides((prev) => ({ ...prev, [docId]: current }));
+      alert("중요 문서 설정에 실패했습니다.");
     }
   };
 
@@ -434,7 +432,9 @@ export default function MyDocumentsView({
     try {
       await moveFiles(fileIds, targetFolder);
     } catch (err) {
-      console.warn("[files] PATCH /api/v1/files/batch/move 실패 - 로컬 상태만 갱신됨(비로그인 상태면 정상):", err);
+      console.warn("[files] PATCH /api/v1/files/batch/move 실패:", err);
+      alert("문서 이동에 실패했습니다.");
+      return;
     }
     onUpdateDocuments(
         documents.map((d) => (docIds.includes(d.id) ? { ...d, folderId: targetFolder } : d))
@@ -490,24 +490,21 @@ export default function MyDocumentsView({
     const formattedName = uploadName.endsWith(`.${uploadType}`)
         ? uploadName
         : `${uploadName}.${uploadType}`;
-    const file =
-        uploadFile ??
-        new File([uploadContent], formattedName, {
-          type: mimeByType[uploadType] ?? "text/plain",
-        });
+    const file = uploadFile
+        ? new File([uploadFile], formattedName, { type: uploadFile.type || mimeByType[uploadType] || "text/plain" })
+        : new File([uploadContent], formattedName, { type: mimeByType[uploadType] ?? "text/plain" });
 
     setIsUploading(true);
     try {
       const { uploadId, fileIds } = await uploadFiles([file], selectedFolder);
 
       let status: string = "PENDING";
-      for (let i = 0; i < 20 && status !== "COMPLETED" && status !== "FAILED"; i++) {
+      for (let i = 0; i < 20 && status !== "COMPLETED" && status !== "FAILED" && status !== "CANCELLED"; i++) {
         await new Promise((r) => setTimeout(r, 1000));
         status = (await getUploadStatus(uploadId)).status;
       }
 
-      const res = await listFiles({ folderId: selectedFolder ?? undefined });
-      onUpdateDocuments(res.items.map(toDocument));
+      onUpdateDocuments(await listAllFiles());
 
       if (isSpecialUploadMode && fileIds[0] != null) {
         try {
@@ -527,11 +524,15 @@ export default function MyDocumentsView({
         }
       } else {
         setIsUploadOpen(false);
-        alert(
-            status === "FAILED"
-                ? `업로드는 되었으나 문서 처리에 실패했습니다: ${formattedName}`
-                : `업로드 완료: ${formattedName}`
-        );
+        if (status === "COMPLETED") {
+          alert(`업로드 완료: ${formattedName}`);
+        } else if (status === "FAILED") {
+          alert(`업로드는 되었으나 문서 처리에 실패했습니다: ${formattedName}`);
+        } else if (status === "CANCELLED") {
+          alert(`업로드가 취소되었습니다: ${formattedName}`);
+        } else {
+          alert(`업로드됨 · 문서 처리가 진행 중입니다: ${formattedName}`);
+        }
       }
     } catch (err) {
       console.warn("[uploads] POST /api/v1/uploads 실패:", err);
@@ -988,7 +989,7 @@ export default function MyDocumentsView({
                 <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold shrink-0 ${
                   currentTab === "starred" ? "bg-primary/20 text-primary" : "bg-surface-container-low text-outline"
                 }`}>
-                  {starredDocIds.length}
+                  {documents.filter(isStarred).length}
                 </span>
               </div>
 
@@ -1438,9 +1439,9 @@ export default function MyDocumentsView({
                                           handleToggleStar(doc.id);
                                         }}
                                         className="shrink-0 p-0.5 hover:bg-surface-container rounded-md transition-colors text-outline hover:text-amber-500 cursor-pointer"
-                                        title={starredDocIds.includes(doc.id) ? "중요 문서 해제" : "중요 문서 추가"}
+                                        title={isStarred(doc) ? "중요 문서 해제" : "중요 문서 추가"}
                                       >
-                                        <Star className={`w-3.5 h-3.5 ${starredDocIds.includes(doc.id) ? "text-amber-500 fill-amber-400 stroke-amber-500" : "text-outline-variant group-hover:text-amber-500"}`} />
+                                        <Star className={`w-3.5 h-3.5 ${isStarred(doc) ? "text-amber-500 fill-amber-400 stroke-amber-500" : "text-outline-variant group-hover:text-amber-500"}`} />
                                       </button>
                                     </div>
                                     <p className="text-[10px] text-outline mt-1 font-sans truncate">{formatBytes(doc.sizeBytes)} · {getFolderPath(doc.folderId, folders) || "루트"}</p>
@@ -1690,9 +1691,9 @@ export default function MyDocumentsView({
                                   handleToggleStar(doc.id);
                                 }}
                                 className="p-1 rounded-md hover:bg-surface-container transition-colors cursor-pointer text-outline hover:text-amber-500 shrink-0"
-                                title={starredDocIds.includes(doc.id) ? "중요 문서 해제" : "중요 문서 추가"}
+                                title={isStarred(doc) ? "중요 문서 해제" : "중요 문서 추가"}
                               >
-                                <Star className={`w-3.5 h-3.5 ${starredDocIds.includes(doc.id) ? "text-amber-500 fill-amber-400 stroke-amber-500" : "text-outline-variant group-hover:text-amber-500"}`} />
+                                <Star className={`w-3.5 h-3.5 ${isStarred(doc) ? "text-amber-500 fill-amber-400 stroke-amber-500" : "text-outline-variant group-hover:text-amber-500"}`} />
                               </button>
 
                               {doc.fileType === "pdf" ? (

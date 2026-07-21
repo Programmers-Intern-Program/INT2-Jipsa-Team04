@@ -87,10 +87,12 @@ export default function FileDetailPanel({ fileId, folders, onClose }: FileDetail
                                 <p className="text-[11px] font-bold text-outline mb-1">폴더</p>
                                 <p className="flex items-center gap-1 text-on-surface"><FolderClosed className="w-3.5 h-3.5 text-outline" />{getFolderPath(detail.folderId, folders) || "루트"}</p>
                             </div>
-                            <div>
-                                <p className="text-[11px] font-bold text-outline mb-1">문서 유형</p>
-                                <p className="text-on-surface">{detail.docType || "미분류"}</p>
-                            </div>
+                            {detail.docType && (
+                                <div>
+                                    <p className="text-[11px] font-bold text-outline mb-1">문서 유형</p>
+                                    <p className="text-on-surface">{detail.docType}</p>
+                                </div>
+                            )}
                             <div>
                                 <p className="text-[11px] font-bold text-outline mb-1">소유자</p>
                                 <p className="text-on-surface">{detail.ownerName || "-"}</p>
