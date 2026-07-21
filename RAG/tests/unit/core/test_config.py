@@ -21,6 +21,10 @@ _SETTING_ENVIRONMENT_VARIABLES = (
     "JIPSA_RAG_HOST",
     "JIPSA_RAG_PORT",
     "JIPSA_RAG_DEBUG",
+    "RAG_INGEST_TOKEN",
+    "JIPSA_RAG_INGEST_TOKEN",
+    "INTERNAL_TOKEN",
+    "JIPSA_RAG_INTERNAL_TOKEN",
     "JIPSA_RAG_DATABASE_HOST",
     "JIPSA_RAG_DATABASE_PORT",
     "JIPSA_RAG_DATABASE_NAME",
@@ -52,6 +56,9 @@ _SETTING_ENVIRONMENT_VARIABLES = (
     "JIPSA_RAG_APP_SERVER_API_V1_PREFIX",
     "JIPSA_RAG_APP_SERVER_CONNECT_TIMEOUT_SECONDS",
     "JIPSA_RAG_APP_SERVER_READ_TIMEOUT_SECONDS",
+    "JIPSA_RAG_APP_SERVER_MAX_ATTEMPTS",
+    "JIPSA_RAG_APP_SERVER_RETRY_INITIAL_DELAY_SECONDS",
+    "JIPSA_RAG_APP_SERVER_RETRY_MAX_DELAY_SECONDS",
 )
 
 
@@ -84,6 +91,8 @@ def _write_test_env_file(
                 "JIPSA_RAG_HOST=127.0.0.1",
                 "JIPSA_RAG_PORT=8000",
                 f"JIPSA_RAG_DEBUG={str(debug).lower()}",
+                ("RAG_INGEST_TOKEN=test-rag-ingest-token-0123456789abcdef"),
+                ("INTERNAL_TOKEN=test-application-internal-token-0123456789abcdef"),
                 "JIPSA_RAG_DATABASE_HOST=127.0.0.1",
                 "JIPSA_RAG_DATABASE_PORT=3306",
                 "JIPSA_RAG_DATABASE_NAME=Jipsa_Local_RAG",
@@ -105,7 +114,7 @@ def _write_test_env_file(
                 "JIPSA_RAG_EMBEDDING_DISTANCE=cosine",
                 "JIPSA_RAG_EMBEDDING_TIMEOUT_SECONDS=60",
                 "JIPSA_RAG_VECTOR_DB_PROVIDER=qdrant",
-                "JIPSA_RAG_QDRANT_URL=http://127.0.0.1:6333",
+                ("JIPSA_RAG_QDRANT_URL=http://127.0.0.1:6333"),
                 ("JIPSA_RAG_QDRANT_COLLECTION=rag_chunk_vector_qwen3_embedding_0_6b_1024"),
                 "JIPSA_RAG_QDRANT_GRPC_PORT=6334",
                 "JIPSA_RAG_QDRANT_PREFER_GRPC=false",
@@ -115,6 +124,9 @@ def _write_test_env_file(
                 "JIPSA_RAG_APP_SERVER_API_V1_PREFIX=/api/v1",
                 ("JIPSA_RAG_APP_SERVER_CONNECT_TIMEOUT_SECONDS=5.0"),
                 ("JIPSA_RAG_APP_SERVER_READ_TIMEOUT_SECONDS=30.0"),
+                "JIPSA_RAG_APP_SERVER_MAX_ATTEMPTS=3",
+                ("JIPSA_RAG_APP_SERVER_RETRY_INITIAL_DELAY_SECONDS=0.25"),
+                ("JIPSA_RAG_APP_SERVER_RETRY_MAX_DELAY_SECONDS=2.0"),
             ]
         )
         + "\n",
@@ -135,6 +147,8 @@ def _create_settings(
         "host": "127.0.0.1",
         "port": 8001,
         "debug": False,
+        "rag_ingest_token": ("test-rag-ingest-token-0123456789abcdef"),
+        "internal_token": ("test-application-internal-token-0123456789abcdef"),
         "database_host": "127.0.0.1",
         "database_port": 3306,
         "database_name": "Jipsa_Local_RAG",
@@ -157,7 +171,7 @@ def _create_settings(
         "embedding_timeout_seconds": 60.0,
         "vector_db_provider": "qdrant",
         "qdrant_url": "http://127.0.0.1:6333",
-        "qdrant_collection": "rag_chunk_vector_qwen3_embedding_0_6b_1024",
+        "qdrant_collection": ("rag_chunk_vector_qwen3_embedding_0_6b_1024"),
         "qdrant_grpc_port": 6334,
         "qdrant_prefer_grpc": False,
         "qdrant_api_key": None,
@@ -166,6 +180,9 @@ def _create_settings(
         "app_server_api_v1_prefix": "/api/v1",
         "app_server_connect_timeout_seconds": 5.0,
         "app_server_read_timeout_seconds": 30.0,
+        "app_server_max_attempts": 3,
+        "app_server_retry_initial_delay_seconds": 0.25,
+        "app_server_retry_max_delay_seconds": 2.0,
         "_env_file": None,
     }
 
@@ -305,6 +322,16 @@ def test_settings_loads_selected_env_file(
     assert settings.port == 8000
     assert settings.debug is False
 
+    assert settings.rag_ingest_token is not None
+    assert settings.rag_ingest_token.get_secret_value() == (
+        "test-rag-ingest-token-0123456789abcdef"
+    )
+
+    assert settings.internal_token is not None
+    assert settings.internal_token.get_secret_value() == (
+        "test-application-internal-token-0123456789abcdef"
+    )
+
     assert settings.database_host == "127.0.0.1"
     assert settings.database_port == 3306
     assert settings.database_name == "Jipsa_Local_RAG"
@@ -331,7 +358,7 @@ def test_settings_loads_selected_env_file(
 
     assert settings.vector_db_provider == "qdrant"
     assert settings.qdrant_url == "http://127.0.0.1:6333"
-    assert settings.qdrant_collection == "rag_chunk_vector_qwen3_embedding_0_6b_1024"
+    assert settings.qdrant_collection == ("rag_chunk_vector_qwen3_embedding_0_6b_1024")
     assert settings.qdrant_grpc_port == 6334
     assert settings.qdrant_prefer_grpc is False
     assert settings.qdrant_api_key is None
@@ -341,6 +368,9 @@ def test_settings_loads_selected_env_file(
     assert settings.app_server_api_v1_prefix == "/api/v1"
     assert settings.app_server_connect_timeout_seconds == 5.0
     assert settings.app_server_read_timeout_seconds == 30.0
+    assert settings.app_server_max_attempts == 3
+    assert settings.app_server_retry_initial_delay_seconds == 0.25
+    assert settings.app_server_retry_max_delay_seconds == 2.0
 
 
 def test_settings_strips_non_secret_text() -> None:
@@ -592,6 +622,57 @@ def test_application_server_timeout_must_be_positive(
         )
 
 
+@pytest.mark.parametrize(
+    "invalid_attempts",
+    [
+        0,
+        11,
+    ],
+)
+def test_application_server_max_attempts_rejects_invalid_value(
+    invalid_attempts: int,
+) -> None:
+    """애플리케이션 서버 요청 시도 횟수는 1부터 10이어야 한다."""
+
+    with pytest.raises(ValidationError):
+        _create_settings(
+            app_server_max_attempts=invalid_attempts,
+        )
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "app_server_retry_initial_delay_seconds",
+        "app_server_retry_max_delay_seconds",
+    ],
+)
+def test_application_server_retry_delay_rejects_negative_value(
+    field_name: str,
+) -> None:
+    """애플리케이션 서버 재시도 대기 시간은 음수일 수 없다."""
+
+    with pytest.raises(ValidationError):
+        _create_settings(
+            **{
+                field_name: -0.1,
+            }
+        )
+
+
+def test_settings_rejects_retry_max_delay_smaller_than_initial_delay() -> None:
+    """재시도 최대 지연이 최초 지연보다 작으면 거부해야 한다."""
+
+    with pytest.raises(
+        ValidationError,
+        match="재시도 최대 지연",
+    ):
+        _create_settings(
+            app_server_retry_initial_delay_seconds=2.0,
+            app_server_retry_max_delay_seconds=1.0,
+        )
+
+
 def test_s3_allowed_key_prefix_rejects_unknown_prefix() -> None:
     """S3 Object Key prefix는 files/만 허용해야 한다."""
 
@@ -745,7 +826,7 @@ def test_external_service_base_url_rejects_credentials(
     ):
         _create_settings(
             **{
-                field_name: "http://user:password@127.0.0.1:6333",
+                field_name: ("http://user:password@127.0.0.1:6333"),
             }
         )
 
@@ -961,3 +1042,37 @@ def test_qdrant_api_key_is_masked_in_settings_output() -> None:
     assert settings.qdrant_api_key.get_secret_value() == api_key
     assert api_key not in repr(settings)
     assert api_key not in str(settings)
+
+
+def test_settings_hides_internal_token_in_representation() -> None:
+    """INTERNAL_TOKEN 원문이 Settings 표현에 노출되지 않아야 한다."""
+
+    token = "test-application-internal-token-0123456789abcdef"
+
+    settings = _create_settings(
+        internal_token=token,
+    )
+
+    assert settings.internal_token is not None
+    assert settings.internal_token.get_secret_value() == token
+    assert token not in repr(settings)
+    assert token not in str(settings)
+
+
+def test_settings_normalizes_blank_internal_token_to_none() -> None:
+    """공백 내부 토큰을 미설정 상태로 처리해야 한다."""
+
+    settings = _create_settings(
+        internal_token="   ",
+    )
+
+    assert settings.internal_token is None
+
+
+def test_settings_rejects_short_internal_token() -> None:
+    """32자보다 짧은 내부 토큰을 거부해야 한다."""
+
+    with pytest.raises(ValidationError):
+        _create_settings(
+            internal_token="short-token",
+        )

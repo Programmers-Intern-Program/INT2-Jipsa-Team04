@@ -338,10 +338,13 @@ class CharacterTextChunker:
         chunk_index: int,
         content_hash: str,
     ) -> str:
-        """문서와 청크 정보로 결정적 UUIDv5 Chunk ID를 생성한다.
+        """문서·파서·임베딩 식별 정보로 결정적 UUIDv5 Chunk ID를 생성한다.
 
-        같은 사용자, 파일, 파일 해시, 색인 버전, 청크 순번 및
-        청크 내용이면 항상 같은 UUID가 생성된다.
+        같은 사용자, 파일, 파일 해시, 파일 형식, 파서 버전, 임베딩 모델,
+        색인 버전, 청크 순번 및 청크 내용이면 항상 같은 UUID가 생성된다.
+
+        파서 버전 또는 임베딩 모델이 바뀌면 청크 내용이 우연히 같더라도
+        별도의 Local RAG Chunk_ID와 Qdrant Point ID를 생성한다.
 
         폴더 위치와 파일명은 Chunk ID 입력에서 제외한다.
         파일 이동이나 이름 변경만으로 기존 Vector Point ID가
@@ -354,6 +357,8 @@ class CharacterTextChunker:
                 str(context.file_idx),
                 context.file_hash,
                 file_type.value,
+                context.parser_version,
+                context.embedding_model,
                 str(context.index_version),
                 str(chunk_index),
                 content_hash,

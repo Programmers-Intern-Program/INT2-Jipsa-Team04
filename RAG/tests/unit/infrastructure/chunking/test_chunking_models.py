@@ -12,6 +12,10 @@ from jipsa_rag.infrastructure.chunking.models import (
 )
 from jipsa_rag.infrastructure.document.models import DocumentType
 
+TEST_PARSER_VERSION = "1.0.0"
+TEST_EMBEDDING_MODEL = "test/embedding-model"
+TEST_INDEX_VERSION = 2
+
 
 def _sha256(value: str) -> str:
     """테스트 문자열의 SHA-256 hex 값을 반환한다."""
@@ -19,8 +23,8 @@ def _sha256(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def test_chunking_context_normalizes_file_hash() -> None:
-    """ChunkingContext가 파일 해시를 소문자로 정규화한다."""
+def test_chunking_context_normalizes_identity_values() -> None:
+    """ChunkingContext가 해시와 버전 식별 문자열을 정규화한다."""
 
     file_hash = "A" * 64
 
@@ -28,10 +32,15 @@ def test_chunking_context_normalizes_file_hash() -> None:
         users_idx=1,
         file_idx=10,
         file_hash=file_hash,
-        index_version=1,
+        parser_version=f"  {TEST_PARSER_VERSION}  ",
+        embedding_model=f"  {TEST_EMBEDDING_MODEL}  ",
+        index_version=TEST_INDEX_VERSION,
     )
 
     assert context.file_hash == "a" * 64
+    assert context.parser_version == TEST_PARSER_VERSION
+    assert context.embedding_model == TEST_EMBEDDING_MODEL
+    assert context.index_version == TEST_INDEX_VERSION
 
 
 @pytest.mark.parametrize(
@@ -39,19 +48,93 @@ def test_chunking_context_normalizes_file_hash() -> None:
         "users_idx",
         "file_idx",
         "file_hash",
+        "parser_version",
+        "embedding_model",
         "index_version",
     ),
     [
-        (0, 10, "a" * 64, 1),
-        (1, 0, "a" * 64, 1),
-        (1, 10, "invalid-hash", 1),
-        (1, 10, "a" * 64, 0),
+        (
+            0,
+            10,
+            "a" * 64,
+            TEST_PARSER_VERSION,
+            TEST_EMBEDDING_MODEL,
+            2,
+        ),
+        (
+            1,
+            0,
+            "a" * 64,
+            TEST_PARSER_VERSION,
+            TEST_EMBEDDING_MODEL,
+            2,
+        ),
+        (
+            1,
+            10,
+            "invalid-hash",
+            TEST_PARSER_VERSION,
+            TEST_EMBEDDING_MODEL,
+            2,
+        ),
+        (
+            1,
+            10,
+            "a" * 64,
+            "",
+            TEST_EMBEDDING_MODEL,
+            2,
+        ),
+        (
+            1,
+            10,
+            "a" * 64,
+            "   ",
+            TEST_EMBEDDING_MODEL,
+            2,
+        ),
+        (
+            1,
+            10,
+            "a" * 64,
+            TEST_PARSER_VERSION,
+            "",
+            2,
+        ),
+        (
+            1,
+            10,
+            "a" * 64,
+            TEST_PARSER_VERSION,
+            "   ",
+            2,
+        ),
+        (
+            1,
+            10,
+            "a" * 64,
+            TEST_PARSER_VERSION,
+            TEST_EMBEDDING_MODEL,
+            0,
+        ),
+    ],
+    ids=[
+        "non-positive-users-idx",
+        "non-positive-file-idx",
+        "invalid-file-hash",
+        "empty-parser-version",
+        "blank-parser-version",
+        "empty-embedding-model",
+        "blank-embedding-model",
+        "non-positive-index-version",
     ],
 )
 def test_chunking_context_rejects_invalid_values(
     users_idx: int,
     file_idx: int,
     file_hash: str,
+    parser_version: str,
+    embedding_model: str,
     index_version: int,
 ) -> None:
     """Chunk ID 생성에 사용할 수 없는 식별 정보를 거부한다."""
@@ -61,6 +144,8 @@ def test_chunking_context_rejects_invalid_values(
             users_idx=users_idx,
             file_idx=file_idx,
             file_hash=file_hash,
+            parser_version=parser_version,
+            embedding_model=embedding_model,
             index_version=index_version,
         )
 

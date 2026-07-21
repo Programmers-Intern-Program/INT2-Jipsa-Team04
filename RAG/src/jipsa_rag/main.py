@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 
+from jipsa_rag.api.ingest import router as ingest_router
 from jipsa_rag.api.v1.router import router as api_v1_router
 from jipsa_rag.core.config import get_settings
 from jipsa_rag.core.exception_handlers import register_exception_handlers
@@ -125,13 +126,24 @@ def create_app() -> FastAPI:
     # 애플리케이션 정의 예외, 요청 검증 오류, HTTP 오류 및
     # 처리되지 않은 일반 예외를 공통 오류 응답으로 변환한다.
     #
-    # 데이터베이스 비밀번호, 내부 예외 메시지 및 Stack Trace와 같은
-    # 내부 정보는 외부 API 응답에 직접 노출하지 않는다.
+    # 데이터베이스 비밀번호, 내부 토큰, Presigned URL,
+    # 내부 예외 메시지 및 Stack Trace와 같은 정보는
+    # 외부 API 응답에 직접 노출하지 않는다.
     register_exception_handlers(application)
+
+    # 백엔드 RagIngestClient는 RAG_BASE_URL 뒤에 "/ingest"를 직접 붙여
+    # 요청하므로 인제스트 라우터에는 /api/v1 prefix를 적용하지 않는다.
+    #
+    # 최종 외부 경로:
+    # POST /ingest
+    application.include_router(ingest_router)
 
     # 모든 v1 API에 공통 API prefix를 적용한다.
     #
     # 기본값은 /api/v1이며 실제 값은 환경 설정에서 변경할 수 있다.
+    #
+    # 최종 기존 파일 처리 경로:
+    # POST /api/v1/files/process
     application.include_router(
         api_v1_router,
         prefix=settings.api_v1_prefix,
