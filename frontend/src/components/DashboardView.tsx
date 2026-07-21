@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "motion/react";
 import {
   Sparkles,
@@ -15,6 +15,7 @@ import type { Document } from "../types";
 import { formatBytes } from "../utils/formatBytes";
 import { mockFolders } from "../mocks/mockData";
 import { isDescendantOrSelf } from "../utils/folderTree";
+import { listFolders } from "../api/folders";
 
 interface DashboardViewProps {
   documents: Document[];
@@ -25,13 +26,17 @@ interface DashboardViewProps {
 export default function DashboardView({ documents, onNavigateToChat, onNavigateToTab }: DashboardViewProps) {
   const [completedActions, setCompletedActions] = useState<string[]>([]);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const [folders, setFolders] = useState(mockFolders);
+  useEffect(() => {
+    listFolders().then(setFolders).catch(() => {});
+  }, []);
 
   // Statistics calculation
   const totalCount = documents.length + 1278; // Add realistic offset for mock scale
-  const financeFolderId = mockFolders.find(f => f.name === "재무 보고서" && f.parentFolderId === null)?.folderId;
-  const privateFolderId = mockFolders.find(f => f.name === "개인 문서" && f.parentFolderId === null)?.folderId;
-  const financeCount = documents.filter(d => financeFolderId !== undefined && d.folderId !== null && isDescendantOrSelf(d.folderId, financeFolderId, mockFolders)).length + 339;
-  const privateCount = documents.filter(d => privateFolderId !== undefined && d.folderId !== null && isDescendantOrSelf(d.folderId, privateFolderId, mockFolders)).length + 154;
+  const financeFolderId = folders.find(f => f.name === "재무 보고서" && f.parentFolderId === null)?.folderId;
+  const privateFolderId = folders.find(f => f.name === "개인 문서" && f.parentFolderId === null)?.folderId;
+  const financeCount = documents.filter(d => financeFolderId !== undefined && d.folderId !== null && isDescendantOrSelf(d.folderId, financeFolderId, folders)).length + 339;
+  const privateCount = documents.filter(d => privateFolderId !== undefined && d.folderId !== null && isDescendantOrSelf(d.folderId, privateFolderId, folders)).length + 154;
 
   const handleRunSummary = (id: string) => {
     setLoadingAction(id);

@@ -23,16 +23,19 @@ import {
   Clock,
   Trash2,
   ShieldAlert,
-  Undo2
+  Undo2,
+  Info
 } from "lucide-react";
 import type { Document, FileMapping, Folder as FolderType, OrganizeProposal, ProposedFolder } from "../types";
 import { formatBytes } from "../utils/formatBytes";
 import { mockFolders } from "../mocks/mockData";
 import { getFolderPath, getFolderAncestors, isDescendantOrSelf, ensureFolderPath } from "../utils/folderTree";
 import { listFolders, createFolder, deleteFolder } from "../api/folders";
-import { getStorageUsage, listAllFiles, listFiles, listTrash, moveFiles, restoreFile, toDocument } from "../api/files";
+import { deleteFile, downloadFile, getFileDetail, getFileStatus, getStorageUsage, listAllFiles, listFiles, listTrash, moveFiles, renameFile, restoreFile, toDocument, toggleStar } from "../api/files";
 import { proposeOrganization, applyOrganization } from "../api/organize";
 import { ApiError } from "../api/client";
+import FileDetailPanel from "./FileDetailPanel";
+import { uploadFiles, getUploadStatus } from "../api/uploads";
 
 interface MyDocumentsViewProps {
   documents: Document[];
@@ -86,6 +89,7 @@ export default function MyDocumentsView({
   const [uploadContent, setUploadContent] = useState("");
   const [uploadType, setUploadType] = useState("pdf");
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
   // 비로그인 상태면 토큰이 없어 401로 실패하는 게 정상. 그 경우 기존 mock 상태를
@@ -161,6 +165,7 @@ export default function MyDocumentsView({
 
   // Document checkbox selection state for batch actions
   const [checkedDocIds, setCheckedDocIds] = useState<string[]>([]);
+  const [detailFileId, setDetailFileId] = useState<number | null>(null);
 
   // Modals state
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
@@ -233,6 +238,34 @@ export default function MyDocumentsView({
           setStorage(null);
         });
   }, []);
+
+  useEffect(() => {
+    const pending = documents.filter((d) => d.status === "PROCESSING" || d.status === "UPLOADED");
+    if (pending.length === 0) return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      const results = await Promise.allSettled(
+          pending.map((d) => getFileStatus(Number(d.id)).then((s) => ({ id: d.id, status: s.status })))
+      );
+      if (cancelled) return;
+      const done = results
+          .filter((r): r is PromiseFulfilledResult<{ id: string; status: string }> => r.status === "fulfilled")
+          .map((r) => r.value)
+          .filter((u) => u.status !== "PROCESSING" && u.status !== "UPLOADED");
+      if (done.length > 0) {
+        onUpdateDocuments(
+            documents.map((d) => {
+              const u = done.find((x) => x.id === d.id);
+              return u ? { ...d, status: u.status } : d;
+            })
+        );
+      }
+    }, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [documents, onUpdateDocuments]);
 
   const storagePercent = storage && storage.quotaBytes > 0
       ? Math.min(100, Math.round((storage.usedBytes / storage.quotaBytes) * 100))
@@ -366,13 +399,33 @@ export default function MyDocumentsView({
       }
 
       // Read text content
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setUploadContent(event.target.result as string);
-        }
-      };
-      reader.readAsText(file);
+      setUploadFile(file);
+    }
+  };
+
+  const handleToggleStar = async (docId: string) => {
+    const nextStarred = !starredDocIds.includes(docId);
+    setStarredDocIds((prev) =>
+        nextStarred ? [...prev, docId] : prev.filter((id) => id !== docId)
+    );
+    try {
+      await toggleStar(Number(docId), nextStarred);
+    } catch (err) {
+      console.warn("[files] PATCH /api/v1/files/{id}/star 실패 - 로컬 상태만 반영:", err);
+    }
+  };
+
+  const handleRenameDocument = async (docId: string, currentName: string) => {
+    const name = window.prompt("새 파일 이름을 입력하세요.", currentName);
+    if (!name || !name.trim() || name.trim() === currentName) return;
+    try {
+      await renameFile(Number(docId), name.trim());
+      onUpdateDocuments(
+          documents.map((d) => (d.id === docId ? { ...d, name: name.trim() } : d))
+      );
+    } catch (err) {
+      console.warn("[files] PATCH /api/v1/files/{id}/name 실패:", err);
+      alert("이름 변경에 실패했습니다.");
     }
   };
 
@@ -388,6 +441,19 @@ export default function MyDocumentsView({
     );
     setCheckedDocIds([]);
     alert(`선택하신 ${docIds.length}개의 문서가 '${getFolderPath(targetFolder, folders) || "내 드라이브"}' 폴더로 성공적으로 이동되었습니다.`);
+  };
+
+  const handleDeleteDocuments = async (docIds: string[]) => {
+    if (!window.confirm(`${docIds.length}개의 문서를 휴지통으로 이동하시겠습니까?`)) return;
+    const ids = docIds.map(Number).filter((id) => Number.isFinite(id));
+    const results = await Promise.allSettled(ids.map((id) => deleteFile(id)));
+    const deletedIds = ids.filter((_, i) => results[i].status === "fulfilled").map(String);
+    if (deletedIds.length < ids.length) {
+      console.warn("[files] DELETE /api/v1/files/{id} 일부 실패(로그인 연동 전이면 정상):", ids.length - deletedIds.length);
+    }
+    onUpdateDocuments(documents.filter((d) => !deletedIds.includes(d.id)));
+    setCheckedDocIds([]);
+    alert(`${deletedIds.length}개의 문서를 휴지통으로 이동했습니다.`);
   };
 
   const handleRestoreDocuments = async (docIds: string[]) => {
@@ -407,61 +473,74 @@ export default function MyDocumentsView({
     setCheckedDocIds([]);
   };
 
+  const mimeByType: Record<string, string> = {
+    pdf: "application/pdf",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    txt: "text/plain",
+  };
+
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!uploadName || !uploadContent) {
-      alert("문서 이름과 내용을 입력해 주세요.");
+    if (!uploadFile && !uploadContent.trim()) {
+      alert("문서 파일을 첨부하거나 내용을 입력해 주세요.");
       return;
     }
 
+    const formattedName = uploadName.endsWith(`.${uploadType}`)
+        ? uploadName
+        : `${uploadName}.${uploadType}`;
+    const file =
+        uploadFile ??
+        new File([uploadContent], formattedName, {
+          type: mimeByType[uploadType] ?? "text/plain",
+        });
+
     setIsUploading(true);
     try {
-      const formattedName = uploadName.endsWith(`.${uploadType}`) ? uploadName : `${uploadName}.${uploadType}`;
-      
-      // Hit actual upload endpoint to take advantage of backend LLM logic
-      const response = await fetch("/api/documents/upload", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          name: formattedName,
-          content: uploadContent,
-          type: uploadType,
-          owner: "김민수",
-          size: `${(uploadContent.length / 1024).toFixed(1)} KB`
-        })
-      });
+      const { uploadId, fileIds } = await uploadFiles([file], selectedFolder);
 
-      const result = await response.json();
-      if (result.success && result.document) {
-        // Update documents list in parent state
-        onUpdateDocuments([result.document, ...documents]);
+      let status: string = "PENDING";
+      for (let i = 0; i < 20 && status !== "COMPLETED" && status !== "FAILED"; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        status = (await getUploadStatus(uploadId)).status;
+      }
 
-        if (isSpecialUploadMode) {
-          // Store results for the highly visual auto organize summary card
+      const res = await listFiles({ folderId: selectedFolder ?? undefined });
+      onUpdateDocuments(res.items.map(toDocument));
+
+      if (isSpecialUploadMode && fileIds[0] != null) {
+        try {
+          const detail = await getFileDetail(fileIds[0]);
           setAutoResultData({
-            fileName: result.document.name,
-            targetFolder: getFolderPath(result.document.folderId, folders),
-            targetFolderId: result.document.folderId,
-            summary: result.document.summary,
-            tags: result.document.tags,
-            security: result.document.securityRank
+            fileName: detail.name,
+            targetFolder: getFolderPath(detail.folderId, folders),
+            targetFolderId: detail.folderId,
+            summary: detail.summary,
+            tags: detail.tags ?? [],
+            security: detail.securityRank,
           });
           setIsUploadOpen(false);
           setShowAutoResultModal(true);
-        } else {
+        } catch {
           setIsUploadOpen(false);
-          alert(`AI 분류 성공!\n\n• 파일명: ${result.document.name}\n• 분류된 폴더: [${getFolderPath(result.document.folderId, folders)}]\n• 보안 조치 등급: [${result.document.securityRank}]\n\n자동 생성된 3줄 요약이 보관함 카드에 반영되었습니다.`);
         }
+      } else {
+        setIsUploadOpen(false);
+        alert(
+            status === "FAILED"
+                ? `업로드는 되었으나 문서 처리에 실패했습니다: ${formattedName}`
+                : `업로드 완료: ${formattedName}`
+        );
       }
-      
+    } catch (err) {
+      console.warn("[uploads] POST /api/v1/uploads 실패:", err);
+      alert("업로드 중 오류가 발생했습니다. (로그인 연동 전이면 401로 실패할 수 있습니다)");
+    } finally {
+      setUploadFile(null);
       setUploadName("");
       setUploadContent("");
       setUploadType("pdf");
-    } catch (err) {
-      alert("문서 분석 업로드 중 오류가 발생했습니다.");
-    } finally {
       setIsUploading(false);
       setIsSpecialUploadMode(false);
     }
@@ -1206,6 +1285,12 @@ export default function MyDocumentsView({
                           <FolderInput className="w-3.5 h-3.5" /> 폴더로 일괄 이동
                         </button>
                         <button
+                            onClick={() => handleDeleteDocuments(checkedDocIds)}
+                            className="px-3.5 py-2 bg-red-500 text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> 휴지통으로 이동
+                        </button>
+                        <button
                             onClick={() => onNavigateToChat(checkedDocIds)}
                             className="px-3.5 py-2 bg-secondary text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
                         >
@@ -1345,14 +1430,12 @@ export default function MyDocumentsView({
                                   )}
                                   <div className="min-w-0 flex-1">
                                     <div className="flex items-center gap-1.5">
-                                      <p className="font-bold text-body-sm text-on-surface leading-tight truncate" title={doc.name}>{doc.name}</p>
+                                      <p className="font-bold text-body-sm text-on-surface leading-tight truncate cursor-text" title="더블클릭하여 이름 변경" onDoubleClick={() => handleRenameDocument(doc.id, doc.name)}>{doc.name}</p>
                                       <button
                                         type="button"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          setStarredDocIds(prev => 
-                                            prev.includes(doc.id) ? prev.filter(id => id !== doc.id) : [...prev, doc.id]
-                                          );
+                                          handleToggleStar(doc.id);
                                         }}
                                         className="shrink-0 p-0.5 hover:bg-surface-container rounded-md transition-colors text-outline hover:text-amber-500 cursor-pointer"
                                         title={starredDocIds.includes(doc.id) ? "중요 문서 해제" : "중요 문서 추가"}
@@ -1443,8 +1526,15 @@ export default function MyDocumentsView({
                                 >
                                   <FolderInput className="w-4 h-4" />
                                 </button>
-                                <button 
-                                  onClick={() => alert(`'${doc.name}' 파일을 기기에 다운로드 저장하였습니다.`)}
+                                <button
+                                    onClick={() => setDetailFileId(Number(doc.id))}
+                                    className="p-2 border border-outline-variant text-outline hover:text-on-surface rounded-xl hover:bg-surface-container transition-colors cursor-pointer"
+                                    title="상세 정보"
+                                >
+                                  <Info className="w-4 h-4" />
+                                </button>
+                                <button
+                                    onClick={() => downloadFile(Number(doc.id), doc.name).catch(() => alert("다운로드에 실패했습니다."))}
                                   className="p-2 border border-outline-variant text-outline hover:text-on-surface rounded-xl hover:bg-surface-container transition-colors cursor-pointer"
                                   title="다운로드"
                                 >
@@ -1597,9 +1687,7 @@ export default function MyDocumentsView({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setStarredDocIds(prev => 
-                                    prev.includes(doc.id) ? prev.filter(id => id !== doc.id) : [...prev, doc.id]
-                                  );
+                                  handleToggleStar(doc.id);
                                 }}
                                 className="p-1 rounded-md hover:bg-surface-container transition-colors cursor-pointer text-outline hover:text-amber-500 shrink-0"
                                 title={starredDocIds.includes(doc.id) ? "중요 문서 해제" : "중요 문서 추가"}
@@ -1615,7 +1703,7 @@ export default function MyDocumentsView({
                                 <FileText className="w-6 h-6 text-blue-500 shrink-0" />
                               )}
                               <div className="truncate flex-1">
-                                <p className="font-bold text-xs text-on-surface leading-tight truncate" title={doc.name}>{doc.name}</p>
+                                <p className="font-bold text-xs text-on-surface leading-tight truncate cursor-text" title="더블클릭하여 이름 변경" onDoubleClick={() => handleRenameDocument(doc.id, doc.name)}>{doc.name}</p>
                                 <p className="text-[10px] text-outline mt-1 font-sans truncate">
                                   {getFolderPath(doc.folderId, folders) || "루트"} · {doc.ownerName}
                                 </p>
@@ -1669,8 +1757,15 @@ export default function MyDocumentsView({
                               >
                                 <FolderInput className="w-4 h-4" />
                               </button>
-                              <button 
-                                onClick={() => alert(`'${doc.name}' 파일을 기기에 저장하였습니다.`)}
+                              <button
+                                  onClick={() => setDetailFileId(Number(doc.id))}
+                                  className="p-1.5 hover:bg-surface-container rounded-lg text-outline hover:text-on-surface cursor-pointer"
+                                  title="상세 정보"
+                              >
+                                <Info className="w-4 h-4" />
+                              </button>
+                              <button
+                                  onClick={() => downloadFile(Number(doc.id), doc.name).catch(() => alert("다운로드에 실패했습니다."))}
                                 className="p-1.5 hover:bg-surface-container rounded-lg text-outline hover:text-on-surface cursor-pointer"
                                 title="다운로드"
                               >
@@ -2004,6 +2099,8 @@ export default function MyDocumentsView({
         )}
       </AnimatePresence>
 
+      <FileDetailPanel fileId={detailFileId} folders={folders} onClose={() => setDetailFileId(null)} />
+
       {/* Dynamic Upload Modal Form */}
       <AnimatePresence>
         {isUploadOpen && (
@@ -2107,7 +2204,6 @@ export default function MyDocumentsView({
                   </div>
                   <textarea 
                     rows={6}
-                    required
                     value={uploadContent}
                     onChange={(e) => setUploadContent(e.target.value)}
                     placeholder="AI가 분석하고 요약할 본문 내용을 직접 붙여넣거나 위의 템플릿 샘플을 클릭하여 즉시 입력해 보세요."

@@ -23,6 +23,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class FileService {
@@ -65,9 +67,7 @@ public class FileService {
         LocalDateTime to = dateTo == null ? null : dateTo.atTime(LocalTime.MAX);
         Page<File> result = fileRepository.search(userId, folderId, escapeLike(keyword), docType,
                 blankToNull(tags), from, to, pageable);
-        List<FileListItem> items = result.getContent().stream()
-                .map(this::toListItem)
-                .toList();
+        List<FileListItem> items = toListItems(result.getContent());
         return new FileListResponse(items, result.getTotalElements(), result.getNumber(), result.getSize());
     }
 
@@ -120,9 +120,7 @@ public class FileService {
         Pageable pageable = PageRequest.of(page, PAGE_SIZE);
         Page<File> result = fileRepository
                 .findByUsersIdAndDeletedAtIsNotNullOrderByDeletedAtDesc(userId, pageable);
-        List<FileListItem> items = result.getContent().stream()
-                .map(this::toListItem)
-                .toList();
+        List<FileListItem> items = toListItems(result.getContent());
         return new FileListResponse(items, result.getTotalElements(), result.getNumber(), result.getSize());
     }
 
@@ -205,7 +203,19 @@ public class FileService {
         return file;
     }
 
-    private FileListItem toListItem(File file) {
+    private List<FileListItem> toListItems(List<File> files) {
+        Map<Long, FileMetadata> metaById = fileMetadataRepository
+                .findAllById(files.stream().map(File::getId).toList())
+                .stream()
+                .collect(Collectors.toMap(FileMetadata::getFileId, m -> m));
+        return files.stream()
+                .map(file -> toListItem(file, metaById.get(file.getId())))
+                .toList();
+    }
+
+    private FileListItem toListItem(File file, FileMetadata metadata) {
+        String summary = metadata != null && metadata.getSummary() != null ? metadata.getSummary() : "";
+        List<String> tags = metadata != null ? parseStringList(metadata.getTags()) : List.of();
         return new FileListItem(
                 file.getId(),
                 file.getName(),
@@ -214,7 +224,11 @@ public class FileService {
                 file.getFolderId(),
                 file.getStatus(),
                 file.isStar(),
-                file.getUpdatedAt());
+                file.getUpdatedAt(),
+                summary,
+                tags,
+                file.getSecurityRank(),
+                null);
     }
 
     private String escapeLike(String keyword) {

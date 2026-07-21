@@ -1,6 +1,7 @@
 package com.jipsa.file;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 public record FileListItem(
         Long fileId,
@@ -10,6 +11,10 @@ public record FileListItem(
         Long folderId,
         FileStatus status,
         boolean star,
-        LocalDateTime modifiedAt
+        LocalDateTime modifiedAt,
+        String summary,
+        List<String> tags,
+        String securityRank,
+        String docType
 ) {
 }
