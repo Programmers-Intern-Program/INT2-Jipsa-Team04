@@ -87,7 +87,6 @@ export default function MyDocumentsView({
   // New document form state
   const [uploadName, setUploadName] = useState("");
   const [uploadContent, setUploadContent] = useState("");
-  const [uploadType, setUploadType] = useState("pdf");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -153,10 +152,6 @@ export default function MyDocumentsView({
   // Google Drive Mimicry States
   const [currentTab, setCurrentTab] = useState<"mydrive" | "starred" | "secure" | "recent" | "trash">("mydrive");
   const [isMyDriveExpanded, setIsMyDriveExpanded] = useState(true);
-  const [starOverrides, setStarOverrides] = useState<Record<string, boolean>>({});
-
-  const isStarred = (doc: Document) =>
-      doc.id in starOverrides ? starOverrides[doc.id] : !!doc.star;
 
   // Document checkbox selection state for batch actions
   const [checkedDocIds, setCheckedDocIds] = useState<string[]>([]);
@@ -283,7 +278,7 @@ export default function MyDocumentsView({
         matchesTabAndFolder = selectedFolder === null ||
             isDescendantOrSelf(doc.folderId, selectedFolder, folders);
       } else if (currentTab === "starred") {
-        matchesTabAndFolder = isStarred(doc);
+        matchesTabAndFolder = !!doc.star;
       } else if (currentTab === "secure") {
         matchesTabAndFolder = doc.securityRank === "기밀";
       } else if (currentTab === "recent") {
@@ -297,7 +292,7 @@ export default function MyDocumentsView({
 
       return matchesSearch && matchesTabAndFolder && matchesType && matchesSecurity;
     });
-  }, [documents, serverSearchDocs, trashDocs, searchQuery, selectedFolder, selectedType, selectedSecurity, currentTab, starOverrides, folders]);
+  }, [documents, serverSearchDocs, trashDocs, searchQuery, selectedFolder, selectedType, selectedSecurity, currentTab, folders]);
 
   const sortedFilteredDocuments = useMemo(() => {
     if (currentTab === "recent") {
@@ -384,14 +379,6 @@ export default function MyDocumentsView({
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const file = e.dataTransfer.files[0];
       setUploadName(file.name);
-      
-      // Auto-set extension
-      const ext = file.name.split(".").pop()?.toLowerCase();
-      if (ext && ["pdf", "docx", "xlsx", "txt"].includes(ext)) {
-        setUploadType(ext);
-      } else {
-        setUploadType("txt");
-      }
 
       // Read text content
       setUploadFile(file);
@@ -401,14 +388,18 @@ export default function MyDocumentsView({
   const handleToggleStar = async (docId: string) => {
     const doc = documents.find((d) => d.id === docId);
     if (!doc) return;
-    const current = isStarred(doc);
+    const current = !!doc.star;
     const next = !current;
-    setStarOverrides((prev) => ({ ...prev, [docId]: next }));
+    onUpdateDocuments(
+        documents.map((d) => (d.id === docId ? { ...d, star: next } : d))
+    );
     try {
       await toggleStar(Number(docId), next);
     } catch (err) {
       console.warn("[files] PATCH /api/v1/files/{id}/star 실패 - 롤백:", err);
-      setStarOverrides((prev) => ({ ...prev, [docId]: current }));
+      onUpdateDocuments(
+          documents.map((d) => (d.id === docId ? { ...d, star: current } : d))
+      );
       alert("중요 문서 설정에 실패했습니다.");
     }
   };
@@ -487,12 +478,14 @@ export default function MyDocumentsView({
       return;
     }
 
-    const formattedName = uploadName.endsWith(`.${uploadType}`)
-        ? uploadName
-        : `${uploadName}.${uploadType}`;
+    const sourceExt = uploadFile
+        ? (uploadFile.name.split(".").pop()?.toLowerCase() || "txt")
+        : "txt";
+    const baseName = uploadName.replace(/\.(pdf|docx|xlsx|txt)$/i, "");
+    const formattedName = `${baseName}.${sourceExt}`;
     const file = uploadFile
-        ? new File([uploadFile], formattedName, { type: uploadFile.type || mimeByType[uploadType] || "text/plain" })
-        : new File([uploadContent], formattedName, { type: mimeByType[uploadType] ?? "text/plain" });
+        ? new File([uploadFile], formattedName, { type: uploadFile.type || mimeByType[sourceExt] || "text/plain" })
+        : new File([uploadContent], formattedName, { type: mimeByType[sourceExt] ?? "text/plain" });
 
     setIsUploading(true);
     try {
@@ -541,7 +534,6 @@ export default function MyDocumentsView({
       setUploadFile(null);
       setUploadName("");
       setUploadContent("");
-      setUploadType("pdf");
       setIsUploading(false);
       setIsSpecialUploadMode(false);
     }
@@ -651,7 +643,6 @@ export default function MyDocumentsView({
   const handleLoadSample = (key: string) => {
     if (key === "sample1") {
       setUploadName("2024년_인공지능_클라우드_바우처_결과보고서");
-      setUploadType("pdf");
       setUploadContent(`[2024년 정보통신산업진흥원 클라우드 서비스 바우처 최종 보고서]
 과제명: AI-Drive 지능형 협업 솔루션 개발 및 실증 사업.
 총 예산: 480,000,000원 (정부지원금 3억 5천만 원, 민간부담금 1억 3천만 원)
@@ -662,7 +653,6 @@ export default function MyDocumentsView({
 연구 책임자: 김민수 수석 (010-4433-2211, minsoo.kim@aidrive.ai)`);
     } else if (key === "sample2") {
       setUploadName("사내_복리후생_규정집_수정본");
-      setUploadType("docx");
       setUploadContent(`[사내 복리후생 가이드 - 인사운영팀 편찬]
 인재의 건강한 균형 발전을 위한 주요 혜택:
 1. 연간 선택적 복지 포인트 240만 원 지급 (매분기 60만 원 분할 부여)
@@ -989,7 +979,7 @@ export default function MyDocumentsView({
                 <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold shrink-0 ${
                   currentTab === "starred" ? "bg-primary/20 text-primary" : "bg-surface-container-low text-outline"
                 }`}>
-                  {documents.filter(isStarred).length}
+                  {documents.filter((d) => d.star).length}
                 </span>
               </div>
 
@@ -1439,9 +1429,9 @@ export default function MyDocumentsView({
                                           handleToggleStar(doc.id);
                                         }}
                                         className="shrink-0 p-0.5 hover:bg-surface-container rounded-md transition-colors text-outline hover:text-amber-500 cursor-pointer"
-                                        title={isStarred(doc) ? "중요 문서 해제" : "중요 문서 추가"}
+                                        title={doc.star ? "중요 문서 해제" : "중요 문서 추가"}
                                       >
-                                        <Star className={`w-3.5 h-3.5 ${isStarred(doc) ? "text-amber-500 fill-amber-400 stroke-amber-500" : "text-outline-variant group-hover:text-amber-500"}`} />
+                                        <Star className={`w-3.5 h-3.5 ${doc.star ? "text-amber-500 fill-amber-400 stroke-amber-500" : "text-outline-variant group-hover:text-amber-500"}`} />
                                       </button>
                                     </div>
                                     <p className="text-[10px] text-outline mt-1 font-sans truncate">{formatBytes(doc.sizeBytes)} · {getFolderPath(doc.folderId, folders) || "루트"}</p>
@@ -1691,9 +1681,9 @@ export default function MyDocumentsView({
                                   handleToggleStar(doc.id);
                                 }}
                                 className="p-1 rounded-md hover:bg-surface-container transition-colors cursor-pointer text-outline hover:text-amber-500 shrink-0"
-                                title={isStarred(doc) ? "중요 문서 해제" : "중요 문서 추가"}
+                                title={doc.star ? "중요 문서 해제" : "중요 문서 추가"}
                               >
-                                <Star className={`w-3.5 h-3.5 ${isStarred(doc) ? "text-amber-500 fill-amber-400 stroke-amber-500" : "text-outline-variant group-hover:text-amber-500"}`} />
+                                <Star className={`w-3.5 h-3.5 ${doc.star ? "text-amber-500 fill-amber-400 stroke-amber-500" : "text-outline-variant group-hover:text-amber-500"}`} />
                               </button>
 
                               {doc.fileType === "pdf" ? (
@@ -2169,7 +2159,7 @@ export default function MyDocumentsView({
 
                 <div className="grid grid-cols-3 gap-4">
                   {/* Document Name input */}
-                  <div className="col-span-2 flex flex-col gap-1.5">
+                  <div className="col-span-3 flex flex-col gap-1.5">
                     <label className="font-bold text-label-sm text-on-surface">문서 이름</label>
                     <input 
                       type="text"
@@ -2179,21 +2169,6 @@ export default function MyDocumentsView({
                       placeholder="예시: 2024년 사업실적_최종본"
                       className="w-full bg-white border border-outline-variant rounded-xl py-2.5 px-3 text-body-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                     />
-                  </div>
-
-                  {/* Extension selection */}
-                  <div className="col-span-1 flex flex-col gap-1.5">
-                    <label className="font-bold text-label-sm text-on-surface">확장자</label>
-                    <select 
-                      value={uploadType}
-                      onChange={(e) => setUploadType(e.target.value)}
-                      className="w-full bg-white border border-outline-variant rounded-xl py-2.5 px-3 text-body-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
-                    >
-                      <option value="pdf">.pdf (PDF)</option>
-                      <option value="docx">.docx (Word)</option>
-                      <option value="xlsx">.xlsx (Excel)</option>
-                      <option value="txt">.txt (Text)</option>
-                    </select>
                   </div>
                 </div>
 

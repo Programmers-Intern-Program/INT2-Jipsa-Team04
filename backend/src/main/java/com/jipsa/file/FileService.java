@@ -86,7 +86,6 @@ public class FileService {
                 file.isStar(),
                 summary,
                 tags,
-                "",
                 new FileDetailResponse.Entities(List.of(), List.of(), List.of(), null),
                 file.getUpdatedAt(),
                 file.getStatus(),
@@ -227,8 +226,7 @@ public class FileService {
                 file.getUpdatedAt(),
                 summary,
                 tags,
-                file.getSecurityRank(),
-                null);
+                file.getSecurityRank());
     }
 
     private String escapeLike(String keyword) {

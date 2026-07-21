@@ -15,7 +15,6 @@ export interface FileListItem {
     summary: string;
     tags: string[];
     securityRank: string | null;
-    docType: string | null;
 }
 
 export interface FileListResponse {
@@ -79,7 +78,6 @@ export function toDocument(item: FileListItem): Document {
         securityRank: item.securityRank === "기밀" ? "기밀" : "일반",
         summary: item.summary ?? "",
         piiDetected: false,
-        docType: item.docType ?? undefined,
         status: item.status,
         star: item.star,
     };
@@ -120,7 +118,6 @@ export interface FileDetail {
     star: boolean;
     summary: string;
     tags: string[];
-    docType: string | null;
     entities: {
         dates: string[];
         people: string[];
