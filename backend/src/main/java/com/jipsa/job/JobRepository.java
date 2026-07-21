@@ -47,4 +47,8 @@ public interface JobRepository extends JpaRepository<Job, Long> {
               and j.attempts >= j.maxAttempts
             """)
     List<Long> findExpiredExhaustedIds(@Param("now") LocalDateTime now);
+
+    @Modifying(clearAutomatically = true)
+    @Query("delete from Job j where j.fileId = :fileId")
+    void deleteByFileId(@Param("fileId") Long fileId);
 }

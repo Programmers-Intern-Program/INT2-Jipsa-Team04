@@ -140,6 +140,24 @@ public class FileService {
         jobService.enqueueIngest(file.getId(), file.getUploadsId());
     }
 
+    @Transactional
+    public void permanentDelete(Long userId, Long fileId) {
+        File file = fileRepository.findById(fileId)
+                .orElseThrow(() -> new FileNotFoundException("파일을 찾을 수 없습니다: " + fileId));
+        if (!file.getUsersId().equals(userId)) {
+            throw new ForbiddenException("해당 파일에 접근할 권한이 없습니다.");
+        }
+        if (file.getDeletedAt() == null) {
+            throw new BadRequestException("휴지통에 있는 파일만 영구 삭제할 수 있습니다.");
+        }
+        if (file.getS3Key() != null && !file.getS3Key().isBlank()) {
+            s3Service.delete(bucket, file.getS3Key());
+        }
+        jobRepository.deleteByFileId(fileId);
+        fileMetadataRepository.findById(fileId).ifPresent(fileMetadataRepository::delete);
+        fileRepository.delete(file);
+    }
+
     @Transactional(readOnly = true)
     public StorageUsageResponse getStorageUsage(Long userId) {
         long used = fileRepository.sumSizeBytesByUsersId(userId);
@@ -183,7 +201,23 @@ public class FileService {
             throw new BadRequestException("파일명은 비어 있을 수 없습니다.");
         }
         File file = requireOwnedFile(userId, fileId);
-        file.setName(name.trim());
+        String finalName = applyOriginalExtension(name.trim(), file.getFileType());
+        if (finalName.length() > 255) {
+            throw new BadRequestException("파일명이 너무 깁니다.");
+        }
+        file.setName(finalName);
+    }
+
+    private String applyOriginalExtension(String requestedName, String originalFileType) {
+        if (originalFileType == null || originalFileType.isBlank()) {
+            return requestedName;
+        }
+        String base = requestedName;
+        int dot = requestedName.lastIndexOf('.');
+        if (dot > 0) {
+            base = requestedName.substring(0, dot);
+        }
+        return base + "." + originalFileType.toLowerCase();
     }
 
     public FileDownload download(Long userId, Long fileId) {

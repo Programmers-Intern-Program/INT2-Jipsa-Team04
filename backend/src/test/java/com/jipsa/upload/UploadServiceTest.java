@@ -27,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -52,7 +53,7 @@ class UploadServiceTest {
     @BeforeEach
     void setUp() {
         uploadService = new UploadService(uploadsRepository, fileRepository, folderRepository,
-                s3Service, jobService, transactionManager, "test-bucket");
+                s3Service, jobService, transactionManager, "test-bucket", 107374182400L);
     }
 
     private MockMultipartFile pdf(String name) {
@@ -71,8 +72,30 @@ class UploadServiceTest {
             f.setId(100L);
             return f;
         });
-        when(s3Service.upload(eq("test-bucket"), any(MultipartFile.class)))
-                .thenReturn("files/generated-key");
+        when(s3Service.newKey()).thenReturn("files/generated-key");
+    }
+
+    @Test
+    void uploadCleansUpFileAndS3WhenPutFails() {
+        when(uploadsRepository.save(any(Uploads.class))).thenAnswer(inv -> {
+            Uploads u = inv.getArgument(0);
+            u.setId(10L);
+            return u;
+        });
+        when(fileRepository.save(any(File.class))).thenAnswer(inv -> {
+            File f = inv.getArgument(0);
+            f.setId(100L);
+            return f;
+        });
+        when(s3Service.newKey()).thenReturn("files/key-x");
+        doThrow(new RuntimeException("s3 down"))
+                .when(s3Service).upload(eq("test-bucket"), eq("files/key-x"), any(MultipartFile.class));
+
+        assertThatThrownBy(() -> uploadService.upload(1L, List.of(pdf("test.pdf")), null))
+                .isInstanceOf(RuntimeException.class);
+
+        verify(s3Service).delete("test-bucket", "files/key-x");
+        verify(fileRepository).deleteAllById(List.of(100L));
     }
 
     @Test
@@ -94,6 +117,20 @@ class UploadServiceTest {
         assertThat(saved.getFileType()).isEqualTo("pdf");
 
         verify(jobService).enqueueIngest(100L, 10L);
+    }
+
+    @Test
+    void uploadReturnsExistingBatchForSameIdempotencyKey() {
+        Uploads existing = new Uploads();
+        existing.setId(42L);
+        when(uploadsRepository.findByUsersIdAndIdempotencyKey(1L, "key-1")).thenReturn(Optional.of(existing));
+        when(fileRepository.findIdsByUploadsId(42L)).thenReturn(List.of(100L, 101L));
+
+        UploadResponse response = uploadService.upload(1L, List.of(pdf("test.pdf")), null, "key-1");
+
+        assertThat(response.uploadId()).isEqualTo(42L);
+        assertThat(response.fileIds()).containsExactly(100L, 101L);
+        verify(s3Service, never()).upload(any(), any());
     }
 
     @Test
