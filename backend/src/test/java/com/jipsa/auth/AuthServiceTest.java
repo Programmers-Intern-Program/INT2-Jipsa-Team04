@@ -150,19 +150,24 @@ class AuthServiceTest {
 
     @Test
     void 재발급은_validateAndTouch_verifyLoginable_generateToken_순서로_연결되고_새_AccessToken을_반환한다() {
+        Users user = new Users();
+        user.setId(42L);
+        user.setRole("ADMIN");
         when(refreshTokenService.validateAndTouch(REFRESH_RAW)).thenReturn(42L);
-        when(jwtService.generateToken(42L)).thenReturn("new-access-jwt");
+        when(userService.verifyLoginable(42L)).thenReturn(user);
+        when(jwtService.generateToken(42L, "ADMIN")).thenReturn("new-access-jwt");
 
         AccessTokenResponse result = authService.refreshAccessToken(REFRESH_RAW);
 
         assertThat(result.accessToken()).isEqualTo("new-access-jwt");
 
         // 호출 순서: validateAndTouch → verifyLoginable → generateToken,
-        // 그리고 generateToken은 validateAndTouch가 준 userId로 호출된다(새 Access Token userId 검증).
+        // 그리고 generateToken은 verifyLoginable이 돌려준 사용자의 id·role로 호출된다
+        // (재발급 시점의 최신 role이 새 Access Token에 실리는지 검증).
         InOrder order = inOrder(refreshTokenService, userService, jwtService);
         order.verify(refreshTokenService).validateAndTouch(REFRESH_RAW);
         order.verify(userService).verifyLoginable(42L);
-        order.verify(jwtService).generateToken(42L);
+        order.verify(jwtService).generateToken(42L, "ADMIN");
         order.verifyNoMoreInteractions();
     }
 
@@ -175,7 +180,7 @@ class AuthServiceTest {
                 .isSameAs(original);
 
         verify(userService, never()).verifyLoginable(org.mockito.ArgumentMatchers.any());
-        verify(jwtService, never()).generateToken(org.mockito.ArgumentMatchers.any());
+        verify(jwtService, never()).generateToken(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test
@@ -187,7 +192,7 @@ class AuthServiceTest {
         assertThatThrownBy(() -> authService.refreshAccessToken(REFRESH_RAW))
                 .isSameAs(original);
 
-        verify(jwtService, never()).generateToken(org.mockito.ArgumentMatchers.any());
+        verify(jwtService, never()).generateToken(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     // --- logout ---
@@ -199,7 +204,7 @@ class AuthServiceTest {
         verify(refreshTokenService).revoke(REFRESH_RAW);
         // 로그아웃은 계정 상태 검사·토큰 발급을 하지 않는다.
         verify(userService, never()).verifyLoginable(org.mockito.ArgumentMatchers.any());
-        verify(jwtService, never()).generateToken(org.mockito.ArgumentMatchers.any());
+        verify(jwtService, never()).generateToken(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
     }
 
     @Test
