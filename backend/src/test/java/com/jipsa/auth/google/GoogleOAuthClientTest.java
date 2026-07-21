@@ -45,13 +45,14 @@ class GoogleOAuthClientTest {
                         "client_id", "client-id",
                         "client_secret", "client-secret",
                         "redirect_uri", "https://app/callback",
-                        "grant_type", "authorization_code")))
+                        "grant_type", "authorization_code",
+                        "code_verifier", "verifier-abc")))
                 .andRespond(withSuccess(
                         "{\"access_token\":\"ya29.x\",\"id_token\":\"id.jwt.token\","
                                 + "\"expires_in\":3599,\"token_type\":\"Bearer\",\"scope\":\"openid email\"}",
                         MediaType.APPLICATION_JSON));
 
-        GoogleTokenResponse response = client.exchangeAuthorizationCode("auth-code-123");
+        GoogleTokenResponse response = client.exchangeAuthorizationCode("auth-code-123", "verifier-abc");
 
         assertThat(response.idToken()).isEqualTo("id.jwt.token");
         assertThat(response.accessToken()).isEqualTo("ya29.x");
@@ -67,7 +68,7 @@ class GoogleOAuthClientTest {
                         .body("{\"error\":\"invalid_grant\"}")
                         .contentType(MediaType.APPLICATION_JSON));
 
-        assertThatThrownBy(() -> client.exchangeAuthorizationCode("bad-code"))
+        assertThatThrownBy(() -> client.exchangeAuthorizationCode("bad-code", "verifier-abc"))
                 .isInstanceOf(GoogleAuthException.class)
                 .extracting(ex -> ((GoogleAuthException) ex).getStatus())
                 .isEqualTo(HttpStatus.UNAUTHORIZED);
@@ -82,7 +83,7 @@ class GoogleOAuthClientTest {
                         .body("{\"error\":\"internal_failure\"}")
                         .contentType(MediaType.APPLICATION_JSON));
 
-        assertThatThrownBy(() -> client.exchangeAuthorizationCode("auth-code-123"))
+        assertThatThrownBy(() -> client.exchangeAuthorizationCode("auth-code-123", "verifier-abc"))
                 .isInstanceOf(GoogleAuthUnavailableException.class)
                 .extracting(ex -> ((GoogleAuthUnavailableException) ex).getStatus())
                 .isEqualTo(HttpStatus.BAD_GATEWAY);
@@ -97,7 +98,7 @@ class GoogleOAuthClientTest {
                     throw new SocketTimeoutException("Read timed out");
                 });
 
-        assertThatThrownBy(() -> client.exchangeAuthorizationCode("auth-code-123"))
+        assertThatThrownBy(() -> client.exchangeAuthorizationCode("auth-code-123", "verifier-abc"))
                 .isInstanceOf(GoogleAuthUnavailableException.class)
                 .extracting(ex -> ((GoogleAuthUnavailableException) ex).getStatus())
                 .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
@@ -109,7 +110,7 @@ class GoogleOAuthClientTest {
         server.expect(requestTo(TOKEN_URI))
                 .andRespond(withSuccess("{\"access_token\":\"ya29.x\"}", MediaType.APPLICATION_JSON));
 
-        assertThatThrownBy(() -> client.exchangeAuthorizationCode("auth-code-123"))
+        assertThatThrownBy(() -> client.exchangeAuthorizationCode("auth-code-123", "verifier-abc"))
                 .isInstanceOf(GoogleAuthException.class);
         server.verify();
     }

@@ -33,7 +33,13 @@ import { mockDocuments, mockAISettings } from "./mocks/mockData";
 import { getUserSettings, updateUserSettings } from "./api/userSettings";
 import { loginWithGoogle, logout as logoutApi } from "./api/auth";
 import { getMe } from "./api/me";
-import { OAUTH_CALLBACK_PATH, clearOAuthState, verifyOAuthState } from "./utils/oauth";
+import {
+  OAUTH_CALLBACK_PATH,
+  clearOAuthState,
+  clearOAuthCodeVerifier,
+  getOAuthCodeVerifier,
+  verifyOAuthState,
+} from "./utils/oauth";
 import { listAllFiles } from "./api/files";
 
 const TOKEN_KEY = "aidrive_token";
@@ -132,9 +138,13 @@ export default function App() {
       try {
         if (error) throw new Error(`Google 인증이 거부되었습니다 (${error}).`);
         if (!code) throw new Error("authorization code가 없습니다.");
+        // 기존 동작 유지: state 검증 실패 시 백엔드로 code를 보내지 않는다.
         if (!verifyOAuthState(state)) throw new Error("state 검증에 실패했습니다.");
+        // PKCE: 로그인 시작 시 저장한 code_verifier가 없으면 교환을 진행하지 않는다.
+        const codeVerifier = getOAuthCodeVerifier();
+        if (!codeVerifier) throw new Error("PKCE code_verifier가 없습니다.");
 
-        const result = await loginWithGoogle(code);
+        const result = await loginWithGoogle(code, codeVerifier);
         localStorage.setItem(TOKEN_KEY, result.accessToken);
         localStorage.setItem(REFRESH_TOKEN_KEY, result.refreshToken);
 
@@ -147,8 +157,10 @@ export default function App() {
         clearAuthStorage();
         setUser(null);
       } finally {
-        // state는 1회용으로 폐기하고, 콜백 쿼리스트링을 URL에서 제거해 메인으로 정리한다.
+        // state·code_verifier는 성공/실패와 무관하게 1회용으로 폐기하고,
+        // 콜백 쿼리스트링을 URL에서 제거해 메인으로 정리한다.
         clearOAuthState();
+        clearOAuthCodeVerifier();
         window.history.replaceState({}, "", "/");
         setAuthLoading(false);
       }

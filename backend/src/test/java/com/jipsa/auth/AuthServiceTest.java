@@ -36,6 +36,7 @@ import static org.mockito.Mockito.when;
 class AuthServiceTest {
 
     private static final String AUTH_CODE = "auth-code-abc";
+    private static final String CODE_VERIFIER = "code-verifier-abc";
     private static final String ID_TOKEN = "id-token-xyz";
 
     @Mock
@@ -70,13 +71,13 @@ class AuthServiceTest {
 
     @Test
     void 네_단계를_순서대로_연결하고_각_단계_전달값이_올바르다() {
-        when(googleOAuthClient.exchangeAuthorizationCode(AUTH_CODE)).thenReturn(tokenResponse);
+        when(googleOAuthClient.exchangeAuthorizationCode(AUTH_CODE, CODE_VERIFIER)).thenReturn(tokenResponse);
         when(googleIdTokenValidator.validate(ID_TOKEN)).thenReturn(googleUserInfo);
         when(userService.findOrCreate(googleUserInfo)).thenReturn(findOrCreateResult);
         LoginResult expected = new LoginResult("access-jwt", "refresh-raw", true);
         when(loginTokenService.issueTokens(findOrCreateResult)).thenReturn(expected);
 
-        LoginResult result = authService.loginWithGoogle(AUTH_CODE);
+        LoginResult result = authService.loginWithGoogle(AUTH_CODE, CODE_VERIFIER);
 
         assertThat(result).isSameAs(expected);
 
@@ -84,7 +85,7 @@ class AuthServiceTest {
         InOrder order = inOrder(googleOAuthClient, googleIdTokenValidator, userService, loginTokenService);
         // 전달값 검증: authorizationCode → exchange, idToken → validate,
         //            googleUserInfo → findOrCreate, findOrCreateResult → issueTokens
-        order.verify(googleOAuthClient).exchangeAuthorizationCode(AUTH_CODE);
+        order.verify(googleOAuthClient).exchangeAuthorizationCode(AUTH_CODE, CODE_VERIFIER);
         order.verify(googleIdTokenValidator).validate(ID_TOKEN);
         order.verify(userService).findOrCreate(googleUserInfo);
         order.verify(loginTokenService).issueTokens(findOrCreateResult);
@@ -94,9 +95,9 @@ class AuthServiceTest {
     @Test
     void exchange에서_GoogleAuthException이면_그대로_전파되고_이후단계는_호출되지_않는다() {
         GoogleAuthException original = new GoogleAuthException("Google 토큰 교환에 실패했습니다.");
-        when(googleOAuthClient.exchangeAuthorizationCode(AUTH_CODE)).thenThrow(original);
+        when(googleOAuthClient.exchangeAuthorizationCode(AUTH_CODE, CODE_VERIFIER)).thenThrow(original);
 
-        assertThatThrownBy(() -> authService.loginWithGoogle(AUTH_CODE))
+        assertThatThrownBy(() -> authService.loginWithGoogle(AUTH_CODE, CODE_VERIFIER))
                 .isSameAs(original);
 
         verify(googleIdTokenValidator, never()).validate(org.mockito.ArgumentMatchers.any());
@@ -107,10 +108,10 @@ class AuthServiceTest {
     @Test
     void validate에서_GoogleAuthException이면_그대로_전파된다() {
         GoogleAuthException original = new GoogleAuthException("유효하지 않은 Google id_token입니다.");
-        when(googleOAuthClient.exchangeAuthorizationCode(AUTH_CODE)).thenReturn(tokenResponse);
+        when(googleOAuthClient.exchangeAuthorizationCode(AUTH_CODE, CODE_VERIFIER)).thenReturn(tokenResponse);
         when(googleIdTokenValidator.validate(ID_TOKEN)).thenThrow(original);
 
-        assertThatThrownBy(() -> authService.loginWithGoogle(AUTH_CODE))
+        assertThatThrownBy(() -> authService.loginWithGoogle(AUTH_CODE, CODE_VERIFIER))
                 .isSameAs(original);
 
         verify(userService, never()).findOrCreate(org.mockito.ArgumentMatchers.any());
@@ -120,11 +121,11 @@ class AuthServiceTest {
     @Test
     void findOrCreate에서_AccountLoginBlockedException이면_그대로_전파된다() {
         AccountLoginBlockedException original = new AccountLoginBlockedException("탈퇴 이력이 있는 계정입니다.");
-        when(googleOAuthClient.exchangeAuthorizationCode(AUTH_CODE)).thenReturn(tokenResponse);
+        when(googleOAuthClient.exchangeAuthorizationCode(AUTH_CODE, CODE_VERIFIER)).thenReturn(tokenResponse);
         when(googleIdTokenValidator.validate(ID_TOKEN)).thenReturn(googleUserInfo);
         when(userService.findOrCreate(googleUserInfo)).thenThrow(original);
 
-        assertThatThrownBy(() -> authService.loginWithGoogle(AUTH_CODE))
+        assertThatThrownBy(() -> authService.loginWithGoogle(AUTH_CODE, CODE_VERIFIER))
                 .isSameAs(original);
 
         verify(loginTokenService, never()).issueTokens(org.mockito.ArgumentMatchers.any());
@@ -133,12 +134,12 @@ class AuthServiceTest {
     @Test
     void issueTokens에서_예외가_나면_그대로_전파된다() {
         DataIntegrityViolationException original = new DataIntegrityViolationException("refresh token 저장 실패");
-        when(googleOAuthClient.exchangeAuthorizationCode(AUTH_CODE)).thenReturn(tokenResponse);
+        when(googleOAuthClient.exchangeAuthorizationCode(AUTH_CODE, CODE_VERIFIER)).thenReturn(tokenResponse);
         when(googleIdTokenValidator.validate(ID_TOKEN)).thenReturn(googleUserInfo);
         when(userService.findOrCreate(googleUserInfo)).thenReturn(findOrCreateResult);
         when(loginTokenService.issueTokens(findOrCreateResult)).thenThrow(original);
 
-        assertThatThrownBy(() -> authService.loginWithGoogle(AUTH_CODE))
+        assertThatThrownBy(() -> authService.loginWithGoogle(AUTH_CODE, CODE_VERIFIER))
                 .isSameAs(original);
     }
 
