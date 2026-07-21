@@ -3,10 +3,12 @@ package com.jipsa.admin;
 import com.jipsa.common.CurrentUserProvider;
 import com.jipsa.common.SuccessResponse;
 import jakarta.validation.Valid;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/admin/users")
+@PreAuthorize("hasRole('ADMIN')")
 public class AdminController {
 
     private final AdminService adminService;
