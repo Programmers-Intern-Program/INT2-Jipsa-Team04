@@ -2,6 +2,7 @@ package com.jipsa.admin;
 
 import com.jipsa.auth.JwtService;
 import com.jipsa.common.CurrentUserProvider;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -27,6 +28,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 빈이 로드되지 않는 이 슬라이스에서 검증 대상이 아니다 — 실제 토큰으로 ADMIN=200/USERS=403을
  * 확인하는 건 {@code AdminAuthorizationIntegrationTest} 쪽. 여기서는 요청 검증·응답 매핑·
  * 서비스 예외 → HTTP 상태 매핑만 본다.
+ *
+ * <p>{@link AdminAccessGuard}는 컨트롤러의 {@code @ModelAttribute} 메서드로 모든 요청 전에
+ * 호출되므로(필터 on/off와 무관), 여기서도 빈으로 존재해야 컨텍스트가 뜬다 — 기본값 true로
+ * 스텁해 이 테스트의 관심사(요청 검증·응답 매핑)를 가리지 않게 한다.
  */
 @WebMvcTest(AdminController.class)
 @AutoConfigureMockMvc(addFilters = false)
@@ -46,6 +51,14 @@ class AdminControllerTest {
 
     @MockitoBean
     private JwtService jwtService;
+
+    @MockitoBean
+    private AdminAccessGuard adminAccessGuard;
+
+    @BeforeEach
+    void setUp() {
+        when(adminAccessGuard.isCurrentlyAdmin()).thenReturn(true);
+    }
 
     @Test
     void list_사용자목록과_총개수를반환한다() throws Exception {
