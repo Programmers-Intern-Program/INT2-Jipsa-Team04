@@ -3,6 +3,7 @@ package com.jipsa.file;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -13,6 +14,10 @@ import java.util.Optional;
 public interface FileRepository extends JpaRepository<File, Long> {
 
     Optional<File> findByIdAndDeletedAtIsNull(Long id);
+
+    @Modifying(clearAutomatically = true)
+    @Query("update File f set f.folderId = null where f.folderId in :folderIds")
+    void detachFromFolders(@Param("folderIds") List<Long> folderIds);
 
     Page<File> findByUsersIdAndDeletedAtIsNotNullOrderByDeletedAtDesc(Long userId, Pageable pageable);
 

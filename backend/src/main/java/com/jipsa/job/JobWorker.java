@@ -41,10 +41,19 @@ public class JobWorker {
         List<Long> claimed = jobService.claimBatch(workerId, batchSize, Duration.ofMillis(ownershipTtlMs));
         for (Long jobId : claimed) {
             try {
-                processingService.process(jobId);
+                processingService.process(jobId, workerId);
             } catch (RuntimeException e) {
                 log.error("Unexpected error processing job {}", jobId, e);
             }
+        }
+    }
+
+    @Scheduled(fixedDelayString = "${app.ingest.reap-interval-ms:30000}")
+    public void reap() {
+        try {
+            processingService.reapExpiredExhaustedJobs();
+        } catch (RuntimeException e) {
+            log.error("Unexpected error reaping stuck jobs", e);
         }
     }
 

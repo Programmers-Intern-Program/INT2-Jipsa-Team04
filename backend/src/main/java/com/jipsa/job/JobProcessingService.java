@@ -37,14 +37,23 @@ public class JobProcessingService {
     }
 
     @Transactional
-    public void process(Long jobId) {
+    public void process(Long jobId, String workerId) {
         Job job = jobRepository.findById(jobId).orElse(null);
         if (job == null || job.getJobStatus() != JobStatus.RUNNING) {
             return;
         }
+        if (!workerId.equals(job.getWorkerId())) {
+            return;
+        }
         File file = job.getFileId() == null
                 ? null
-                : fileRepository.findById(job.getFileId()).orElse(null);
+                : fileRepository.findByIdAndDeletedAtIsNull(job.getFileId()).orElse(null);
+        if (job.getFileId() != null && file == null) {
+            job.setJobStatus(JobStatus.CANCELLED);
+            job.setErrorMessage("파일이 삭제되어 인제스트를 취소했습니다.");
+            job.setFinishedAt(LocalDateTime.now());
+            return;
+        }
         try {
             if (file != null) {
                 file.setStatus(FileStatus.PROCESSING);
@@ -85,6 +94,35 @@ public class JobProcessingService {
             }
             log.warn("Job {} attempt {} failed, scheduling retry: {}",
                     job.getId(), job.getAttempts(), message);
+        }
+    }
+
+    @Transactional
+    public void reapExpiredExhaustedJobs() {
+        LocalDateTime now = LocalDateTime.now();
+        for (Long jobId : jobRepository.findExpiredExhaustedIds(now)) {
+            Job job = jobRepository.findById(jobId).orElse(null);
+            if (job == null
+                    || job.getJobStatus() != JobStatus.RUNNING
+                    || job.getOwnershipExpiresAt() == null
+                    || job.getOwnershipExpiresAt().isAfter(now)
+                    || job.getAttempts() < job.getMaxAttempts()) {
+                continue;
+            }
+            String message = "최대 재시도 횟수를 초과한 뒤 소유권이 만료되어 실패 처리했습니다.";
+            job.setJobStatus(JobStatus.FAILED);
+            job.setErrorMessage(message);
+            job.setWorkerId(null);
+            job.setOwnershipExpiresAt(null);
+            job.setFinishedAt(now);
+            if (job.getFileId() != null) {
+                fileRepository.findByIdAndDeletedAtIsNull(job.getFileId()).ifPresent(file -> {
+                    file.setStatus(FileStatus.FAILED);
+                    file.setErrorMessage(message);
+                    file.setProcessingStage(null);
+                });
+            }
+            log.warn("Reaped stuck job {} (file {}) as FAILED", job.getId(), job.getFileId());
         }
     }
 }
