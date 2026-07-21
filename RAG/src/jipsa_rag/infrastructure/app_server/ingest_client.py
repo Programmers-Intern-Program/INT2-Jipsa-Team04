@@ -13,7 +13,10 @@ from jipsa_rag.core.config import Settings
 from jipsa_rag.core.error_codes import ErrorCode
 from jipsa_rag.core.exceptions import AppException
 from jipsa_rag.schemas.file_processing import FileProcessingRequest
-from jipsa_rag.schemas.ingestion import IngestCompleteRequest
+from jipsa_rag.schemas.ingestion import (
+    ChunkSynchronizationRequest,
+    IngestCompleteRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -131,24 +134,53 @@ class ApplicationServerIngestClient:
         *,
         file_idx: int,
         success: bool,
+        index_version: int | None = None,
+        chunks: tuple[ChunkSynchronizationRequest, ...] | None = None,
         error_message: str | None = None,
     ) -> None:
-        """파일 인제스트의 최종 성공 또는 실패 상태를 전달한다."""
+        """파일 인제스트의 최종 상태와 청크 동기화 데이터를 전달한다.
+
+        기존 성공 콜백은 success만 전달할 수 있다.
+
+        청크 동기화 데이터를 전달할 때는 index_version과 chunks를
+        함께 전달해야 하며, chunk_count는 실제 chunks 개수를 기준으로
+        클라이언트가 자동 계산한다.
+
+        실패 콜백에는 청크 데이터가 포함되지 않으며 외부 공개가 가능한
+        error_message만 전달한다.
+        """
 
         self._validate_file_idx(file_idx)
 
+        # 호출자가 list와 같은 변경 가능한 컬렉션을 전달하지 못하도록
+        # 청크 동기화 목록은 불변 tuple 타입으로 고정한다.
+        normalized_chunks = tuple(chunks) if chunks is not None else None
+
         request_body = IngestCompleteRequest(
             success=success,
+            index_version=index_version,
+            # chunk_count를 별도 인자로 받으면 실제 청크 개수와 불일치할 수 있다.
+            #
+            # 따라서 전달할 청크 DTO 목록의 길이를 기준으로 자동 계산한다.
+            chunk_count=(len(normalized_chunks) if normalized_chunks is not None else None),
+            chunks=normalized_chunks,
             error_message=error_message,
         )
 
-        # 성공 콜백은 백엔드 계약에 맞게 {"success": true}만 전송한다.
-        #
-        # 실패 콜백은 error_message가 None이 아니므로
-        # {"success": false, "error_message": "..."}가 전송된다.
-        payload = request_body.model_dump(
-            exclude_none=True,
+        # mode="json"을 사용하면 source_metadata 안의 tuple과 같은
+        # Python 전용 값이 JSON 배열 등 직렬화 가능한 값으로 변환된다.
+        serialized_body = request_body.model_dump(
+            mode="json",
         )
+
+        # exclude_none=True를 model_dump()에 직접 사용하면
+        # 중첩 청크의 token_count=None까지 제거된다.
+        #
+        # 백엔드 계약상 token_count를 계산하지 않은 경우 null을 전달해야 하므로,
+        # 최상위 선택 필드만 제거하고 청크 내부의 null 값은 그대로 유지한다.
+        payload: dict[str, object] = {
+            key: value for key, value in serialized_body.items() if value is not None
+        }
 
         response = await self._request(
             method="POST",
