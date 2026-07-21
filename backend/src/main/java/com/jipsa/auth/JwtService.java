@@ -33,26 +33,35 @@ public class JwtService {
         this.validityMs = validityMs;
     }
 
-    /** Issue a signed token whose subject is the user's id. */
-    public String generateToken(Long userId) {
+    /** Issue a signed token whose subject is the user's id and which carries their role as a claim. */
+    public String generateToken(Long userId, String role) {
         long now = System.currentTimeMillis();
         return Jwts.builder()
                 .subject(String.valueOf(userId))
+                .claim("role", role)
                 .issuedAt(new Date(now))
                 .expiration(new Date(now + validityMs))
                 .signWith(key)
                 .compact();
     }
 
-    /** Verify a token; return the user id if valid, or empty if invalid/expired/tampered. */
-    public Optional<Long> validateAndGetUserId(String token) {
+    /**
+     * Verify a token; return the user id + role if valid, or empty if invalid/expired/tampered.
+     *
+     * <p>The role reflects whatever was true at issue time — it is not re-checked against the
+     * Users table here, so a role change only takes effect once the caller gets a new token
+     * (re-login or refresh).
+     */
+    public Optional<JwtPrincipal> validateAndGetPrincipal(String token) {
         try {
             Claims claims = Jwts.parser()
                     .verifyWith(key)
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
-            return Optional.of(Long.valueOf(claims.getSubject()));
+            Long userId = Long.valueOf(claims.getSubject());
+            String role = claims.get("role", String.class);
+            return Optional.of(new JwtPrincipal(userId, role));
         } catch (JwtException | NumberFormatException e) {
             return Optional.empty();   // bad signature, expired, malformed, etc.
         }
