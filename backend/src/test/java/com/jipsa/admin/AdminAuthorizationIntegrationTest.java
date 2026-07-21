@@ -52,6 +52,16 @@ class AdminAuthorizationIntegrationTest {
     @MockitoBean
     private AdminAccessGuard adminAccessGuard;
 
+    @MockitoBean
+    private com.jipsa.user.UsersRepository usersRepository;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubActiveUser() {
+        com.jipsa.user.Users activeUser = new com.jipsa.user.Users();
+        activeUser.setStatus("ACTIVE");
+        given(usersRepository.findByIdAndDelFalse(ADMIN_ID)).willReturn(java.util.Optional.of(activeUser));
+    }
+
     private String tokenFor(String role) {
         return jwtService.generateToken(ADMIN_ID, role);
     }

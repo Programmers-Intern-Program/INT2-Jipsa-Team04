@@ -2,6 +2,7 @@ package com.jipsa.folder;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.jipsa.file.FileRepository;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -16,9 +17,11 @@ import java.util.stream.Collectors;
 public class FolderService {
 
     private final FolderRepository folderRepository;
+    private final FileRepository fileRepository;
 
-    public FolderService(FolderRepository folderRepository) {
+    public FolderService(FolderRepository folderRepository, FileRepository fileRepository) {
         this.folderRepository = folderRepository;
+        this.fileRepository = fileRepository;
     }
 
     /** GET /api/v1/folders — 본인 소유 전체 평면 목록. */
@@ -100,6 +103,7 @@ public class FolderService {
         // BFS라 항상 부모가 자식보다 앞에 오므로(깊이 비내림차순), 리스트를 뒤집으면 깊이 내림차순이
         // 되어 모든 부모-자식 쌍에서 자식이 부모보다 항상 먼저 삭제된다.
         Collections.reverse(subtreeIds);
+        fileRepository.detachFromFolders(subtreeIds);
         folderRepository.deleteAllById(subtreeIds);
     }
 
