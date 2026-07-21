@@ -34,6 +34,7 @@ import { getUserSettings, updateUserSettings } from "./api/userSettings";
 import { loginWithGoogle, logout as logoutApi } from "./api/auth";
 import { getMe } from "./api/me";
 import { OAUTH_CALLBACK_PATH, clearOAuthState, verifyOAuthState } from "./utils/oauth";
+import { listAllFiles } from "./api/files";
 
 const TOKEN_KEY = "aidrive_token";
 const REFRESH_TOKEN_KEY = "aidrive_refresh_token";
@@ -56,7 +57,6 @@ function clearAuthStorage() {
   localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
 }
-import { listAllFiles } from "./api/files";
 
 function getInitialSelectedDocIds(docs: Document[]): string[] {
   if (docs.length > 2) {
@@ -177,8 +177,6 @@ export default function App() {
     // isCallback도 아니고 토큰도 없으면 authLoading 초기값이 이미 false다.
   }, []);
 
-  // 실제 설정 조회 시도 — 로그인 연동 전(토큰 없음)이면 401로 실패하는 게 정상이고,
-  // 그 경우 위에서 초기화한 mockAISettings를 그대로 유지한다(Folder와 동일 패턴).
   // 실제 설정 조회 시도 — 비로그인 상태면 401로 실패하는 게 정상이고, 그 경우 위에서
   // 초기화한 mockAISettings를 그대로 유지한다(Folder와 동일 패턴).
   useEffect(() => {
