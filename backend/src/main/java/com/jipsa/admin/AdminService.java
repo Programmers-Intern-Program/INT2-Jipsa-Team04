@@ -1,6 +1,5 @@
 package com.jipsa.admin;
 
-import com.jipsa.common.exception.ForbiddenException;
 import com.jipsa.user.Users;
 import com.jipsa.user.UsersRepository;
 import org.springframework.data.domain.Page;
@@ -14,9 +13,10 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 관리자 전용 사용자 관리 (Req.5~12). 모든 메서드는 actingAdminId가 실제 ADMIN인지를
- * 매 호출마다 Users 테이블에서 조회해서 검증한다(requireAdmin) — JWT에 역할을 싣는 방식은
- * 인증 공통 인프라 변경이 필요해 범위를 분리했다.
+ * 관리자 전용 사용자 관리 (Req.5~12). ADMIN 권한 검증은 {@code AdminController}의
+ * {@code @PreAuthorize("hasRole('ADMIN')")}에서 인증 계층으로 처리하고, 여기서는 매 요청마다
+ * 다시 검증하지 않는다. actingAdminId는 자기 자신 대상 조작 차단(requireNotSelf)과
+ * 감사(누가 처리했는지) 기록용으로만 쓰인다.
  */
 @Service
 public class AdminService {
@@ -40,8 +40,6 @@ public class AdminService {
     /** GET /api/v1/admin/users — 전체 사용자 목록(가입일/상태/문서수, 최근로그인은 별도 이슈 전까지 null). */
     @Transactional(readOnly = true)
     public AdminUserListResponse listUsers(Long actingAdminId, Integer page, Integer size) {
-        requireAdmin(actingAdminId);
-
         int pageNumber = (page != null && page > 0) ? page : 0;
         int pageSize = (size != null && size > 0) ? size : DEFAULT_PAGE_SIZE;
         // 정렬은 UsersRepository.findAllWithDocumentCount() JPQL 안에 order by u.createdAt desc로
@@ -58,7 +56,6 @@ public class AdminService {
     /** POST /api/v1/admin/users/{id}/suspend — User_Sanctions 행 생성 + Users.Status를 SUSPENDED로. */
     @Transactional
     public void suspend(Long actingAdminId, Long targetUserId, SuspendUserRequest request) {
-        requireAdmin(actingAdminId);
         requireNotSelf(actingAdminId, targetUserId);
         Users target = requireUser(targetUserId);
 
@@ -86,7 +83,6 @@ public class AdminService {
     /** POST /api/v1/admin/users/{id}/unsuspend — 가장 최근 ACTIVE 제재를 LIFTED로 전환하고 상태를 복원. */
     @Transactional
     public void unsuspend(Long actingAdminId, Long targetUserId, UnsuspendUserRequest request) {
-        requireAdmin(actingAdminId);
         requireNotSelf(actingAdminId, targetUserId);
         Users target = requireUser(targetUserId);
 
@@ -116,7 +112,6 @@ public class AdminService {
     /** DELETE /api/v1/admin/users/{id} — 소프트 삭제(Del=true) + 제재 이력(ACCOUNT_DELETE) 기록. */
     @Transactional
     public void delete(Long actingAdminId, Long targetUserId, DeleteUserRequest request) {
-        requireAdmin(actingAdminId);
         requireNotSelf(actingAdminId, targetUserId);
         Users target = requireUser(targetUserId);
 
@@ -136,7 +131,6 @@ public class AdminService {
     /** GET /api/v1/admin/users/{id}/sanctions — 특정 사용자 제재 이력 전체(최신순). */
     @Transactional(readOnly = true)
     public SanctionListResponse getSanctions(Long actingAdminId, Long targetUserId) {
-        requireAdmin(actingAdminId);
         requireUser(targetUserId); // 대상 사용자 존재 검증
 
         List<SanctionItem> items = userSanctionRepository.findByUsersIdOrderByStartedAtDesc(targetUserId).stream()
@@ -148,7 +142,6 @@ public class AdminService {
     /** PATCH /api/v1/admin/users/{id}/role — 관리자 권한 부여/해제. */
     @Transactional
     public void updateRole(Long actingAdminId, Long targetUserId, UpdateRoleRequest request) {
-        requireAdmin(actingAdminId);
         requireNotSelf(actingAdminId, targetUserId);
         Users target = requireUser(targetUserId);
 
@@ -157,15 +150,6 @@ public class AdminService {
             throw new IllegalArgumentException("role은 ADMIN 또는 USERS만 가능합니다: " + role);
         }
         target.setRole(role);
-    }
-
-    /** actingAdminId가 실제 ADMIN인지 매 호출마다 DB로 검증. 아니면 403. */
-    private void requireAdmin(Long userId) {
-        Users user = usersRepository.findById(userId)
-                .orElseThrow(() -> new ForbiddenException("관리자 권한이 필요합니다."));
-        if (!"ADMIN".equals(user.getRole())) {
-            throw new ForbiddenException("관리자 권한이 필요합니다.");
-        }
     }
 
     /** 자기 자신을 대상으로 한 정지/해제/삭제/권한변경 차단. */

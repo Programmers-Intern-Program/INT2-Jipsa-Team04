@@ -80,9 +80,11 @@ class AuthRefreshIntegrationTest {
 
         AccessTokenResponse response = authService.refreshAccessToken(raw);
 
-        // 새 Access Token: 비어있지 않고, 검증 시 시드한 userId를 돌려준다.
+        // 새 Access Token: 비어있지 않고, 검증 시 시드한 userId와 role(기본값 USERS)을 돌려준다.
         assertThat(response.accessToken()).isNotBlank();
-        assertThat(jwtService.validateAndGetUserId(response.accessToken())).contains(userId);
+        JwtPrincipal principal = jwtService.validateAndGetPrincipal(response.accessToken()).orElseThrow();
+        assertThat(principal.userId()).isEqualTo(userId);
+        assertThat(principal.role()).isEqualTo("USERS");
 
         // Last_Used_At 갱신(커밋됨) — 새 조회로 관측.
         RefreshToken after = refreshTokensRepository.findById(tokenId).orElseThrow();

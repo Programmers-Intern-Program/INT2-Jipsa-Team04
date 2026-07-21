@@ -63,7 +63,7 @@ class AnthropicOrganizeClientManualIT {
         saveFile(userId, "2024년_1월_전기세.pdf", null);
         saveFile(userId, "회사_임대차계약서.pdf", receiptFolder);
 
-        String token = jwtService.generateToken(userId);
+        String token = jwtService.generateToken(userId, "USERS");
 
         MvcResult result = mockMvc.perform(post("/api/v1/organize/propose")
                         .header("Authorization", "Bearer " + token))

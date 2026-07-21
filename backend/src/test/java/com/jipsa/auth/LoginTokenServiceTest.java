@@ -26,18 +26,19 @@ class LoginTokenServiceTest {
     @InjectMocks
     private LoginTokenService loginTokenService;
 
-    private static UserFindOrCreateResult resultWith(long userId, boolean isNewUser) {
+    private static UserFindOrCreateResult resultWith(long userId, boolean isNewUser, String role) {
         Users user = new Users();
         user.setId(userId);
+        user.setRole(role);
         return new UserFindOrCreateResult(user, isNewUser);
     }
 
     @Test
-    void 사용자id로_access와_refresh를_발급하고_isNewUser를_전달한다_신규() {
-        when(jwtService.generateToken(1L)).thenReturn("access-token");
+    void 사용자id와_role로_access와_refresh를_발급하고_isNewUser를_전달한다_신규() {
+        when(jwtService.generateToken(1L, "USERS")).thenReturn("access-token");
         when(refreshTokenService.issue(1L)).thenReturn("refresh-token");
 
-        LoginResult result = loginTokenService.issueTokens(resultWith(1L, true));
+        LoginResult result = loginTokenService.issueTokens(resultWith(1L, true, "USERS"));
 
         assertThat(result.accessToken()).isEqualTo("access-token");
         assertThat(result.refreshToken()).isEqualTo("refresh-token");
@@ -46,13 +47,23 @@ class LoginTokenServiceTest {
 
     @Test
     void 기존_사용자도_동일_경로로_발급하며_isNewUser는_false로_전달된다() {
-        when(jwtService.generateToken(2L)).thenReturn("access-2");
+        when(jwtService.generateToken(2L, "USERS")).thenReturn("access-2");
         when(refreshTokenService.issue(2L)).thenReturn("refresh-2");
 
-        LoginResult result = loginTokenService.issueTokens(resultWith(2L, false));
+        LoginResult result = loginTokenService.issueTokens(resultWith(2L, false, "USERS"));
 
         assertThat(result.accessToken()).isEqualTo("access-2");
         assertThat(result.refreshToken()).isEqualTo("refresh-2");
         assertThat(result.isNewUser()).isFalse();
+    }
+
+    @Test
+    void ADMIN_사용자는_role_ADMIN이_실린_토큰을_발급받는다() {
+        when(jwtService.generateToken(3L, "ADMIN")).thenReturn("access-admin");
+        when(refreshTokenService.issue(3L)).thenReturn("refresh-3");
+
+        LoginResult result = loginTokenService.issueTokens(resultWith(3L, false, "ADMIN"));
+
+        assertThat(result.accessToken()).isEqualTo("access-admin");
     }
 }
