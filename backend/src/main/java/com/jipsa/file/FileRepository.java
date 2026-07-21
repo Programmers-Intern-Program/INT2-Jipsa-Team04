@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 public interface FileRepository extends JpaRepository<File, Long> {
@@ -18,6 +19,9 @@ public interface FileRepository extends JpaRepository<File, Long> {
     @Query("select coalesce(sum(f.sizeBytes), 0) from File f " +
             "where f.usersId = :userId and f.deletedAt is null")
     long sumSizeBytesByUsersId(@Param("userId") Long userId);
+
+    /** 스마트 정리 AI 입력 조립(OrganizeInputAssembler)용 — 본인 소유의 삭제되지 않은 파일 전체. */
+    List<File> findByUsersIdAndDeletedAtIsNull(Long usersId);
 
     @Query("select f from File f where f.usersId = :userId and f.deletedAt is null " +
             "and (:folderId is null or f.folderId = :folderId) " +

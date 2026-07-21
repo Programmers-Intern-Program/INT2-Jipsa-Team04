@@ -28,7 +28,7 @@ import type { Document, AISettings, ChatMessage, ChatSession, SessionUser, MeRes
 
 // mockDocuments: 정적 mock 데이터, 백엔드 API 연동은 별도 이슈에서 처리.
 // mockAISettings: 최초 렌더링용 fallback 초기값일 뿐 — 실제 값은 아래 useEffect가
-// GET /api/v1/users/me/settings로 즉시 덮어쓴다(로그인 연동 전이면 실패하고 이 값 유지).
+// GET /api/v1/users/me/settings로 즉시 덮어쓴다(로그인 안 한 상태면 실패하고 이 값 유지).
 import { mockDocuments, mockAISettings } from "./mocks/mockData";
 import { getUserSettings, updateUserSettings } from "./api/userSettings";
 import { loginWithGoogle, logout as logoutApi } from "./api/auth";
@@ -56,6 +56,7 @@ function clearAuthStorage() {
   localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
 }
+import { listAllFiles } from "./api/files";
 
 function getInitialSelectedDocIds(docs: Document[]): string[] {
   if (docs.length > 2) {
@@ -178,11 +179,25 @@ export default function App() {
 
   // 실제 설정 조회 시도 — 로그인 연동 전(토큰 없음)이면 401로 실패하는 게 정상이고,
   // 그 경우 위에서 초기화한 mockAISettings를 그대로 유지한다(Folder와 동일 패턴).
+  // 실제 설정 조회 시도 — 비로그인 상태면 401로 실패하는 게 정상이고, 그 경우 위에서
+  // 초기화한 mockAISettings를 그대로 유지한다(Folder와 동일 패턴).
   useEffect(() => {
     getUserSettings()
       .then(setCommittedSettings)
       .catch((err) => {
-        console.warn("[settings] GET /api/v1/users/me/settings 실패 - mock 데이터 유지(로그인 연동 전이면 정상):", err);
+        console.warn("[settings] GET /api/v1/users/me/settings 실패 - mock 데이터 유지(비로그인 상태면 정상):", err);
+      });
+  }, []);
+
+  // 실제 문서 목록 조회 시도 — 지금까지는 스마트 정리 적용 등 특정 동작 후에만 documents가
+  // 실제 데이터로 갱신되고, 앱을 처음 열 때는 아무도 실제 목록을 불러오지 않아서 로그인한
+  // 뒤에도 documents가 계속 mockDocuments로 남아있던 문제(폴더 안 파일이 계속 mock으로
+  // 보이던 원인). 비로그인 상태면 401로 실패하는 게 정상이고, 그 경우 mockDocuments 유지.
+  useEffect(() => {
+    listAllFiles()
+      .then(setDocuments)
+      .catch((err) => {
+        console.warn("[files] GET /api/v1/files 실패 - mock 데이터 유지(비로그인 상태면 정상):", err);
       });
   }, []);
 
@@ -294,14 +309,14 @@ export default function App() {
   };
 
   // Save Settings — 로컬 상태 먼저 반영(데모 흐름 유지) 후 실제 API 호출 시도.
-  // 로그인 연동 전(토큰 없음)이면 PATCH가 401로 실패하는 게 정상이며, 그 경우
+  // 비로그인 상태면 PATCH가 401로 실패하는 게 정상이며, 그 경우
   // 로컬 상태만 갱신된 채로 남는다(Folder의 create/delete와 동일한 폴백 패턴).
   const handleSaveSettings = async (newSettings: AISettings) => {
     setCommittedSettings(newSettings);
     try {
       await updateUserSettings(newSettings);
     } catch (err) {
-      console.warn("[settings] PATCH /api/v1/users/me/settings 실패 - 로컬 상태만 갱신됨(로그인 연동 전이면 정상):", err);
+      console.warn("[settings] PATCH /api/v1/users/me/settings 실패 - 로컬 상태만 갱신됨(비로그인 상태면 정상):", err);
     }
   };
 
