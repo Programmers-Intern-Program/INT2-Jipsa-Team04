@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "motion/react";
 import {
   Sparkles,
@@ -15,6 +15,7 @@ import type { Document } from "../types";
 import { formatBytes } from "../utils/formatBytes";
 import { mockFolders } from "../mocks/mockData";
 import { isDescendantOrSelf } from "../utils/folderTree";
+import { listFolders } from "../api/folders";
 
 interface DashboardViewProps {
   documents: Document[];
@@ -25,13 +26,20 @@ interface DashboardViewProps {
 export default function DashboardView({ documents, onNavigateToChat, onNavigateToTab }: DashboardViewProps) {
   const [completedActions, setCompletedActions] = useState<string[]>([]);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const [folders, setFolders] = useState(mockFolders);
+  useEffect(() => {
+    listFolders().then(setFolders).catch(() => {});
+  }, []);
 
-  // Statistics calculation
-  const totalCount = documents.length + 1278; // Add realistic offset for mock scale
-  const financeFolderId = mockFolders.find(f => f.name === "재무 보고서" && f.parentFolderId === null)?.folderId;
-  const privateFolderId = mockFolders.find(f => f.name === "개인 문서" && f.parentFolderId === null)?.folderId;
-  const financeCount = documents.filter(d => financeFolderId !== undefined && d.folderId !== null && isDescendantOrSelf(d.folderId, financeFolderId, mockFolders)).length + 339;
-  const privateCount = documents.filter(d => privateFolderId !== undefined && d.folderId !== null && isDescendantOrSelf(d.folderId, privateFolderId, mockFolders)).length + 154;
+  const totalCount = documents.length;
+  const starredCount = documents.filter(d => d.star).length;
+  const processingCount = documents.filter(d => d.status === "PROCESSING" || d.status === "UPLOADED").length;
+  const rootFolders = folders.filter(f => f.parentFolderId === null);
+  const folderCounts = rootFolders
+      .map(f => ({ name: f.name, count: documents.filter(d => d.folderId !== null && isDescendantOrSelf(d.folderId, f.folderId, folders)).length }))
+      .sort((a, b) => b.count - a.count);
+  const topFolder = folderCounts[0] ?? { name: "미분류", count: documents.filter(d => d.folderId === null).length };
+  const topPercent = totalCount > 0 ? Math.round((topFolder.count / totalCount) * 100) : 0;
 
   const handleRunSummary = (id: string) => {
     setLoadingAction(id);
@@ -86,11 +94,10 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
 
       {/* Bento Grid Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6" id="dashboard-stats-grid">
-        {/* Total Documents Card */}
         <div className="col-span-1 md:col-span-2 bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow" id="card-stat-total">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-outline font-semibold text-label-sm uppercase tracking-wider">최근 AI 분류 문서</p>
+              <p className="text-outline font-semibold text-label-sm uppercase tracking-wider">전체 문서</p>
               <h3 className="text-4xl font-extrabold text-primary mt-2">{totalCount.toLocaleString()} <span className="text-sm font-normal text-outline">건</span></h3>
             </div>
             <div className="p-3 bg-secondary/10 rounded-xl text-secondary">
@@ -99,40 +106,38 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
           </div>
           <div className="mt-6 flex items-center gap-2">
             <span className="text-secondary font-bold flex items-center text-sm bg-secondary/5 px-2 py-0.5 rounded-full">
-              <TrendingUp className="w-4 h-4 inline mr-1" /> 12%
+              <TrendingUp className="w-4 h-4 inline mr-1" /> {processingCount}
             </span>
-            <span className="text-outline text-body-sm">지난 주 대비 자동 분류량 증가</span>
+            <span className="text-outline text-body-sm">건 처리 중</span>
           </div>
         </div>
 
-        {/* Finance Folder Card */}
-        <div className="bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow" id="card-stat-finance">
+        <div className="bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow" id="card-stat-top-folder">
           <div className="flex items-center gap-3 mb-4">
             <span className="p-2 bg-primary/5 text-primary rounded-lg">
               <Folder className="w-5 h-5" />
             </span>
-            <span className="font-semibold text-label-md text-on-surface">재무 보고서</span>
+            <span className="font-semibold text-label-md text-on-surface truncate">{topFolder.name}</span>
           </div>
           <div>
-            <p className="text-3xl font-extrabold text-on-surface">{financeCount}<span className="text-sm font-normal text-outline ml-1">건</span></p>
+            <p className="text-3xl font-extrabold text-on-surface">{topFolder.count}<span className="text-sm font-normal text-outline ml-1">건</span></p>
             <div className="mt-4 w-full bg-surface-container rounded-full h-1.5 overflow-hidden">
-              <div className="bg-primary h-full rounded-full transition-all duration-500" style={{ width: "65%" }}></div>
+              <div className="bg-primary h-full rounded-full transition-all duration-500" style={{ width: `${topPercent}%` }}></div>
             </div>
           </div>
         </div>
 
-        {/* Contract Card */}
-        <div className="bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow" id="card-stat-private">
+        <div className="bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow" id="card-stat-starred">
           <div className="flex items-center gap-3 mb-4">
             <span className="p-2 bg-secondary/5 text-secondary rounded-lg">
               <FileText className="w-5 h-5" />
             </span>
-            <span className="font-semibold text-label-md text-on-surface">개인 및 서명 계약</span>
+            <span className="font-semibold text-label-md text-on-surface">중요 문서</span>
           </div>
           <div>
-            <p className="text-3xl font-extrabold text-on-surface">{privateCount}<span className="text-sm font-normal text-outline ml-1">건</span></p>
+            <p className="text-3xl font-extrabold text-on-surface">{starredCount}<span className="text-sm font-normal text-outline ml-1">건</span></p>
             <div className="mt-4 w-full bg-surface-container rounded-full h-1.5 overflow-hidden">
-              <div className="bg-secondary h-full rounded-full transition-all duration-500" style={{ width: "40%" }}></div>
+              <div className="bg-secondary h-full rounded-full transition-all duration-500" style={{ width: `${totalCount > 0 ? Math.round((starredCount / totalCount) * 100) : 0}%` }}></div>
             </div>
           </div>
         </div>

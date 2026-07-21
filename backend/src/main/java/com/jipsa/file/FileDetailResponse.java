@@ -12,7 +12,6 @@ public record FileDetailResponse(
         boolean star,
         String summary,
         List<String> tags,
-        String docType,
         Entities entities,
         LocalDateTime modifiedAt,
         FileStatus status,

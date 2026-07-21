@@ -8,12 +8,12 @@ import {
   ChevronDown, 
   Zap
 } from "lucide-react";
-import type { AISettings } from "../types";
+import type { AISettings, SessionUser } from "../types";
 import { getStorageUsage } from "../api/files";
 import { formatBytes } from "../utils/formatBytes";
 
 interface SettingsViewProps {
-  user: { name: string; email: string; role: string } | null;
+  user: SessionUser | null;
   committedSettings: AISettings;
   onSaveSettings: (settings: AISettings) => Promise<void>;
 }
@@ -32,7 +32,7 @@ export default function SettingsView({ user, committedSettings, onSaveSettings }
     getStorageUsage()
         .then(setStorage)
         .catch((err) => {
-          console.warn("[files] GET /api/v1/files/storage 실패 - 사용량 표시 보류(로그인 연동 전이면 정상):", err);
+          console.warn("[files] GET /api/v1/files/storage 실패 - 사용량 표시 보류(비로그인 상태면 정상):", err);
           setStorage(null);
         });
   }, []);

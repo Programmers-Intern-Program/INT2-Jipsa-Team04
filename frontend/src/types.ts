@@ -1,5 +1,48 @@
 // 필드명은 API 문서.md (GET /api/v1/files/{id}, GET /api/v1/users/me/settings) 기준으로 정렬.
 
+/**
+ * 공통 응답 envelope. auth/users me 등 백엔드가 ApiResponse로 감싸 내려주는 엔드포인트용.
+ * 공용 apiFetch는 이 envelope를 raw로 반환하므로, 호출부(api/auth.ts, api/me.ts)에서
+ * .data를 직접 언랩한다. (기존 folders/files/admin/settings 모듈은 raw 응답이라 건드리지 않는다.)
+ */
+export interface ApiEnvelope<T> {
+  success: boolean;
+  data: T;
+  error: { code: string; message: string } | null;
+}
+
+/** POST /api/v1/auth/oauth/google 응답 data. 백엔드 LoginResult와 1:1. */
+export interface LoginResult {
+  accessToken: string;
+  refreshToken: string;
+  isNewUser: boolean;
+}
+
+/**
+ * GET /api/v1/users/me 응답 data. 백엔드 MeResponse와 1:1.
+ * role 기본값은 백엔드 DDL 기준 "USERS"(단수 "USER" 아님). email 필드는 백엔드 응답에 없다.
+ */
+export interface MeResponse {
+  userId: number;
+  name: string;
+  profileImageUrl: string | null;
+  role: "USERS" | "ADMIN";
+  status: "ACTIVE" | "LOCKED" | "SUSPENDED" | "WITHDRAWN";
+}
+
+/**
+ * 프론트 세션 사용자. GET /users/me(MeResponse) 기반.
+ * email은 백엔드가 내려주지 않으므로 optional이며, 현재는 항상 비어 있다(표시부는 "" 폴백).
+ */
+export interface SessionUser {
+  name: string;
+  role: string;
+  email?: string;
+  userId?: number;
+  profileImageUrl?: string | null;
+  status?: string;
+}
+
 /** GET /api/v1/folders 응답의 폴더 트리 노드. Parent_Folder_IDX 기반 평면 목록, 프론트에서 트리로 조립. */
 export interface Folder {
   folderId: number;
@@ -71,6 +114,47 @@ export interface ChatSession {
   title: string;
   chatHistory: ChatMessage[];
   selectedDocIds: string[];
+}
+
+/** GET /api/v1/organize/current-tree, propose/apply 공용 폴더 트리 노드. backend FolderTreeNode와 1:1. */
+export interface OrganizeFolderTreeNode {
+  folderId: number;
+  name: string;
+  children: OrganizeFolderTreeNode[];
+}
+
+/**
+ * AI가 제안한, 아직 실제로 존재하지 않는 새 폴더. backend ProposedFolder와 1:1.
+ * parentTempId/parentFolderId는 동시에 채워지지 않음(정확히 하나만 사용).
+ */
+export interface ProposedFolder {
+  tempId: string;
+  name: string;
+  parentTempId: string | null;
+  parentFolderId: number | null;
+}
+
+/**
+ * 파일 하나를 어디로 옮기고 어떤 이름으로 바꿀지에 대한 AI 제안. backend FileMapping과 1:1.
+ * targetFolderId/targetTempId 동시 사용 불가, 둘 다 null이면 루트로 이동.
+ */
+export interface FileMapping {
+  fileId: number;
+  targetFolderId: number | null;
+  targetTempId: string | null;
+  newName: string | null;
+}
+
+/** POST /api/v1/organize/propose 응답, POST /api/v1/organize/apply 요청 바디. backend OrganizeProposal과 1:1. */
+export interface OrganizeProposal {
+  newFolders: ProposedFolder[];
+  mappings: FileMapping[];
+  /**
+   * apply 요청에만 실어 보내는 재시도 방지용 키(propose 응답엔 없음, undefined).
+   * 같은 승인 동작을 재시도할 때 항상 같은 값을 보내야 서버가 중복 반영을 막을 수 있다 —
+   * handleApplyOrganization에서 제안을 받을 때 한 번만 생성해 organizeResult에 붙여둔다.
+   */
+  idempotencyKey?: string;
 }
 
 /** GET /api/v1/admin/users 목록 항목. 필드명은 backend AdminUserListItem과 1:1. */

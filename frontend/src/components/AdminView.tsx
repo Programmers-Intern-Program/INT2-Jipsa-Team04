@@ -48,7 +48,7 @@ export default function AdminView() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // GET /api/v1/users/me 응답엔 userId가 없어(API 문서.md 1장) JWT sub 클레임에서 직접 뽑아온다.
-  // 로그인 연동 전(토큰 없음)이면 null — 이 경우 "본인" 판별 없이 버튼이 전부 노출되지만,
+  // 비로그인 상태(토큰 없음)면 null — 이 경우 "본인" 판별 없이 버튼이 전부 노출되지만,
   // 자기 자신 대상 요청은 어차피 백엔드가 최종적으로 400(SELF_TARGET_NOT_ALLOWED)으로 막는다.
   const currentUserId = getCurrentUserId();
 

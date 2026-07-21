@@ -29,6 +29,9 @@ dependencies {
 	// Verifying Google OAuth id_tokens only — NOT spring-security oauth2Login().
 	implementation 'com.google.api-client:google-api-client:2.9.0'
 	implementation 'com.anthropic:anthropic-java:2.48.0'
+	// AnthropicConfig의 전용 ObjectMapper(Jackson 2, tools.jackson과 별도)가 OrganizeFileInput.uploadedAt
+	// (LocalDateTime)을 직렬화할 때 필요 — 없으면 InvalidDefinitionException으로 /organize/propose가 500.
+	implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
 	implementation platform('software.amazon.awssdk:bom:2.47.5')
 	implementation 'software.amazon.awssdk:s3'
 	runtimeOnly 'com.mysql:mysql-connector-j'
