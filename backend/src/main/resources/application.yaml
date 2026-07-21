@@ -38,6 +38,11 @@ app:
     reap-interval-ms: 30000
   storage:
     quota-bytes: 107374182400
+  upload:
+    reconcile:
+      enabled: true
+      interval-ms: 300000
+      stale-ms: 900000
   internal:
     presign-ttl-seconds: 900
     token: ${INTERNAL_TOKEN:}

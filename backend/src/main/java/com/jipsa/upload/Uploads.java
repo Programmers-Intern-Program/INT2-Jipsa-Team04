@@ -36,4 +36,7 @@ public class Uploads {
 
     @Column(name = "Finished_At")
     private LocalDateTime finishedAt;
+
+    @Column(name = "Idempotency_Key", length = 255)
+    private String idempotencyKey;
 }

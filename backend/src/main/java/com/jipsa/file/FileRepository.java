@@ -15,6 +15,11 @@ public interface FileRepository extends JpaRepository<File, Long> {
 
     Optional<File> findByIdAndDeletedAtIsNull(Long id);
 
+    @Query("select f.id from File f where f.uploadsId = :uploadsId order by f.id")
+    List<Long> findIdsByUploadsId(@Param("uploadsId") Long uploadsId);
+
+    List<File> findByUploadsId(Long uploadsId);
+
     @Modifying(clearAutomatically = true)
     @Query("update File f set f.folderId = null where f.folderId in :folderIds")
     void detachFromFolders(@Param("folderIds") List<Long> folderIds);
