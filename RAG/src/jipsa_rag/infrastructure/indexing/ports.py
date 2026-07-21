@@ -1,5 +1,6 @@
 """파일 색인 서비스가 의존하는 저장소 인터페이스를 정의한다."""
 
+from contextlib import AbstractAsyncContextManager
 from typing import Protocol
 
 from jipsa_rag.infrastructure.embedding.models import EmbeddedDocument
@@ -7,6 +8,19 @@ from jipsa_rag.infrastructure.indexing.models import (
     DocumentIndexMetadata,
     PreparedLocalIndex,
 )
+
+
+class FileIndexLock(Protocol):
+    """동일 File_IDX 색인의 임계 구역을 직렬화하는 lock 인터페이스."""
+
+    def hold(
+        self,
+        *,
+        file_idx: int,
+    ) -> AbstractAsyncContextManager[None]:
+        """지정한 파일의 색인 lock을 보유하는 비동기 context를 반환한다."""
+
+        ...
 
 
 class LocalIndexRepository(Protocol):

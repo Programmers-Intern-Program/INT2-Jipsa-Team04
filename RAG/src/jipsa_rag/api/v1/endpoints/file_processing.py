@@ -16,7 +16,7 @@ from jipsa_rag.infrastructure.chunking.exceptions import (
     NoDocumentChunksError,
 )
 from jipsa_rag.infrastructure.chunking.models import ChunkingContext
-from jipsa_rag.infrastructure.database.session import get_db_session
+from jipsa_rag.infrastructure.database.session import engine, get_db_session
 from jipsa_rag.infrastructure.document.exceptions import (
     DocumentFileNotFoundError,
     DocumentParserError,
@@ -41,6 +41,9 @@ from jipsa_rag.infrastructure.embedding.tei import TeiChunkEmbedder
 from jipsa_rag.infrastructure.file.downloader import (
     HttpFileDownloader,
 )
+from jipsa_rag.infrastructure.indexing.concurrent_repository import (
+    ConcurrentSafeLocalRagIndexRepository,
+)
 from jipsa_rag.infrastructure.indexing.exceptions import (
     LocalRagStorageError,
     VectorCollectionConfigurationError,
@@ -48,8 +51,8 @@ from jipsa_rag.infrastructure.indexing.exceptions import (
     VectorDatabaseRejectedError,
     VectorDatabaseUnavailableError,
 )
-from jipsa_rag.infrastructure.indexing.local_repository import (
-    LocalRagIndexRepository,
+from jipsa_rag.infrastructure.indexing.file_lock import (
+    MySqlAdvisoryFileIndexLock,
 )
 from jipsa_rag.infrastructure.indexing.models import DocumentIndexMetadata
 from jipsa_rag.infrastructure.indexing.qdrant_store import (
@@ -185,19 +188,37 @@ QdrantVectorStoreDependency = Annotated[
 ]
 
 
+def get_file_index_lock() -> MySqlAdvisoryFileIndexLock:
+    """프로세스 간에 공유되는 File_IDX별 MySQL advisory lock을 생성한다."""
+
+    return MySqlAdvisoryFileIndexLock(engine)
+
+
+# 파일 lock은 Qdrant와 별개로 Local RAG MySQL 연결을 사용한다.
+#
+# 같은 file_idx 요청은 하나의 실행이 DB와 Qdrant 상태 확정 및 보상 처리를
+# 끝낼 때까지 다음 실행이 prepare_indexing()에 진입하지 못하도록 직렬화한다.
+FileIndexLockDependency = Annotated[
+    MySqlAdvisoryFileIndexLock,
+    Depends(get_file_index_lock),
+]
+
+
 def get_file_indexing_service(
     database_session: DatabaseSessionDependency,
     vector_store: QdrantVectorStoreDependency,
+    file_lock: FileIndexLockDependency,
 ) -> FileIndexingService:
-    """Local RAG DB와 Qdrant 저장을 조정하는 파일 색인 서비스를 생성한다."""
+    """소유권 검증 저장소와 파일 lock이 적용된 색인 서비스를 생성한다."""
 
     return FileIndexingService(
-        local_repository=LocalRagIndexRepository(database_session),
+        local_repository=(ConcurrentSafeLocalRagIndexRepository(database_session)),
         vector_store=vector_store,
+        file_lock=file_lock,
     )
 
 
-# API 테스트에서는 이 의존성을 Stub으로 교체하여
+# API 테스트에서는 이 의존성을 교체하여
 # 실제 Local RAG DB와 Qdrant 없이 저장 단계 연결을 검증한다.
 FileIndexingServiceDependency = Annotated[
     FileIndexingService,
@@ -564,10 +585,11 @@ async def process_file_processing_request(
 
         # 색인 서비스는 다음 작업이 모두 완료된 뒤 결과를 반환한다.
         #
-        # 1. Local RAG DB에 신규 문서와 청크를 준비하거나 기존 정상 문서를 재사용
-        # 2. Qdrant에 신규 Point를 비활성 staging 상태로 저장
-        # 3. 신규 Point 활성화 및 이전 정상 Point 비활성화
-        # 4. Local RAG DB 문서 상태를 INDEXED로 확정하고 이전 문서를 soft delete
+        # 1. File_IDX별 advisory lock으로 동일 파일의 저장 실행 직렬화
+        # 2. Local RAG DB에 신규 문서와 청크를 준비하거나 기존 정상 문서를 재사용
+        # 3. Qdrant에 신규 Point를 비활성 staging 상태로 저장
+        # 4. 신규 Point 활성화 및 이전 정상 Point 비활성화
+        # 5. 최신 실행만 Local RAG 상태를 INDEXED로 확정하고 이전 문서를 soft delete
         #
         # 외부 응답에는 청크 원문, 계산된 파일 해시 또는 임베딩 벡터를
         # 포함하지 않고 처리 상태와 생성된 청크 수만 제공한다.
