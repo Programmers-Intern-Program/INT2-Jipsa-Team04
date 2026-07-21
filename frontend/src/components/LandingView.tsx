@@ -1,9 +1,6 @@
 import { useState } from "react";
-import { HardDrive, ShieldCheck, Sparkles, FolderTree, MessageSquareText } from "lucide-react";
-
-interface LandingViewProps {
-  onLogin: (user: { name: string; email: string; role: string }) => void;
-}
+import { HardDrive, ShieldCheck, Sparkles, FolderTree, MessageSquareText, AlertTriangle } from "lucide-react";
+import { buildGoogleAuthorizeUrl, createOAuthState, isOAuthConfigured } from "../utils/oauth";
 
 // Google 브랜드 마크 (lucide-react엔 브랜드 로고가 없어 인라인 SVG 사용)
 function GoogleIcon() {
@@ -17,20 +14,24 @@ function GoogleIcon() {
   );
 }
 
-export default function LandingView({ onLogin }: LandingViewProps) {
+export default function LandingView() {
   const [isLoading, setIsLoading] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
 
-  // 구글 OAuth 연동은 별도 이슈에서 처리. 지금은 mock 로그인으로 대체.
+  // 실제 Google OAuth authorization-code 흐름 시작:
+  // state를 만들어 sessionStorage에 저장한 뒤 Google authorize URL로 전체 페이지 이동한다.
+  // 복귀(/oauth/callback) 이후의 code 교환·토큰 저장·사용자 조회는 App.tsx가 담당한다.
   const handleGoogleStart = () => {
+    if (!isOAuthConfigured()) {
+      setConfigError(
+        "Google 로그인 설정이 없습니다. frontend/.env.local 에 VITE_GOOGLE_CLIENT_ID 를 설정한 뒤 dev 서버를 다시 시작하세요."
+      );
+      return;
+    }
+    setConfigError(null);
     setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      onLogin({
-        name: "홍길동",
-        email: "guest@aidrive.ai",
-        role: "Premium Plan"
-      });
-    }, 800);
+    const state = createOAuthState();
+    window.location.href = buildGoogleAuthorizeUrl(state);
   };
 
   return (
@@ -97,6 +98,18 @@ export default function LandingView({ onLogin }: LandingViewProps) {
             {isLoading ? "로그인 중..." : "Google로 시작하기"}
           </button>
         </div>
+
+        {/* 설정 누락 에러 (VITE_GOOGLE_CLIENT_ID 미설정 시) */}
+        {configError && (
+          <div
+            className="mt-6 mx-auto max-w-xl flex items-start gap-2.5 text-left bg-rose-50 border border-rose-200 text-rose-700 rounded-xl px-4 py-3"
+            id="landing-config-error"
+            role="alert"
+          >
+            <AlertTriangle className="w-4.5 h-4.5 shrink-0 mt-0.5" />
+            <p className="text-xs leading-relaxed font-medium">{configError}</p>
+          </div>
+        )}
 
         {/* Core features */}
         <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-4 text-left">

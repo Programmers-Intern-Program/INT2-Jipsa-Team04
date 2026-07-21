@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Sparkles,
@@ -24,13 +24,38 @@ import LandingView from "./components/LandingView";
 import AdminView from "./components/AdminView";
 
 // Import types
-import type { Document, AISettings, ChatMessage, ChatSession } from "./types";
+import type { Document, AISettings, ChatMessage, ChatSession, SessionUser, MeResponse } from "./types";
 
 // mockDocuments: 정적 mock 데이터, 백엔드 API 연동은 별도 이슈에서 처리.
 // mockAISettings: 최초 렌더링용 fallback 초기값일 뿐 — 실제 값은 아래 useEffect가
 // GET /api/v1/users/me/settings로 즉시 덮어쓴다(로그인 안 한 상태면 실패하고 이 값 유지).
 import { mockDocuments, mockAISettings } from "./mocks/mockData";
 import { getUserSettings, updateUserSettings } from "./api/userSettings";
+import { loginWithGoogle, logout as logoutApi } from "./api/auth";
+import { getMe } from "./api/me";
+import { OAUTH_CALLBACK_PATH, clearOAuthState, verifyOAuthState } from "./utils/oauth";
+
+const TOKEN_KEY = "aidrive_token";
+const REFRESH_TOKEN_KEY = "aidrive_refresh_token";
+const USER_KEY = "aidrive_user";
+
+/** MeResponse(백엔드) → 프론트 세션 사용자. email은 백엔드가 주지 않아 담지 않는다. */
+function toSessionUser(me: MeResponse): SessionUser {
+  return {
+    name: me.name,
+    role: me.role,
+    userId: me.userId,
+    profileImageUrl: me.profileImageUrl,
+    status: me.status,
+  };
+}
+
+/** 로그인 관련 localStorage 정리(토큰·리프레시·사용자). */
+function clearAuthStorage() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
 import { listAllFiles } from "./api/files";
 
 function getInitialSelectedDocIds(docs: Document[]): string[] {
@@ -54,10 +79,26 @@ function createChatSession(selectedDocIds: string[] = [], title?: string): ChatS
 }
 
 export default function App() {
-  const [user, setUser] = useState<{ name: string; email: string; role: string } | null>(() => {
-    const saved = localStorage.getItem("aidrive_user");
-    return saved ? JSON.parse(saved) : null;
+  const [user, setUser] = useState<SessionUser | null>(() => {
+    // 토큰 없이 저장된 사용자(예: 예전 mock 로그인 찌꺼기)는 복원하지 않는다.
+    // aidrive_token이 있어야만 aidrive_user를 신뢰하고, 없으면 랜딩으로 보낸다.
+    if (!localStorage.getItem(TOKEN_KEY)) return null;
+
+    const saved = localStorage.getItem(USER_KEY);
+    if (!saved) return null;
+    try {
+      return JSON.parse(saved) as SessionUser;
+    } catch {
+      // aidrive_user가 깨져 있어도 첫 렌더에서 크래시하지 않도록 제거하고 로그아웃 상태로 시작한다.
+      localStorage.removeItem(USER_KEY);
+      return null;
+    }
   });
+  // OAuth 콜백 처리 중이거나(=/oauth/callback), 저장된 토큰으로 세션 복원 중일 때 true.
+  // 이 동안에는 랜딩/메인 대신 로딩 화면을 보여줘 깜빡임을 막는다.
+  const [authLoading, setAuthLoading] = useState<boolean>(
+    () => window.location.pathname === OAUTH_CALLBACK_PATH || localStorage.getItem(TOKEN_KEY) !== null
+  );
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [documents, setDocuments] = useState<Document[]>(mockDocuments);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>(() => [
@@ -69,6 +110,75 @@ export default function App() {
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
 
+  // StrictMode(dev)에서 아래 useEffect가 2번 실행돼 같은 authorization code가 두 번
+  // 교환(POST /auth/oauth/google)되는 것을 막는다. ref는 StrictMode의 mount→cleanup→mount
+  // 재실행 사이에도 같은 컴포넌트 인스턴스에서 유지되므로 최초 1회만 처리된다.
+  const authInitialized = useRef(false);
+
+  // 로그인 상태 초기화(앱 mount 1회):
+  //  (1) /oauth/callback로 복귀한 경우 → code/state 검증 후 토큰 교환·사용자 조회
+  //  (2) 이미 토큰이 있는 경우 → getMe로 세션 복원(실패 시 토큰·사용자 정리)
+  useEffect(() => {
+    if (authInitialized.current) return;
+    authInitialized.current = true;
+
+    const isCallback = window.location.pathname === OAUTH_CALLBACK_PATH;
+
+    async function handleOAuthCallback() {
+      const params = new URLSearchParams(window.location.search);
+      const error = params.get("error");
+      const code = params.get("code");
+      const state = params.get("state");
+      try {
+        if (error) throw new Error(`Google 인증이 거부되었습니다 (${error}).`);
+        if (!code) throw new Error("authorization code가 없습니다.");
+        if (!verifyOAuthState(state)) throw new Error("state 검증에 실패했습니다.");
+
+        const result = await loginWithGoogle(code);
+        localStorage.setItem(TOKEN_KEY, result.accessToken);
+        localStorage.setItem(REFRESH_TOKEN_KEY, result.refreshToken);
+
+        const me = await getMe();
+        const sessionUser = toSessionUser(me);
+        localStorage.setItem(USER_KEY, JSON.stringify(sessionUser));
+        setUser(sessionUser);
+      } catch (err) {
+        console.warn("[auth] OAuth 콜백 처리 실패 - 로그인 상태를 초기화합니다:", err);
+        clearAuthStorage();
+        setUser(null);
+      } finally {
+        // state는 1회용으로 폐기하고, 콜백 쿼리스트링을 URL에서 제거해 메인으로 정리한다.
+        clearOAuthState();
+        window.history.replaceState({}, "", "/");
+        setAuthLoading(false);
+      }
+    }
+
+    async function restoreSession() {
+      try {
+        const me = await getMe();
+        const sessionUser = toSessionUser(me);
+        localStorage.setItem(USER_KEY, JSON.stringify(sessionUser));
+        setUser(sessionUser);
+      } catch (err) {
+        console.warn("[auth] 세션 복원 실패 - 토큰이 만료/무효하여 로그아웃 처리합니다:", err);
+        clearAuthStorage();
+        setUser(null);
+      } finally {
+        setAuthLoading(false);
+      }
+    }
+
+    if (isCallback) {
+      handleOAuthCallback();
+    } else if (localStorage.getItem(TOKEN_KEY)) {
+      restoreSession();
+    }
+    // isCallback도 아니고 토큰도 없으면 authLoading 초기값이 이미 false다.
+  }, []);
+
+  // 실제 설정 조회 시도 — 로그인 연동 전(토큰 없음)이면 401로 실패하는 게 정상이고,
+  // 그 경우 위에서 초기화한 mockAISettings를 그대로 유지한다(Folder와 동일 패턴).
   // 실제 설정 조회 시도 — 비로그인 상태면 401로 실패하는 게 정상이고, 그 경우 위에서
   // 초기화한 mockAISettings를 그대로 유지한다(Folder와 동일 패턴).
   useEffect(() => {
@@ -90,6 +200,21 @@ export default function App() {
         console.warn("[files] GET /api/v1/files 실패 - mock 데이터 유지(비로그인 상태면 정상):", err);
       });
   }, []);
+
+  // 로그아웃: 가능하면 refresh token 폐기 API를 호출하고(실패해도 무시),
+  // 항상 localStorage(토큰·리프레시·사용자)를 정리한 뒤 랜딩으로 돌아간다.
+  const handleLogout = async () => {
+    const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+    if (refreshToken) {
+      try {
+        await logoutApi(refreshToken);
+      } catch (err) {
+        console.warn("[auth] 로그아웃 API 실패 - 로컬 세션만 정리합니다:", err);
+      }
+    }
+    clearAuthStorage();
+    setUser(null);
+  };
 
   // Sync global search into documents tab
   const handleGlobalSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -238,15 +363,24 @@ export default function App() {
     setIsUploadOpen(true);
   };
 
-  if (!user) {
+  // OAuth 콜백 처리/세션 복원 중에는 로딩 화면(랜딩·메인 깜빡임 방지).
+  if (authLoading) {
     return (
-      <LandingView
-        onLogin={(userInfo) => {
-          localStorage.setItem("aidrive_user", JSON.stringify(userInfo));
-          setUser(userInfo);
-        }}
-      />
+      <div className="min-h-screen bg-surface-bright flex flex-col items-center justify-center gap-4 font-sans">
+        <div className="w-12 h-12 bg-primary rounded-xl flex items-center justify-center text-white shadow-md shadow-primary/20">
+          <HardDrive className="w-6 h-6" />
+        </div>
+        <svg className="animate-spin h-6 w-6 text-primary" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+        </svg>
+        <p className="text-body-sm text-outline font-medium">로그인 처리 중...</p>
+      </div>
     );
+  }
+
+  if (!user) {
+    return <LandingView />;
   }
 
   return (
@@ -328,9 +462,8 @@ export default function App() {
             설정
           </button>
 
-          {/* role이 ADMIN일 때만 노출 (Req.5~12). 지금은 로그인이 mock이라 role이 항상
-              고정값이라 실제로 보이려면 로컬에서 role을 "ADMIN"으로 바꿔 테스트해야 한다 —
-              실 OAuth+role 연동은 별도 이슈. */}
+          {/* role이 ADMIN일 때만 노출 (Req.5~12). role은 GET /users/me의 실제 값("USERS" 또는
+              "ADMIN")이다. 관리자 메뉴를 보려면 해당 계정의 DB Role이 ADMIN이어야 한다. */}
           {user?.role === "ADMIN" && (
             <button
               onClick={() => setActiveTab("admin")}
@@ -357,10 +490,7 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => {
-              localStorage.removeItem("aidrive_user");
-              setUser(null);
-            }}
+            onClick={handleLogout}
             className="w-full flex items-center gap-3 px-4 py-3 text-rose-500 hover:bg-rose-50 rounded-xl transition-all cursor-pointer font-semibold text-body-sm"
           >
             <LogOut className="w-5 h-5" />
@@ -412,7 +542,7 @@ export default function App() {
             <div className="flex items-center gap-3 pl-1" id="user-info-badge">
               <div className="text-right">
                 <p className="font-bold text-label-md text-on-surface leading-none">{user?.name || "사용자"}님</p>
-                <p className="text-[10px] text-outline font-extrabold uppercase mt-1 tracking-wider">{user?.role || "Premium Plan"}</p>
+                <p className="text-[10px] text-outline font-extrabold uppercase mt-1 tracking-wider">{user?.role || "USERS"}</p>
               </div>
             </div>
           </div>

@@ -1,5 +1,48 @@
 // 필드명은 API 문서.md (GET /api/v1/files/{id}, GET /api/v1/users/me/settings) 기준으로 정렬.
 
+/**
+ * 공통 응답 envelope. auth/users me 등 백엔드가 ApiResponse로 감싸 내려주는 엔드포인트용.
+ * 공용 apiFetch는 이 envelope를 raw로 반환하므로, 호출부(api/auth.ts, api/me.ts)에서
+ * .data를 직접 언랩한다. (기존 folders/files/admin/settings 모듈은 raw 응답이라 건드리지 않는다.)
+ */
+export interface ApiEnvelope<T> {
+  success: boolean;
+  data: T;
+  error: { code: string; message: string } | null;
+}
+
+/** POST /api/v1/auth/oauth/google 응답 data. 백엔드 LoginResult와 1:1. */
+export interface LoginResult {
+  accessToken: string;
+  refreshToken: string;
+  isNewUser: boolean;
+}
+
+/**
+ * GET /api/v1/users/me 응답 data. 백엔드 MeResponse와 1:1.
+ * role 기본값은 백엔드 DDL 기준 "USERS"(단수 "USER" 아님). email 필드는 백엔드 응답에 없다.
+ */
+export interface MeResponse {
+  userId: number;
+  name: string;
+  profileImageUrl: string | null;
+  role: "USERS" | "ADMIN";
+  status: "ACTIVE" | "LOCKED" | "SUSPENDED" | "WITHDRAWN";
+}
+
+/**
+ * 프론트 세션 사용자. GET /users/me(MeResponse) 기반.
+ * email은 백엔드가 내려주지 않으므로 optional이며, 현재는 항상 비어 있다(표시부는 "" 폴백).
+ */
+export interface SessionUser {
+  name: string;
+  role: string;
+  email?: string;
+  userId?: number;
+  profileImageUrl?: string | null;
+  status?: string;
+}
+
 /** GET /api/v1/folders 응답의 폴더 트리 노드. Parent_Folder_IDX 기반 평면 목록, 프론트에서 트리로 조립. */
 export interface Folder {
   folderId: number;
