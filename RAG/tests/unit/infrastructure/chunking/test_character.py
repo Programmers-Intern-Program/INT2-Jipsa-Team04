@@ -27,6 +27,7 @@ EMBEDDING_MODEL = "test/embedding-model"
 
 def _create_context(
     *,
+    file_hash: str = FILE_HASH,
     parser_version: str = PARSER_VERSION,
     embedding_model: str = EMBEDDING_MODEL,
     index_version: int = 1,
@@ -36,7 +37,7 @@ def _create_context(
     return ChunkingContext(
         users_idx=1,
         file_idx=10,
-        file_hash=FILE_HASH,
+        file_hash=file_hash,
         parser_version=parser_version,
         embedding_model=embedding_model,
         index_version=index_version,
@@ -136,6 +137,42 @@ async def test_chunker_changes_chunk_id_when_embedding_model_changes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_chunker_changes_chunk_id_when_file_content_changes() -> None:
+    """원본 파일 내용이 변경되면 추출 텍스트가 같아도 다른 UUID를 생성한다."""
+
+    # 문서 바이너리의 메타데이터만 변경되거나 파서가 동일한 텍스트를
+    # 추출하는 경우에도 원본 파일 SHA-256이 달라지면 별도 색인으로
+    # 처리되어야 한다.
+    first_file_hash = hashlib.sha256(b"test-pdf-file-version-1").hexdigest()
+    second_file_hash = hashlib.sha256(b"test-pdf-file-version-2").hexdigest()
+
+    parsed_document = _create_single_unit_document("The extracted text remains unchanged.")
+    chunker = CharacterTextChunker(
+        chunk_size_chars=100,
+        chunk_overlap_chars=10,
+    )
+
+    first_result = await chunker.chunk(
+        document=parsed_document,
+        context=_create_context(
+            file_hash=first_file_hash,
+        ),
+    )
+    second_result = await chunker.chunk(
+        document=parsed_document,
+        context=_create_context(
+            file_hash=second_file_hash,
+        ),
+    )
+
+    # 파싱된 텍스트는 같으므로 청크 내용 해시는 동일하다.
+    assert first_result.chunks[0].content_hash == second_result.chunks[0].content_hash
+
+    # 원본 파일 해시는 Chunk ID 정체성에 포함되므로 결과 ID는 달라야 한다.
+    assert first_result.chunks[0].chunk_id != second_result.chunks[0].chunk_id
+
+
+@pytest.mark.asyncio
 async def test_chunker_changes_chunk_id_when_index_version_changes() -> None:
     """색인 버전이 변경되면 새로운 UUID Chunk ID를 생성한다."""
 
@@ -167,7 +204,6 @@ async def test_chunker_preserves_page_boundaries_and_offsets() -> None:
 
     first_page_text = "First page contains enough text to create several separate chunks."
     second_page_text = "Second page contains its own text and must remain independent."
-
     parsed_document = ParsedDocument(
         file_type=DocumentType.PDF,
         units=(
@@ -258,5 +294,5 @@ def test_chunker_rejects_invalid_configuration(
     with pytest.raises(InvalidChunkingConfigurationError):
         CharacterTextChunker(
             chunk_size_chars=chunk_size_chars,
-            chunk_overlap_chars=(chunk_overlap_chars),
+            chunk_overlap_chars=chunk_overlap_chars,
         )
