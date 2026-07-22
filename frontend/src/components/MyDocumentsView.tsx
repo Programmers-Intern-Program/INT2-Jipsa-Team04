@@ -26,9 +26,9 @@ import {
   Undo2,
   Info
 } from "lucide-react";
-import type { Document, FileMapping, Folder as FolderType, OrganizeProposal, ProposedFolder } from "../types";
+import type { Document, FileMapping, Folder as FolderType, OrganizeApplyResponse, OrganizeProposal, ProposedFolder } from "../types";
 import { formatBytes } from "../utils/formatBytes";
-import { mockFolders } from "../mocks/mockData";
+import { fetchWithRetry } from "../utils/retry";
 import { getFolderPath, getFolderAncestors, isDescendantOrSelf, ensureFolderPath } from "../utils/folderTree";
 import { listFolders, createFolder, deleteFolder } from "../api/folders";
 import { deleteFile, downloadFile, getFileDetail, getFileStatus, getStorageUsage, listAllFiles, listAllTrash, listFiles, moveFiles, permanentDeleteFile, renameFile, restoreFile, toDocument, toggleStar } from "../api/files";
@@ -44,14 +44,19 @@ interface MyDocumentsViewProps {
   isUploadOpen: boolean;
   setIsUploadOpen: (open: boolean) => void;
   onUpdateDocuments: React.Dispatch<React.SetStateAction<Document[]>>;
+  /** 스마트 정리 미리보기에서 confidence 미달 매핑/폴더를 미리 가려서 보여주는 데 쓰는 사용자의
+   * 자동 분류 민감도(0~1). 실제 필터링은 서버(OrganizeService)가 하고, 여기선 그 결과를 미리
+   * 추측해 보여주는 용도라 서버 판단과 100% 같다는 보장은 없다(둘 다 같은 규칙을 쓰긴 함). */
+  sensitivity: number;
 }
 
-export default function MyDocumentsView({ 
-  documents, 
-  onNavigateToChat, 
-  isUploadOpen, 
+export default function MyDocumentsView({
+  documents,
+  onNavigateToChat,
+  isUploadOpen,
   setIsUploadOpen,
-  onUpdateDocuments
+  onUpdateDocuments,
+  sensitivity
 }: MyDocumentsViewProps) {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState("");
@@ -71,6 +76,9 @@ export default function MyDocumentsView({
   const [organizeStep, setOrganizeStep] = useState(0);
   const [organizeResult, setOrganizeResult] = useState<OrganizeProposal | null>(null);
   const [isApplyingOrganize, setIsApplyingOrganize] = useState(false);
+  // apply 응답(성공 여부 + held 목록) — null이면 아직 미리보기 단계(적용 전), 값이 있으면
+  // 모달이 "결과" 화면으로 전환된다. 알림창(alert)이 아니라 모달 안에서 결과를 보여주기 위함.
+  const [applyResult, setApplyResult] = useState<OrganizeApplyResponse | null>(null);
 
   // AI Smart Upload specialized state
   const [isSpecialUploadMode, setIsSpecialUploadMode] = useState(false);
@@ -93,18 +101,22 @@ export default function MyDocumentsView({
 
   const starPendingRef = useRef<Set<string>>(new Set());
 
-  // 비로그인 상태면 토큰이 없어 401로 실패하는 게 정상. 그 경우 기존 mock 상태를
-  // 그대로 유지해 데모가 안 깨지게 한다.
+  // 이 컴포넌트는 App.tsx가 user 없이는 렌더링 자체를 안 하므로(LandingView로 대체),
+  // 여기서 listFolders()가 실패하는 건 "비로그인"이 아니라 진짜 네트워크/백엔드 오류다.
+  // 로그인된 사용자에게 실제 폴더 대신 mock 데이터를 보여주는 건 오히려 혼란만 주므로,
+  // 초기값은 빈 배열로 두고 실패하면 mock으로 가리지 않고 재시도(fetchWithRetry)한다.
+  // localStorage 캐시는 이전에 실제로 성공한 조회 결과만 저장되므로(아래 별도 effect),
+  // 재시도 중 빠른 첫 화면 표시용으로만 쓴다.
   const [folders, setFolders] = useState<FolderType[]>(() => {
     const saved = localStorage.getItem("aidrive_folders");
-    return saved ? JSON.parse(saved) : mockFolders;
+    return saved ? JSON.parse(saved) : [];
   });
 
   useEffect(() => {
-    listFolders()
+    fetchWithRetry(listFolders)
       .then(setFolders)
       .catch((err) => {
-        console.warn("[folders] GET /api/v1/folders 실패 - mock 데이터 유지(비로그인 상태면 정상):", err);
+        console.error("[folders] GET /api/v1/folders 재시도 후에도 실패:", err);
       });
   }, []);
 
@@ -596,12 +608,15 @@ export default function MyDocumentsView({
   };
 
   // POST /api/v1/organize/apply — 제안을 그대로 백엔드에 되돌려보내 실제 파일 이동/이름변경 반영.
+  // 응답(성공 여부 + held)을 alert가 아니라 applyResult 상태에 담아, 모달이 "결과" 화면으로
+  // 전환되도록 한다 — 예전엔 응답을 버리고 모달을 바로 닫은 뒤 알림창만 띄워서, 일부만
+  // 보류돼도 사용자가 뭐가 어떻게 됐는지 모달에서 다시 확인할 방법이 없었다.
   const handleApplyOrganization = async () => {
     if (!organizeResult) return;
     setIsApplyingOrganize(true);
     try {
-      await applyOrganization(organizeResult);
-      setOrganizeResult(null);
+      const result = await applyOrganization(organizeResult);
+      setApplyResult(result);
       setSelectedFolder(null);
       // 폴더 목록/파일 목록이 서버에서 실제로 바뀌었으니 둘 다 다시 조회 — 실패해도(로그인 전) 기존 상태 유지.
       // documents는 App.tsx 상태라 여기서 직접 못 고치고 onUpdateDocuments로 통째로 갱신해야
@@ -612,13 +627,56 @@ export default function MyDocumentsView({
       listAllFiles()
         .then(onUpdateDocuments)
         .catch(() => {});
-      alert("🎉 AI 스마트 정리 제안이 실제로 반영되었습니다.");
     } catch (err) {
       console.error("스마트 정리 적용 실패:", err);
       alert("정리를 적용하는 중 오류가 발생했습니다.");
     } finally {
       setIsApplyingOrganize(false);
     }
+  };
+
+  // 미리보기(적용 전)/결과(적용 후) 모달을 모두 닫는다.
+  const closeOrganizeModal = () => {
+    setOrganizeResult(null);
+    setApplyResult(null);
+  };
+
+  // newFolders 중 실제로 생성되는(=하나 이상의 "적용되는" 매핑이 직접 또는 자식 폴더를 통해
+  // 간접적으로 참조하는) tempId 집합을 계산한다. 백엔드 OrganizeService.resolveTempIdsToCreate와
+  // 같은 규칙(부모 체인까지 포함)을 그대로 흉내낸 것 — confidence 미달로 보류될 매핑만 참조하는
+  // 폴더는 서버에서도 안 만들어지므로, 미리보기에서 "신규"라고 표시하면 실제 동작과 어긋난다.
+  const computeTempIdsToCreate = (appliedMappings: FileMapping[], newFolders: ProposedFolder[]): Set<string> => {
+    const parentTempIdByTempId = new Map<string, string | null>();
+    newFolders.forEach((f) => parentTempIdByTempId.set(f.tempId, f.parentTempId));
+
+    const tempIdsToCreate = new Set<string>();
+    for (const mapping of appliedMappings) {
+      let tempId = mapping.targetTempId;
+      while (tempId && !tempIdsToCreate.has(tempId)) {
+        tempIdsToCreate.add(tempId);
+        tempId = parentTempIdByTempId.get(tempId) ?? null;
+      }
+    }
+    return tempIdsToCreate;
+  };
+
+  // 아직 적용 전이면 confidence/민감도로 "적용될 매핑"을 추정, 적용 후면 실제 held 응답으로
+  // 정확히 계산한다 — 어느 쪽이든 결과는 { appliedMappings, tempIdsToCreate } 형태로 통일해서 쓴다.
+  const getOrganizeApplyPreview = (result: OrganizeProposal, applied: OrganizeApplyResponse | null) => {
+    let appliedMappings: FileMapping[];
+    if (applied) {
+      appliedMappings = result.mappings.filter((m) => !applied.held.some((h) => h.fileId === m.fileId));
+    } else {
+      // 백엔드(OrganizeService.isBelowThreshold)와 같은 규칙을 따른다: 이 제안 안에 confidence를
+      // 가진 매핑이 하나도 없으면(완전 레거시 제안) 필터링 없이 전부 적용될 것으로 본다. 반면
+      // 하나라도 confidence가 있으면(=apply 시 민감도 조회가 실제로 일어남), confidence가 빠진
+      // 매핑도 서버에서는 보류되므로 여기서 "적용될 것"으로 잘못 미리 보여주면 안 된다.
+      const anyConfidencePresent = result.mappings.some((m) => m.confidence != null);
+      appliedMappings = result.mappings.filter(
+        (m) => !anyConfidencePresent || (m.confidence != null && m.confidence >= sensitivity)
+      );
+    }
+    return { appliedMappings, tempIdsToCreate: computeTempIdsToCreate(appliedMappings, result.newFolders) };
   };
 
   // 제안 안의 새 폴더(tempId 체인)를 실제 표시용 전체 경로 문자열로 풀어준다.
@@ -644,7 +702,7 @@ export default function MyDocumentsView({
   // documents에 없는 fileId(예: 목록을 아직 못 불러온 경우)는 방어적으로 "알 수 없음"으로 표시.
   const resolveMappingDisplay = (mapping: FileMapping, newFolders: ProposedFolder[]) => {
     const doc = documents.find((d) => Number(d.id) === mapping.fileId);
-    const currentPath = doc ? (getFolderPath(doc.folderId, folders) || "루트") : "알 수 없음";
+    const currentPath = doc ? (getFolderPath(doc.folderId, folders) || "미분류") : "알 수 없음";
     const currentName = doc?.name ?? `(fileId: ${mapping.fileId})`;
 
     let targetPath: string;
@@ -652,12 +710,12 @@ export default function MyDocumentsView({
       const targetFolder = newFolders.find((f) => f.tempId === mapping.targetTempId);
       targetPath = targetFolder ? resolveProposedFolderPath(targetFolder, newFolders) : "알 수 없음";
     } else if (mapping.targetFolderId != null) {
-      targetPath = getFolderPath(mapping.targetFolderId, folders) || "루트";
+      targetPath = getFolderPath(mapping.targetFolderId, folders) || "미분류";
     } else {
-      targetPath = "루트";
+      targetPath = "미분류";
     }
 
-    return { currentName, currentPath, targetPath, newName: mapping.newName };
+    return { currentName, currentPath, targetPath, newName: mapping.newName, confidence: mapping.confidence ?? null };
   };
 
   const handleSmartUploadTrigger = () => {
@@ -1462,7 +1520,7 @@ export default function MyDocumentsView({
                                         <Star className={`w-3.5 h-3.5 ${doc.star ? "text-amber-500 fill-amber-400 stroke-amber-500" : "text-outline-variant group-hover:text-amber-500"}`} />
                                       </button>
                                     </div>
-                                    <p className="text-[10px] text-outline mt-1 font-sans truncate">{formatBytes(doc.sizeBytes)} · {getFolderPath(doc.folderId, folders) || "루트"}</p>
+                                    <p className="text-[10px] text-outline mt-1 font-sans truncate">{formatBytes(doc.sizeBytes)} · {getFolderPath(doc.folderId, folders) || "미분류"}</p>
                                   </div>
                                 </div>
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold shrink-0 ${
@@ -1630,7 +1688,7 @@ export default function MyDocumentsView({
                               <Folder className="w-5 h-5 text-primary fill-primary/10 shrink-0" />
                               <div className="truncate">
                                 <p className="font-bold text-xs text-on-surface leading-tight group-hover:text-primary transition-colors truncate">{folderName}</p>
-                                <p className="text-[10px] text-outline mt-1 font-sans truncate">📂 {getFolderPath(folder.folderId, folders) || "루트"}</p>
+                                <p className="text-[10px] text-outline mt-1 font-sans truncate">📂 {getFolderPath(folder.folderId, folders) || "미분류"}</p>
                               </div>
                             </div>
                           </td>
@@ -1724,7 +1782,7 @@ export default function MyDocumentsView({
                               <div className="truncate flex-1">
                                 <p className="font-bold text-xs text-on-surface leading-tight truncate cursor-text" title="더블클릭하여 이름 변경" onDoubleClick={() => handleRenameDocument(doc.id, doc.name)}>{doc.name}</p>
                                 <p className="text-[10px] text-outline mt-1 font-sans truncate">
-                                  {getFolderPath(doc.folderId, folders) || "루트"} · {doc.ownerName}
+                                  {getFolderPath(doc.folderId, folders) || "미분류"} · {doc.ownerName}
                                 </p>
                                 {doc.docType && (
                                   <span className="inline-block mt-1 px-1.5 py-0.5 bg-secondary/10 text-secondary text-[9px] font-extrabold rounded whitespace-nowrap">
@@ -1879,17 +1937,28 @@ export default function MyDocumentsView({
               className="bg-white rounded-3xl w-full max-w-3xl overflow-hidden shadow-2xl border border-outline-variant relative flex flex-col h-[85vh]"
               id="organize-result-panel"
             >
+              {(() => {
+                const { appliedMappings, tempIdsToCreate } = getOrganizeApplyPreview(organizeResult, applyResult);
+                const heldCount = applyResult?.held.length ?? 0;
+                return (
+                <>
               {/* Header */}
               <div className="px-8 py-5 border-b border-outline-variant flex justify-between items-center bg-surface-container-lowest shrink-0">
                 <div className="flex items-center gap-2 text-primary">
                   <Sparkles className="w-5.5 h-5.5 text-secondary fill-secondary/10" />
                   <div>
-                    <h3 className="text-lg font-bold text-on-surface">AI 스마트 정리 미리보기</h3>
-                    <p className="text-[10.5px] text-outline font-medium">기존 가상 폴더 구조와 AI가 의미론적으로 추천하는 신규 배치안을 비교해 보세요.</p>
+                    <h3 className="text-lg font-bold text-on-surface">
+                      {applyResult ? "AI 스마트 정리 적용 결과" : "AI 스마트 정리 미리보기"}
+                    </h3>
+                    <p className="text-[10.5px] text-outline font-medium">
+                      {applyResult
+                        ? "실제로 반영된 항목과 확신도 미달로 보류된 항목입니다."
+                        : "기존 가상 폴더 구조와 AI가 의미론적으로 추천하는 신규 배치안을 비교해 보세요."}
+                    </p>
                   </div>
                 </div>
-                <button 
-                  onClick={() => setOrganizeResult(null)}
+                <button
+                  onClick={closeOrganizeModal}
                   className="p-2 hover:bg-surface-container rounded-full text-outline transition-colors cursor-pointer"
                 >
                   <X className="w-5 h-5" />
@@ -1902,19 +1971,46 @@ export default function MyDocumentsView({
                 <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between p-4 bg-gradient-to-br from-primary/[0.03] to-secondary/[0.03] rounded-2xl border border-outline-variant/60">
                   <div className="space-y-1">
                     <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-secondary/10 text-secondary text-[11px] font-extrabold rounded-full tracking-wider uppercase border border-secondary/15">
-                      💡 AI 폴더 구조 재편 제안
+                      {applyResult ? "✅ 반영 완료" : "💡 AI 폴더 구조 재편 제안"}
                     </span>
-                    <p className="text-body-sm font-extrabold text-on-surface">새 폴더 생성 및 파일 이동 제안</p>
+                    <p className="text-body-sm font-extrabold text-on-surface">
+                      {applyResult ? "적용 결과" : "새 폴더 생성 및 파일 이동 제안"}
+                    </p>
                   </div>
                   <div className="text-[11px] text-outline font-sans bg-white px-3 py-1.5 rounded-lg border border-outline-variant/40">
-                    새 폴더 <span className="font-bold text-primary">{organizeResult.newFolders.length}개</span> ·
-                    파일 <span className="font-bold text-primary">{organizeResult.mappings.length}건</span> 이동/이름변경 제안
+                    새 폴더 <span className="font-bold text-primary">{tempIdsToCreate.size}개</span> ·
+                    파일 <span className="font-bold text-primary">{appliedMappings.length}건</span>{" "}
+                    {applyResult ? "반영됨" : "이동/이름변경 제안"}
+                    {heldCount > 0 && (
+                      <> · 보류 <span className="font-bold text-amber-600">{heldCount}건</span></>
+                    )}
                   </div>
                 </div>
 
+                {/* confidence가 하나라도 있으면(적용 전/후 공통), 민감도 미달 항목이 어떻게 되는지 안내한다. */}
+                {organizeResult.mappings.some((m) => m.confidence != null) && (
+                  <div className="p-3 bg-secondary/5 border border-secondary/20 rounded-lg text-xs leading-relaxed text-on-surface">
+                    ℹ️ {applyResult ? (
+                      <>
+                        확신도가 자동 분류 민감도보다 낮았던 항목은 반영되지 않고 원래 위치에 그대로 남았습니다.
+                        <br />
+                        (아래 목록에 보류로 표시)
+                      </>
+                    ) : (
+                      <>
+                        확신도가 설정에서 지정한 자동 분류 민감도보다 낮은 항목은 적용해도 자동으로 이동되지 않고 보류됩니다.
+                        <br />
+                        (설정 &gt; AI 설정에서 민감도 조정 가능)
+                      </>
+                    )}
+                  </div>
+                )}
+
                 {/* New folders list */}
                 <div className="space-y-3">
-                  <h4 className="font-extrabold text-xs text-on-surface uppercase tracking-wider mb-2">새로 생성될 폴더</h4>
+                  <h4 className="font-extrabold text-xs text-on-surface uppercase tracking-wider mb-2">
+                    {applyResult ? "생성된 폴더" : "새로 생성될 폴더"}
+                  </h4>
 
                   {organizeResult.newFolders.length === 0 ? (
                     <div className="p-4 bg-surface-container-low/40 border border-outline-variant/20 rounded-xl text-[11px] text-outline">
@@ -1922,22 +2018,35 @@ export default function MyDocumentsView({
                     </div>
                   ) : (
                     <div className="space-y-2.5">
-                      {organizeResult.newFolders.map((folder) => (
+                      {organizeResult.newFolders.map((folder) => {
+                        const willCreate = tempIdsToCreate.has(folder.tempId);
+                        return (
                         <div
                           key={folder.tempId}
-                          className="flex items-center gap-3 p-3.5 bg-secondary/5 border border-secondary/20 rounded-xl relative overflow-hidden"
+                          className={`flex items-center gap-3 p-3.5 rounded-xl relative overflow-hidden border ${
+                            willCreate
+                              ? "bg-secondary/5 border-secondary/20"
+                              : "bg-surface-container-low/30 border-outline-variant/20 opacity-60"
+                          }`}
                         >
-                          <div className="absolute right-0 bottom-0 opacity-[0.03] pointer-events-none text-secondary">
-                            <Sparkles className="w-10 h-10" />
-                          </div>
-                          <span className="text-[9px] bg-secondary text-white font-extrabold px-1.5 py-0.5 rounded shrink-0">
-                            신규
+                          {willCreate && (
+                            <div className="absolute right-0 bottom-0 opacity-[0.03] pointer-events-none text-secondary">
+                              <Sparkles className="w-10 h-10" />
+                            </div>
+                          )}
+                          <span
+                            className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded shrink-0 ${
+                              willCreate ? "bg-secondary text-white" : "bg-outline-variant text-outline"
+                            }`}
+                          >
+                            {willCreate ? "신규" : applyResult ? "미생성" : "보류 예정"}
                           </span>
-                          <p className="text-[11px] font-extrabold text-secondary truncate">
+                          <p className={`text-[11px] font-extrabold truncate ${willCreate ? "text-secondary" : "text-outline"}`}>
                             📂 {resolveProposedFolderPath(folder, organizeResult.newFolders)}
                           </p>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -1955,21 +2064,53 @@ export default function MyDocumentsView({
                   ) : (
                     <div className="space-y-2 max-h-64 overflow-y-auto custom-scrollbar pr-1">
                       {organizeResult.mappings.map((mapping) => {
-                        const { currentName, currentPath, targetPath, newName } =
+                        const { currentName, currentPath, targetPath, newName, confidence } =
                             resolveMappingDisplay(mapping, organizeResult.newFolders);
+                        // 적용 후엔 실제 held 응답으로, 적용 전엔 confidence/민감도로 예측한다 —
+                        // 어느 쪽이든 "보류"면 AI가 제안한 대상이 뭐였든 상관없이 "미분류"로 보여준다.
+                        // 이 앱에서 폴더가 지정 안 된 파일은 원래 "미분류"로 표시되는데, 확신도가
+                        // 낮아 반영이 안 되면(또는 안 될 예정이면) 결국 그 상태와 같기 때문이다.
+                        const isHeld = applyResult
+                          ? applyResult.held.some((h) => h.fileId === mapping.fileId)
+                          : !appliedMappings.some((m) => m.fileId === mapping.fileId);
                         return (
                           <div
                             key={mapping.fileId}
-                            className="p-3 bg-white border border-outline-variant/40 rounded-xl text-[11px]"
+                            className={`p-3 bg-white border rounded-xl text-[11px] ${
+                              isHeld ? "border-amber-300 bg-amber-50/40" : "border-outline-variant/40"
+                            }`}
                           >
-                            <p className="font-extrabold text-on-surface truncate">
-                              📄 {currentName}
-                              {newName && newName !== currentName && (
-                                <span className="text-secondary"> → {newName}</span>
-                              )}
-                            </p>
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="font-extrabold text-on-surface truncate">
+                                📄 {currentName}
+                                {newName && newName !== currentName && (
+                                  <span className="text-secondary"> → {newName}</span>
+                                )}
+                              </p>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {/* AI 확신도 — apply 시 이 값이 자동 분류 민감도보다 낮으면 실제로는
+                                    반영되지 않고 보류된다. */}
+                                {confidence != null && (
+                                  <span className="text-[9px] font-bold text-outline bg-surface-container-low px-1.5 py-0.5 rounded">
+                                    확신도 {Math.round(confidence * 100)}%
+                                  </span>
+                                )}
+                                {isHeld ? (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
+                                    {applyResult ? "보류됨" : "보류 예정"}
+                                  </span>
+                                ) : applyResult ? (
+                                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-primary/10 text-primary">
+                                    반영됨
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
                             <p className="text-outline mt-1">
-                              {currentPath || "루트"} <span className="mx-1">→</span> <span className="font-bold text-primary">{targetPath}</span>
+                              {currentPath || "미분류"} <span className="mx-1">→</span>{" "}
+                              <span className={`font-bold ${isHeld ? "text-amber-700" : "text-primary"}`}>
+                                {isHeld ? "미분류" : targetPath}
+                              </span>
                             </p>
                           </div>
                         );
@@ -1981,27 +2122,43 @@ export default function MyDocumentsView({
 
               {/* Action buttons footer */}
               <div className="p-6 border-t border-outline-variant/30 bg-surface-container-lowest shrink-0 flex items-center justify-between">
-                <button 
-                  onClick={() => setOrganizeResult(null)}
-                  className="px-5 py-3 bg-white border border-outline-variant/50 hover:bg-surface-container rounded-xl font-bold text-xs text-outline hover:text-on-surface transition-all cursor-pointer"
-                >
-                  분석 정리 취소
-                </button>
+                {applyResult ? (
+                  <div className="w-full flex justify-end">
+                    <button
+                      onClick={closeOrganizeModal}
+                      className="px-6 py-3 bg-primary hover:bg-opacity-95 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-primary/10 transition-all cursor-pointer"
+                    >
+                      확인
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      onClick={closeOrganizeModal}
+                      className="px-5 py-3 bg-white border border-outline-variant/50 hover:bg-surface-container rounded-xl font-bold text-xs text-outline hover:text-on-surface transition-all cursor-pointer"
+                    >
+                      분석 정리 취소
+                    </button>
 
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] text-outline hidden md:inline-block">
-                    * 실제 폴더 생성 및 파일 이동/이름변경이 반영됩니다 (되돌리기 미지원)
-                  </span>
-                  <button
-                    onClick={handleApplyOrganization}
-                    disabled={isApplyingOrganize}
-                    className="px-6 py-3 bg-primary hover:bg-opacity-95 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-primary/10 flex items-center gap-1.5 transition-all cursor-pointer hover:scale-[1.01] active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
-                  >
-                    <Sparkles className="w-4 h-4 text-secondary-container fill-secondary-container/20 animate-pulse" />
-                    {isApplyingOrganize ? "적용 중..." : "추천 폴더 배치 적용하기"}
-                  </button>
-                </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-outline hidden md:inline-block">
+                        * 실제 폴더 생성 및 파일 이동/이름변경이 반영됩니다 (되돌리기 미지원)
+                      </span>
+                      <button
+                        onClick={handleApplyOrganization}
+                        disabled={isApplyingOrganize}
+                        className="px-6 py-3 bg-primary hover:bg-opacity-95 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-primary/10 flex items-center gap-1.5 transition-all cursor-pointer hover:scale-[1.01] active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100"
+                      >
+                        <Sparkles className="w-4 h-4 text-secondary-container fill-secondary-container/20 animate-pulse" />
+                        {isApplyingOrganize ? "적용 중..." : "추천 폴더 배치 적용하기"}
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
+                </>
+                );
+              })()}
             </motion.div>
           </div>
         )}

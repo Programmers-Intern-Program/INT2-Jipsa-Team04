@@ -90,9 +90,10 @@ export default function SettingsView({ user, committedSettings, onSaveSettings }
   };
 
   const getSensitivityLabel = (val: number) => {
-    if (val > 0.8) return `높음 (${val.toFixed(2)})`;
-    if (val < 0.4) return `낮음 (${val.toFixed(2)})`;
-    return `중간 (${val.toFixed(2)})`;
+    const percent = `${Math.round(val * 100)}%`;
+    if (val > 0.8) return `높음 (${percent})`;
+    if (val < 0.4) return `낮음 (${percent})`;
+    return `중간 (${percent})`;
   };
 
   return (

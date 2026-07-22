@@ -72,7 +72,11 @@ class AnthropicOrganizeClientManualIT {
                 .andExpect(jsonPath("$.mappings").exists())
                 .andReturn();
 
-        System.out.println("propose 응답 = " + result.getResponse().getContentAsString());
+        String responseBody = result.getResponse().getContentAsString();
+        System.out.println("propose 응답 = " + responseBody);
+        // mappings가 비어있지 않다면 각 항목에 confidence(0~1)가 실려오는지, 값이 매번 똑같이
+        // 찍히지 않고 실제로 차이가 나는지 눈으로 같이 확인한다 — 여기서 자동 assert는 하지 않는다
+        // (AI 응답이 결정적이지 않아 특정 값/개수를 강제하면 이 테스트 자체가 깨지기 쉽다).
     }
 
     private void saveFile(Long userId, String name, Long folderId) {
