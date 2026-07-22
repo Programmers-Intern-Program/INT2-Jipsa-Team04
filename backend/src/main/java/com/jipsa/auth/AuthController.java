@@ -33,7 +33,7 @@ public class AuthController {
      */
     @PostMapping("/oauth/google")
     public ApiResponse<LoginResult> googleLogin(@Valid @RequestBody GoogleLoginRequest request) {
-        LoginResult loginResult = authService.loginWithGoogle(request.authorizationCode());
+        LoginResult loginResult = authService.loginWithGoogle(request.authorizationCode(), request.codeVerifier());
         return ApiResponse.ok(loginResult);
     }
 

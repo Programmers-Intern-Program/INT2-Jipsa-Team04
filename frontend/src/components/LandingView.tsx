@@ -1,6 +1,14 @@
 import { useState } from "react";
 import { HardDrive, ShieldCheck, Sparkles, FolderTree, MessageSquareText, AlertTriangle } from "lucide-react";
-import { buildGoogleAuthorizeUrl, createOAuthState, isOAuthConfigured } from "../utils/oauth";
+import {
+  buildGoogleAuthorizeUrl,
+  clearOAuthCodeVerifier,
+  clearOAuthState,
+  createCodeChallenge,
+  createOAuthCodeVerifier,
+  createOAuthState,
+  isOAuthConfigured,
+} from "../utils/oauth";
 
 // Google 브랜드 마크 (lucide-react엔 브랜드 로고가 없어 인라인 SVG 사용)
 function GoogleIcon() {
@@ -18,10 +26,11 @@ export default function LandingView() {
   const [isLoading, setIsLoading] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
 
-  // 실제 Google OAuth authorization-code 흐름 시작:
-  // state를 만들어 sessionStorage에 저장한 뒤 Google authorize URL로 전체 페이지 이동한다.
+  // 실제 Google OAuth authorization-code + PKCE 흐름 시작:
+  // state와 code_verifier를 만들어 sessionStorage에 저장하고, code_verifier의 SHA-256(S256)
+  // code_challenge를 authorize URL에 실어 Google로 전체 페이지 이동한다.
   // 복귀(/oauth/callback) 이후의 code 교환·토큰 저장·사용자 조회는 App.tsx가 담당한다.
-  const handleGoogleStart = () => {
+  const handleGoogleStart = async () => {
     if (!isOAuthConfigured()) {
       setConfigError(
         "Google 로그인 설정이 없습니다. frontend/.env.local 에 VITE_GOOGLE_CLIENT_ID 를 설정한 뒤 dev 서버를 다시 시작하세요."
@@ -30,8 +39,18 @@ export default function LandingView() {
     }
     setConfigError(null);
     setIsLoading(true);
-    const state = createOAuthState();
-    window.location.href = buildGoogleAuthorizeUrl(state);
+    try {
+      const state = createOAuthState();
+      const codeChallenge = await createCodeChallenge(createOAuthCodeVerifier());
+      window.location.href = buildGoogleAuthorizeUrl(state, codeChallenge);
+    } catch (err) {
+      console.warn("[auth] Google 로그인 시작 실패:", err);
+      // authorize URL로 이동하지 못했으므로 저장해 둔 state·code_verifier 잔여값을 정리한다.
+      clearOAuthState();
+      clearOAuthCodeVerifier();
+      setConfigError("Google 로그인을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      setIsLoading(false);
+    }
   };
 
   return (

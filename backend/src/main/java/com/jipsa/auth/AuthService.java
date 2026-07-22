@@ -56,14 +56,16 @@ public class AuthService {
     }
 
     /**
-     * authorization code 하나로 구글 로그인을 완료하고 자체 토큰을 발급한다.
+     * authorization code + PKCE code_verifier로 구글 로그인을 완료하고 자체 토큰을 발급한다.
      *
      * @param authorizationCode React가 Google에서 받아 전달한 authorization code
+     * @param codeVerifier       로그인 시작 시 프론트가 생성해 code_challenge(S256)로 authorize에
+     *                           실어 보낸 PKCE 원문 verifier. Google 토큰 교환 시 code_verifier로 전달된다.
      * @return accessToken·refreshToken·isNewUser를 담은 {@link LoginResult}
      */
-    public LoginResult loginWithGoogle(String authorizationCode) {
-        // 1) authorization code → 구글 토큰 응답 (HTTP 교환)
-        GoogleTokenResponse tokenResponse = googleOAuthClient.exchangeAuthorizationCode(authorizationCode);
+    public LoginResult loginWithGoogle(String authorizationCode, String codeVerifier) {
+        // 1) authorization code → 구글 토큰 응답 (HTTP 교환, PKCE code_verifier 포함)
+        GoogleTokenResponse tokenResponse = googleOAuthClient.exchangeAuthorizationCode(authorizationCode, codeVerifier);
         // 2) id_token 검증 → 신뢰할 수 있는 구글 사용자 정보
         GoogleUserInfo googleUserInfo = googleIdTokenValidator.validate(tokenResponse.idToken());
         // 3) 내부 사용자 find-or-create (없으면 신규 생성)

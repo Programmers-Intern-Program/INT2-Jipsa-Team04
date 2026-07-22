@@ -11,12 +11,17 @@ import { apiFetch } from "./client";
  * 토큰 발급 전 호출이라 인증 헤더 없이 열려 있다.
  *
  * @param authorizationCode Google에서 받은 authorization code
+ * @param codeVerifier PKCE 원문 verifier (로그인 시작 시 생성해 sessionStorage에 보관하던 값).
+ *                     백엔드가 Google 토큰 교환의 code_verifier로 전달해 code를 이번 로그인 시도에 묶는다.
  * @returns accessToken · refreshToken · isNewUser
  */
-export async function loginWithGoogle(authorizationCode: string): Promise<LoginResult> {
+export async function loginWithGoogle(
+  authorizationCode: string,
+  codeVerifier: string
+): Promise<LoginResult> {
   const res = await apiFetch<ApiEnvelope<LoginResult>>("/auth/oauth/google", {
     method: "POST",
-    body: { authorizationCode },
+    body: { authorizationCode, codeVerifier },
   });
   return res.data;
 }
