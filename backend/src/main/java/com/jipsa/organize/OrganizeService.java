@@ -10,12 +10,15 @@ import com.jipsa.folder.FolderNotFoundException;
 import com.jipsa.folder.FolderRepository;
 import com.jipsa.folder.FolderResponse;
 import com.jipsa.folder.FolderService;
+import com.jipsa.user.UserSettingService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -40,6 +43,7 @@ public class OrganizeService {
     private final FileService fileService;
     private final OrganizeInputAssembler organizeInputAssembler;
     private final AiOrganizeClient aiOrganizeClient;
+    private final UserSettingService userSettingService;
 
     /**
      * applyProposal 중복 반영 방지용 임시 캐시(userId:idempotencyKey → 마지막 반영 시각).
@@ -54,13 +58,15 @@ public class OrganizeService {
                             FolderService folderService,
                             FileService fileService,
                             OrganizeInputAssembler organizeInputAssembler,
-                            AiOrganizeClient aiOrganizeClient) {
+                            AiOrganizeClient aiOrganizeClient,
+                            UserSettingService userSettingService) {
         this.folderRepository = folderRepository;
         this.fileRepository = fileRepository;
         this.folderService = folderService;
         this.fileService = fileService;
         this.organizeInputAssembler = organizeInputAssembler;
         this.aiOrganizeClient = aiOrganizeClient;
+        this.userSettingService = userSettingService;
     }
 
     /** 미리보기 화면의 "현재" 쪽 — 본인 폴더 전체를 평면 목록에서 트리로 조립. */
@@ -93,18 +99,21 @@ public class OrganizeService {
     }
 
     /**
-     * 승인 반영 — 검증 후 (1) 제안에만 있는 새 폴더를 부모→자식 순서로 생성하고
-     * (2) 각 파일을 매핑된 폴더로 이동, newName이 있으면 이름도 변경한다.
+     * 승인 반영 — 검증 후 (1) confidence가 사용자의 자동 분류 민감도 이상인 매핑만
+     * 골라 그 매핑이 실제로 참조하는 새 폴더만 부모→자식 순서로 생성하고
+     * (2) 그 매핑에 해당하는 파일만 이동, newName이 있으면 이름도 변경한다.
+     * 민감도 미달(또는 confidence 자체가 이 값보다 낮은) 매핑은 아무것도 하지 않고
+     * 보류 목록으로 응답에 실어 돌려준다 — 파일은 원래 위치에 그대로 남는다.
      * 전체를 하나의 트랜잭션으로 묶어서, 중간에 실패하면 새 폴더 생성분까지 포함해
      * 전부 롤백된다(부분 반영 방지).
      */
     @Transactional
-    public void applyProposal(Long userId, OrganizeProposal proposal) {
+    public OrganizeApplyResponse applyProposal(Long userId, OrganizeProposal proposal) {
         String idempotencyCacheKey = idempotencyCacheKey(userId, proposal.idempotencyKey());
         if (idempotencyCacheKey != null && wasRecentlyApplied(idempotencyCacheKey)) {
             // 같은 승인 동작이 짧은 시간 안에 재요청됨(예: 응답 유실 후 프론트 재시도) — 새 폴더를
             // 또 만들지 않고 이미 반영된 것으로 간주하고 조용히 성공 처리한다.
-            return;
+            return OrganizeApplyResponse.allApplied();
         }
 
         // newFolders/mappings는 요청 JSON에서 필드 자체가 생략되면 null로 역직렬화되므로,
@@ -114,9 +123,26 @@ public class OrganizeService {
 
         validate(userId, newFolders, mappings);
 
-        Map<String, Long> tempIdToRealFolderId = createProposedFolders(userId, newFolders);
-
+        BigDecimal sensitivity = resolveSensitivity(userId, mappings);
+        List<FileMapping> appliedMappings = new ArrayList<>();
+        List<FileMapping> heldMappings = new ArrayList<>();
         for (FileMapping mapping : mappings) {
+            if (isBelowThreshold(mapping.confidence(), sensitivity)) {
+                heldMappings.add(mapping);
+            } else {
+                appliedMappings.add(mapping);
+            }
+        }
+
+        // 보류된 매핑만 참조하던 새 폴더까지 만들면 아무도 안 쓰는 빈 폴더가 남으므로,
+        // 실제로 반영되는 매핑이 (직접 또는 자식 폴더를 통해 간접적으로) 참조하는 새 폴더만 만든다.
+        Set<String> tempIdsToCreate = resolveTempIdsToCreate(appliedMappings, newFolders);
+        List<ProposedFolder> foldersToCreate = newFolders.stream()
+                .filter(folder -> tempIdsToCreate.contains(folder.tempId()))
+                .toList();
+        Map<String, Long> tempIdToRealFolderId = createProposedFolders(userId, foldersToCreate);
+
+        for (FileMapping mapping : appliedMappings) {
             Long resolvedFolderId = resolveTargetFolderId(mapping, tempIdToRealFolderId);
             fileService.moveToFolder(userId, mapping.fileId(), resolvedFolderId);
             if (mapping.newName() != null && !mapping.newName().isBlank()) {
@@ -128,6 +154,45 @@ public class OrganizeService {
             recentlyAppliedKeys.put(idempotencyCacheKey, Instant.now());
             evictExpiredIdempotencyKeys();
         }
+
+        return new OrganizeApplyResponse(true, heldMappings);
+    }
+
+    /**
+     * 매핑 중 confidence가 있는 게 하나도 없으면(기존 호출부와의 호환 케이스) 민감도 조회 자체를
+     * 건너뛴다 — 어차피 전부 그대로 적용되므로 불필요한 UserSetting 조회를 피한다.
+     */
+    private BigDecimal resolveSensitivity(Long userId, List<FileMapping> mappings) {
+        boolean anyConfidencePresent = mappings.stream().anyMatch(mapping -> mapping.confidence() != null);
+        if (!anyConfidencePresent) {
+            return null;
+        }
+        return userSettingService.getOrCreate(userId).getSensitivity();
+    }
+
+    /** confidence가 없으면(비교 기준 자체가 없으므로) 필터링하지 않고 그대로 적용한다. */
+    private boolean isBelowThreshold(Double confidence, BigDecimal sensitivity) {
+        if (confidence == null) {
+            return false;
+        }
+        return BigDecimal.valueOf(confidence).compareTo(sensitivity) < 0;
+    }
+
+    /** 실제 반영되는 매핑이 참조하는 새 폴더 + 그 조상(parentTempId 체인)까지 tempId를 모은다. */
+    private Set<String> resolveTempIdsToCreate(List<FileMapping> appliedMappings, List<ProposedFolder> newFolders) {
+        Map<String, String> parentTempIdByTempId = new HashMap<>();
+        for (ProposedFolder folder : newFolders) {
+            parentTempIdByTempId.put(folder.tempId(), folder.parentTempId());
+        }
+
+        Set<String> tempIdsToCreate = new HashSet<>();
+        for (FileMapping mapping : appliedMappings) {
+            String tempId = mapping.targetTempId();
+            while (tempId != null && tempIdsToCreate.add(tempId)) {
+                tempId = parentTempIdByTempId.get(tempId);
+            }
+        }
+        return tempIdsToCreate;
     }
 
     private String idempotencyCacheKey(Long userId, String idempotencyKey) {
@@ -235,6 +300,10 @@ public class OrganizeService {
             if (mapping.targetFolderId() != null) {
                 folderRepository.findByIdAndUsersId(mapping.targetFolderId(), userId)
                         .orElseThrow(() -> new FolderNotFoundException(mapping.targetFolderId()));
+            }
+            if (mapping.confidence() != null && (mapping.confidence() < 0.0 || mapping.confidence() > 1.0)) {
+                throw new BadRequestException(
+                        "confidence는 0~1 사이여야 합니다: fileId=" + mapping.fileId());
             }
         }
     }
