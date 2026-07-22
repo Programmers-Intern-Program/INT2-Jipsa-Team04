@@ -12,8 +12,13 @@ from pydantic import ValidationError
 from jipsa_rag.core.config import Settings
 from jipsa_rag.core.error_codes import ErrorCode
 from jipsa_rag.core.exceptions import AppException
-from jipsa_rag.schemas.file_processing import FileProcessingRequest
-from jipsa_rag.schemas.ingestion import IngestCompleteRequest
+from jipsa_rag.schemas.file_processing import (
+    FileProcessingRequest,
+)
+from jipsa_rag.schemas.ingestion import (
+    ChunkSynchronizationRequest,
+    IngestCompleteRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +33,10 @@ _INTERNAL_FILES_PATH: Final[str] = "/internal/files"
 _INTERNAL_TOKEN_HEADER_NAME: Final[str] = "X-Internal-Token"
 
 # HTTP 메서드를 클라이언트가 실제 사용하는 값으로 제한한다.
-HttpMethod = Literal["GET", "POST"]
+HttpMethod = Literal[
+    "GET",
+    "POST",
+]
 
 # HTTP 408과 429는 일시적인 상태일 가능성이 있으므로 재시도한다.
 _RETRYABLE_STATUS_CODES: Final[frozenset[int]] = frozenset(
@@ -71,7 +79,7 @@ class ApplicationServerIngestClient:
 
         response = await self._request(
             method="GET",
-            path=f"{_INTERNAL_FILES_PATH}/{file_idx}/manifest",
+            path=(f"{_INTERNAL_FILES_PATH}/{file_idx}/manifest"),
             operation="manifest_fetch",
             file_idx=file_idx,
         )
@@ -131,28 +139,59 @@ class ApplicationServerIngestClient:
         *,
         file_idx: int,
         success: bool,
+        index_version: int | None = None,
+        chunks: tuple[
+            ChunkSynchronizationRequest,
+            ...,
+        ]
+        | None = None,
         error_message: str | None = None,
     ) -> None:
-        """파일 인제스트의 최종 성공 또는 실패 상태를 전달한다."""
+        """파일 인제스트의 최종 상태와 청크 동기화 데이터를 전달한다.
+
+        기존 success-only 호출은 하위 호환성을 위해 허용한다.
+
+        실제 인제스트 성공 경로에서는 index_version과 최신 활성 청크
+        전체를 함께 전달한다. chunk_count는 별도 인자로 받지 않고
+        실제 전송할 chunks 길이를 기준으로 자동 계산한다.
+
+        실패 콜백에는 청크 데이터가 포함되지 않으며 외부 공개가 가능한
+        error_message만 전달한다.
+        """
 
         self._validate_file_idx(file_idx)
 
+        # 호출 이후 외부에서 목록이 변경되지 않도록 불변 tuple로 정규화한다.
+        normalized_chunks = tuple(chunks) if chunks is not None else None
+
         request_body = IngestCompleteRequest(
             success=success,
+            index_version=index_version,
+            # chunk_count를 호출자에게 별도로 받으면 실제 청크 배열 길이와
+            # 달라질 수 있다. 전송 직전 확정된 tuple 길이를 기준으로 계산한다.
+            chunk_count=(len(normalized_chunks) if normalized_chunks is not None else None),
+            chunks=normalized_chunks,
             error_message=error_message,
         )
 
-        # 성공 콜백은 백엔드 계약에 맞게 {"success": true}만 전송한다.
-        #
-        # 실패 콜백은 error_message가 None이 아니므로
-        # {"success": false, "error_message": "..."}가 전송된다.
-        payload = request_body.model_dump(
-            exclude_none=True,
+        # mode="json"을 사용하면 source_metadata 안의 tuple과 같은
+        # Python 전용 값이 JSON 배열 등 직렬화 가능한 값으로 변환된다.
+        serialized_body = request_body.model_dump(
+            mode="json",
         )
+
+        # exclude_none=True를 model_dump()에 직접 사용하면
+        # 중첩 청크의 token_count=None까지 제거된다.
+        #
+        # 백엔드 계약상 token_count를 계산하지 않은 경우 null을 전달해야 하므로,
+        # 최상위 선택 필드만 제거하고 청크 내부의 null 값은 그대로 유지한다.
+        payload: dict[str, object] = {
+            key: value for key, value in serialized_body.items() if value is not None
+        }
 
         response = await self._request(
             method="POST",
-            path=f"{_INTERNAL_FILES_PATH}/{file_idx}/ingest-complete",
+            path=(f"{_INTERNAL_FILES_PATH}/{file_idx}/ingest-complete"),
             operation="ingest_complete_callback",
             file_idx=file_idx,
             json_body=payload,
@@ -172,17 +211,21 @@ class ApplicationServerIngestClient:
         path: str,
         operation: str,
         file_idx: int,
-        json_body: Mapping[str, object] | None = None,
+        json_body: Mapping[
+            str,
+            object,
+        ]
+        | None = None,
     ) -> httpx2.Response:
         """인증과 재시도 정책을 적용하여 내부 HTTP 요청을 수행한다."""
 
         internal_token = self._get_internal_token()
 
         timeout = httpx2.Timeout(
-            connect=self._settings.app_server_connect_timeout_seconds,
-            read=self._settings.app_server_read_timeout_seconds,
-            write=self._settings.app_server_read_timeout_seconds,
-            pool=self._settings.app_server_connect_timeout_seconds,
+            connect=(self._settings.app_server_connect_timeout_seconds),
+            read=(self._settings.app_server_read_timeout_seconds),
+            write=(self._settings.app_server_read_timeout_seconds),
+            pool=(self._settings.app_server_connect_timeout_seconds),
         )
 
         async with httpx2.AsyncClient(
@@ -217,7 +260,7 @@ class ApplicationServerIngestClient:
                                 "operation": operation,
                                 "file_idx": file_idx,
                                 "attempt_number": attempt_number,
-                                "exception_type": type(error).__name__,
+                                "exception_type": (type(error).__name__),
                             },
                         ) from error
 
@@ -237,7 +280,7 @@ class ApplicationServerIngestClient:
                                 "operation": operation,
                                 "file_idx": file_idx,
                                 "attempt_number": attempt_number,
-                                "exception_type": type(error).__name__,
+                                "exception_type": (type(error).__name__),
                             },
                         ) from error
 
@@ -256,7 +299,7 @@ class ApplicationServerIngestClient:
                         error_code = (
                             ErrorCode.APPLICATION_SERVER_TIMEOUT
                             if status_code == HTTPStatus.REQUEST_TIMEOUT
-                            else ErrorCode.APPLICATION_SERVER_UNAVAILABLE
+                            else (ErrorCode.APPLICATION_SERVER_UNAVAILABLE)
                         )
 
                         raise AppException(
@@ -265,7 +308,7 @@ class ApplicationServerIngestClient:
                                 "operation": operation,
                                 "file_idx": file_idx,
                                 "attempt_number": attempt_number,
-                                "upstream_status_code": status_code,
+                                "upstream_status_code": (status_code),
                             },
                         )
 
@@ -285,7 +328,7 @@ class ApplicationServerIngestClient:
             log_context={
                 "operation": operation,
                 "file_idx": file_idx,
-                "reason": "request_loop_completed_without_response",
+                "reason": ("request_loop_completed_without_response"),
             },
         )
 
@@ -301,8 +344,8 @@ class ApplicationServerIngestClient:
             raise AppException(
                 ErrorCode.SERVICE_UNAVAILABLE,
                 log_context={
-                    "operation": "application_server_authentication",
-                    "reason": "internal_token_not_configured",
+                    "operation": ("application_server_authentication"),
+                    "reason": ("internal_token_not_configured"),
                 },
             )
 
@@ -319,19 +362,19 @@ class ApplicationServerIngestClient:
         """지수 증가 지연을 적용한 뒤 다음 요청을 시도한다."""
 
         delay_seconds = min(
-            self._settings.app_server_retry_initial_delay_seconds * (2 ** (attempt_number - 1)),
-            self._settings.app_server_retry_max_delay_seconds,
+            (self._settings.app_server_retry_initial_delay_seconds * (2 ** (attempt_number - 1))),
+            (self._settings.app_server_retry_max_delay_seconds),
         )
 
         # 내부 토큰, 요청 본문, Presigned URL 및 응답 본문은 기록하지 않는다.
         logger.warning(
             "Application server request will be retried.",
             extra={
-                "event": "application_server_request_retry",
+                "event": ("application_server_request_retry"),
                 "operation": operation,
                 "file_idx": file_idx,
                 "attempt_number": attempt_number,
-                "next_attempt_number": attempt_number + 1,
+                "next_attempt_number": (attempt_number + 1),
                 "retry_delay_seconds": delay_seconds,
                 "reason": reason,
             },
@@ -368,7 +411,7 @@ class ApplicationServerIngestClient:
         if status_code == HTTPStatus.NOT_FOUND:
             raise AppException(
                 ErrorCode.RESOURCE_NOT_FOUND,
-                public_message="The requested file was not found.",
+                public_message=("The requested file was not found."),
                 log_context={
                     "operation": operation,
                     "file_idx": file_idx,
@@ -396,5 +439,5 @@ class ApplicationServerIngestClient:
     ) -> None:
         """내부 파일 API 경로에 사용할 File 식별자를 검증한다."""
 
-        if file_idx <= 0:
-            raise ValueError("file_idx must be greater than zero.")
+        if isinstance(file_idx, bool) or not isinstance(file_idx, int) or file_idx <= 0:
+            raise ValueError("file_idx must be a positive integer.")

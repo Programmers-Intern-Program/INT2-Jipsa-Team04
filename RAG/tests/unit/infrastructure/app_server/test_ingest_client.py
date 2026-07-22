@@ -6,14 +6,22 @@ import httpx2
 import pytest
 from pydantic import SecretStr
 
-from jipsa_rag.core.config import Settings, get_settings
+from jipsa_rag.core.config import (
+    Settings,
+    get_settings,
+)
 from jipsa_rag.core.error_codes import ErrorCode
 from jipsa_rag.core.exceptions import AppException
 from jipsa_rag.infrastructure.app_server.ingest_client import (
     ApplicationServerIngestClient,
 )
+from jipsa_rag.schemas.ingestion import (
+    ChunkSynchronizationRequest,
+)
 
 _TEST_INTERNAL_TOKEN = "test-application-internal-token-0123456789abcdef"
+_TEST_CHUNK_ID = "8d777f38-65d3-5b30-bc6c-4b8f8f2f8612"
+_TEST_CONTENT_HASH = "a" * 64
 
 
 def _create_settings(
@@ -24,12 +32,15 @@ def _create_settings(
 
     return get_settings().model_copy(
         update={
-            "internal_token": SecretStr(_TEST_INTERNAL_TOKEN),
-            "app_server_base_url": "http://application.test",
+            "internal_token": SecretStr(
+                _TEST_INTERNAL_TOKEN,
+            ),
+            "app_server_base_url": ("http://application.test"),
             "app_server_connect_timeout_seconds": 1.0,
             "app_server_read_timeout_seconds": 1.0,
             "app_server_max_attempts": max_attempts,
-            # 재시도 테스트가 불필요하게 지연되지 않도록 최소값을 사용한다.
+            # 재시도 테스트가 불필요하게 지연되지 않도록
+            # 최소값을 사용한다.
             "app_server_retry_initial_delay_seconds": 0.0,
             "app_server_retry_max_delay_seconds": 0.0,
         }
@@ -49,11 +60,32 @@ def _manifest_payload(
         "file_name": "meeting.pdf",
         "file_type": "pdf",
         "download_url": (
-            "https://example-bucket.s3.ap-northeast-2.amazonaws.com/"
-            "files/example.pdf?X-Amz-Signature=test"
+            "https://example-bucket."
+            "s3.ap-northeast-2.amazonaws.com/"
+            "files/example.pdf?"
+            "X-Amz-Signature=test"
         ),
         "url_expires_in": 900,
     }
+
+
+def _chunk_synchronization_request() -> ChunkSynchronizationRequest:
+    """성공 콜백에 포함할 정상 청크 동기화 DTO를 생성한다."""
+
+    return ChunkSynchronizationRequest(
+        chunk_id=_TEST_CHUNK_ID,
+        chunk_index=0,
+        content="동기화할 청크 원문",
+        content_hash=_TEST_CONTENT_HASH,
+        token_count=None,
+        source_metadata={
+            "page_number": 1,
+            "section_path": (
+                "1장",
+                "개요",
+            ),
+        },
+    )
 
 
 @pytest.mark.asyncio
@@ -74,7 +106,9 @@ async def test_fetch_manifest_sends_internal_token_and_parses_response() -> None
 
     client = ApplicationServerIngestClient(
         _create_settings(),
-        transport=httpx2.MockTransport(handler),
+        transport=httpx2.MockTransport(
+            handler,
+        ),
     )
 
     manifest = await client.fetch_manifest(
@@ -91,7 +125,7 @@ async def test_fetch_manifest_sends_internal_token_and_parses_response() -> None
 
 @pytest.mark.asyncio
 async def test_success_callback_sends_only_success_field() -> None:
-    """성공 콜백에는 error_message를 포함하지 않아야 한다."""
+    """청크 동기화 전 기존 성공 콜백은 success만 전송할 수 있어야 한다."""
 
     received_payloads: list[object] = []
 
@@ -103,9 +137,13 @@ async def test_success_callback_sends_only_success_field() -> None:
         assert request.headers["X-Internal-Token"] == _TEST_INTERNAL_TOKEN
 
         payload: object = json.loads(
-            request.content.decode("utf-8"),
+            request.content.decode(
+                "utf-8",
+            ),
         )
-        received_payloads.append(payload)
+        received_payloads.append(
+            payload,
+        )
 
         return httpx2.Response(
             status_code=204,
@@ -113,7 +151,9 @@ async def test_success_callback_sends_only_success_field() -> None:
 
     client = ApplicationServerIngestClient(
         _create_settings(),
-        transport=httpx2.MockTransport(handler),
+        transport=httpx2.MockTransport(
+            handler,
+        ),
     )
 
     await client.notify_ingest_complete(
@@ -129,6 +169,73 @@ async def test_success_callback_sends_only_success_field() -> None:
 
 
 @pytest.mark.asyncio
+async def test_success_callback_sends_chunk_synchronization_payload() -> None:
+    """성공 콜백은 색인 버전과 청크 원문 및 메타데이터를 전송해야 한다."""
+
+    received_payloads: list[object] = []
+
+    async def handler(
+        request: httpx2.Request,
+    ) -> httpx2.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/internal/files/123/ingest-complete"
+        assert request.headers["X-Internal-Token"] == _TEST_INTERNAL_TOKEN
+
+        payload: object = json.loads(
+            request.content.decode(
+                "utf-8",
+            ),
+        )
+        received_payloads.append(
+            payload,
+        )
+
+        return httpx2.Response(
+            status_code=204,
+        )
+
+    client = ApplicationServerIngestClient(
+        _create_settings(),
+        transport=httpx2.MockTransport(
+            handler,
+        ),
+    )
+
+    await client.notify_ingest_complete(
+        file_idx=123,
+        success=True,
+        index_version=2,
+        chunks=(_chunk_synchronization_request(),),
+    )
+
+    assert received_payloads == [
+        {
+            "success": True,
+            "index_version": 2,
+            "chunk_count": 1,
+            "chunks": [
+                {
+                    "chunk_id": _TEST_CHUNK_ID,
+                    "chunk_index": 0,
+                    "content": ("동기화할 청크 원문"),
+                    "content_hash": (_TEST_CONTENT_HASH),
+                    # 아직 토큰 수를 계산하지 않은 청크도
+                    # null 값이 제거되지 않고 전송되어야 한다.
+                    "token_count": None,
+                    "source_metadata": {
+                        "page_number": 1,
+                        "section_path": [
+                            "1장",
+                            "개요",
+                        ],
+                    },
+                }
+            ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_failure_callback_sends_error_message() -> None:
     """실패 콜백에는 외부 공개용 오류 메시지를 포함해야 한다."""
 
@@ -138,9 +245,13 @@ async def test_failure_callback_sends_error_message() -> None:
         request: httpx2.Request,
     ) -> httpx2.Response:
         payload: object = json.loads(
-            request.content.decode("utf-8"),
+            request.content.decode(
+                "utf-8",
+            ),
         )
-        received_payloads.append(payload)
+        received_payloads.append(
+            payload,
+        )
 
         return httpx2.Response(
             status_code=204,
@@ -148,7 +259,9 @@ async def test_failure_callback_sends_error_message() -> None:
 
     client = ApplicationServerIngestClient(
         _create_settings(),
-        transport=httpx2.MockTransport(handler),
+        transport=httpx2.MockTransport(
+            handler,
+        ),
     )
 
     await client.notify_ingest_complete(
@@ -182,10 +295,14 @@ async def test_fetch_manifest_rejects_invalid_json() -> None:
 
     client = ApplicationServerIngestClient(
         _create_settings(),
-        transport=httpx2.MockTransport(handler),
+        transport=httpx2.MockTransport(
+            handler,
+        ),
     )
 
-    with pytest.raises(AppException) as exception_info:
+    with pytest.raises(
+        AppException,
+    ) as exception_info:
         await client.fetch_manifest(
             file_idx=123,
         )
@@ -209,10 +326,14 @@ async def test_fetch_manifest_rejects_file_idx_mismatch() -> None:
 
     client = ApplicationServerIngestClient(
         _create_settings(),
-        transport=httpx2.MockTransport(handler),
+        transport=httpx2.MockTransport(
+            handler,
+        ),
     )
 
-    with pytest.raises(AppException) as exception_info:
+    with pytest.raises(
+        AppException,
+    ) as exception_info:
         await client.fetch_manifest(
             file_idx=123,
         )
@@ -245,10 +366,14 @@ async def test_client_rejects_missing_internal_token_before_request() -> None:
 
     client = ApplicationServerIngestClient(
         settings,
-        transport=httpx2.MockTransport(handler),
+        transport=httpx2.MockTransport(
+            handler,
+        ),
     )
 
-    with pytest.raises(AppException) as exception_info:
+    with pytest.raises(
+        AppException,
+    ) as exception_info:
         await client.fetch_manifest(
             file_idx=123,
         )
@@ -271,10 +396,14 @@ async def test_client_maps_timeout_to_application_server_timeout() -> None:
 
     client = ApplicationServerIngestClient(
         _create_settings(),
-        transport=httpx2.MockTransport(handler),
+        transport=httpx2.MockTransport(
+            handler,
+        ),
     )
 
-    with pytest.raises(AppException) as exception_info:
+    with pytest.raises(
+        AppException,
+    ) as exception_info:
         await client.fetch_manifest(
             file_idx=123,
         )
@@ -308,7 +437,9 @@ async def test_client_retries_temporary_server_failure() -> None:
         _create_settings(
             max_attempts=3,
         ),
-        transport=httpx2.MockTransport(handler),
+        transport=httpx2.MockTransport(
+            handler,
+        ),
     )
 
     manifest = await client.fetch_manifest(
@@ -332,10 +463,14 @@ async def test_client_maps_authentication_rejection_to_bad_gateway() -> None:
 
     client = ApplicationServerIngestClient(
         _create_settings(),
-        transport=httpx2.MockTransport(handler),
+        transport=httpx2.MockTransport(
+            handler,
+        ),
     )
 
-    with pytest.raises(AppException) as exception_info:
+    with pytest.raises(
+        AppException,
+    ) as exception_info:
         await client.fetch_manifest(
             file_idx=123,
         )
