@@ -33,11 +33,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String header = request.getHeader("Authorization");
         if (header != null && header.startsWith("Bearer ")) {
             String token = header.substring(7);
-            jwtService.validateAndGetUserId(token).ifPresent(userId -> {
-                // Principal = the user's id. Everyone gets ROLE_USER for now;
-                // real roles (ADMIN vs USERS from the Users table) come later.
+            jwtService.validateAndGetPrincipal(token).ifPresent(principal -> {
+                // Principal = the user's id. Authority comes from the role claim baked into the
+                // token at issue time (ADMIN → ROLE_ADMIN, USERS → ROLE_USERS). If the token has
+                // no role claim (e.g. issued before this change), grant no role authority —
+                // fail closed rather than guessing.
+                List<SimpleGrantedAuthority> authorities = principal.role() != null
+                        ? List.of(new SimpleGrantedAuthority("ROLE_" + principal.role()))
+                        : List.of();
                 var auth = new UsernamePasswordAuthenticationToken(
-                        userId, null, List.of(new SimpleGrantedAuthority("ROLE_USER")));
+                        principal.userId(), null, authorities);
                 auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                 SecurityContextHolder.getContext().setAuthentication(auth);
             });

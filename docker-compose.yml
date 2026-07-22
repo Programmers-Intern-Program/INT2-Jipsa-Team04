@@ -6,6 +6,7 @@ services:
       MYSQL_USER: jipsa
       MYSQL_PASSWORD: ${DB_PASSWORD}
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      TZ: Asia/Seoul
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     ports: ["3306:3306"]
     volumes:

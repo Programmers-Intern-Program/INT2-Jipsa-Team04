@@ -3,10 +3,16 @@
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Final, Literal, cast
+from typing import Final, Literal, Self, cast
 from urllib.parse import SplitResult, urlsplit
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import (
+    AliasChoices,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
 
@@ -184,6 +190,52 @@ class Settings(BaseSettings):
 
     # FastAPI 디버그 모드 사용 여부이다.
     debug: bool = False
+
+    # =========================================================
+    # Internal Service Authentication
+    # =========================================================
+
+    # 애플리케이션 서버가 POST /ingest 요청을 호출할 때 사용하는
+    # 서비스 간 공유 시크릿이다.
+    #
+    # 백엔드의 RAG_INGEST_TOKEN 환경 변수와 반드시 동일해야 한다.
+    #
+    # SecretStr를 사용하여 Settings 객체가 문자열이나 로그로 출력될 때
+    # 실제 토큰값이 노출되지 않도록 한다.
+    #
+    # 프로젝트의 기존 JIPSA_RAG_ 접두사 형식도 사용할 수 있도록
+    # 다음 환경 변수 이름을 모두 허용한다.
+    #
+    # - RAG_INGEST_TOKEN
+    # - JIPSA_RAG_INGEST_TOKEN
+    rag_ingest_token: SecretStr | None = Field(
+        default=None,
+        min_length=32,
+        max_length=512,
+        validation_alias=AliasChoices(
+            "RAG_INGEST_TOKEN",
+            "JIPSA_RAG_INGEST_TOKEN",
+        ),
+    )
+
+    # RAG 서버가 애플리케이션 서버의 /internal/** API를 호출할 때
+    # X-Internal-Token 헤더에 전달하는 서비스 간 공유 시크릿이다.
+    #
+    # 백엔드의 INTERNAL_TOKEN 환경 변수와 반드시 동일해야 한다.
+    #
+    # 다음 환경 변수 이름을 모두 허용한다.
+    #
+    # - INTERNAL_TOKEN
+    # - JIPSA_RAG_INTERNAL_TOKEN
+    internal_token: SecretStr | None = Field(
+        default=None,
+        min_length=32,
+        max_length=512,
+        validation_alias=AliasChoices(
+            "INTERNAL_TOKEN",
+            "JIPSA_RAG_INTERNAL_TOKEN",
+        ),
+    )
 
     # =========================================================
     # Local RAG MySQL
@@ -391,6 +443,11 @@ class Settings(BaseSettings):
     )
 
     # 애플리케이션 서버 API에 공통으로 적용되는 URL prefix이다.
+    #
+    # 현재 manifest와 ingest-complete는 /internal/** 루트 경로를
+    # 사용하므로 ApplicationServerIngestClient에서는 이 값을 붙이지 않는다.
+    #
+    # 향후 일반 API v1 클라이언트에서 사용할 수 있도록 설정은 유지한다.
     app_server_api_v1_prefix: str = Field(
         default="/api/v1",
         min_length=1,
@@ -408,8 +465,39 @@ class Settings(BaseSettings):
         gt=0,
     )
 
+    # 애플리케이션 서버 내부 API의 최대 요청 시도 횟수이다.
+    #
+    # 최초 요청도 한 번의 시도에 포함한다.
+    app_server_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+    )
+
+    # 애플리케이션 서버 요청 재시도 전 최초 대기 시간이다.
+    #
+    # 이후 재시도마다 두 배씩 증가하며 최대 대기 시간을 초과하지 않는다.
+    #
+    # 테스트에서는 불필요한 대기 시간을 제거할 수 있도록
+    # 0초도 허용한다.
+    app_server_retry_initial_delay_seconds: float = Field(
+        default=0.25,
+        ge=0,
+        le=30,
+    )
+
+    # 애플리케이션 서버 요청 재시도 사이의 최대 대기 시간이다.
+    #
+    # 최초 재시도 대기 시간보다 작게 설정할 수 없다.
+    app_server_retry_max_delay_seconds: float = Field(
+        default=2.0,
+        ge=0,
+        le=60,
+    )
+
     model_config = SettingsConfigDict(
-        # 예:
+        # 일반 설정 예:
+        #
         # database_host
         # -> JIPSA_RAG_DATABASE_HOST
         #
@@ -424,6 +512,9 @@ class Settings(BaseSettings):
         #
         # app_server_base_url
         # -> JIPSA_RAG_APP_SERVER_BASE_URL
+        #
+        # 두 내부 토큰은 백엔드 환경 변수 이름과 일치시키기 위해
+        # 각 필드의 validation_alias에서 별도로 정의한다.
         env_prefix="JIPSA_RAG_",
         # Windows와 Linux의 환경 변수 대소문자 처리 차이를 줄인다.
         case_sensitive=False,
@@ -432,6 +523,9 @@ class Settings(BaseSettings):
         extra="ignore",
         # dotenv 파일을 UTF-8로 읽는다.
         env_file_encoding="utf-8",
+        # validation_alias가 존재하는 필드도 Python 코드에서는
+        # 실제 필드명으로 값을 주입할 수 있도록 한다.
+        populate_by_name=True,
     )
 
     @field_validator(
@@ -479,6 +573,33 @@ class Settings(BaseSettings):
 
         if isinstance(value, str):
             return value.strip().lower()
+
+        return value
+
+    @field_validator(
+        "rag_ingest_token",
+        "internal_token",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_internal_tokens(
+        cls,
+        value: object,
+    ) -> object:
+        """공백으로만 구성된 내부 토큰을 미설정 상태로 변환한다.
+
+        토큰 문자열 앞뒤의 공백은 인증값의 일부로 취급하지 않는다.
+
+        토큰 원문은 validator의 오류 메시지나 로그에 포함하지 않는다.
+        """
+
+        if isinstance(value, str):
+            normalized_value = value.strip()
+
+            if not normalized_value:
+                return None
+
+            return normalized_value
 
         return value
 
@@ -588,6 +709,7 @@ class Settings(BaseSettings):
             value,
             setting_name="임베딩 서버 기본 URL",
         )
+
         return value
 
     @field_validator("qdrant_url")
@@ -602,6 +724,7 @@ class Settings(BaseSettings):
             value,
             setting_name="Qdrant 기본 URL",
         )
+
         return value
 
     @field_validator("qdrant_collection")
@@ -640,7 +763,17 @@ class Settings(BaseSettings):
             value,
             setting_name="애플리케이션 서버 기본 URL",
         )
+
         return value
+
+    @model_validator(mode="after")
+    def validate_app_server_retry_delays(self) -> Self:
+        """재시도 최대 지연이 최초 지연보다 작지 않은지 검증한다."""
+
+        if self.app_server_retry_max_delay_seconds < self.app_server_retry_initial_delay_seconds:
+            raise ValueError("애플리케이션 서버 재시도 최대 지연은 최초 지연보다 작을 수 없습니다.")
+
+        return self
 
     @property
     def parsed_file_download_allowed_host_suffixes(

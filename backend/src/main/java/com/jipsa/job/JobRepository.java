@@ -18,7 +18,7 @@ public interface JobRepository extends JpaRepository<Job, Long> {
             select j.id from Job j
             where j.jobStatus = com.jipsa.job.JobStatus.PENDING
                or (j.jobStatus = com.jipsa.job.JobStatus.RETRY_WAIT and j.nextAttemptAt <= :now)
-               or (j.jobStatus = com.jipsa.job.JobStatus.RUNNING and j.ownershipExpiresAt is not null and j.ownershipExpiresAt < :now)
+               or (j.jobStatus = com.jipsa.job.JobStatus.RUNNING and j.ownershipExpiresAt is not null and j.ownershipExpiresAt < :now and j.attempts < j.maxAttempts)
             order by j.priority desc, j.id asc
             """)
     List<Long> findClaimableIds(@Param("now") LocalDateTime now, Pageable pageable);
@@ -34,8 +34,21 @@ public interface JobRepository extends JpaRepository<Job, Long> {
             where j.id = :id
               and (j.jobStatus = com.jipsa.job.JobStatus.PENDING
                    or (j.jobStatus = com.jipsa.job.JobStatus.RETRY_WAIT and j.nextAttemptAt <= :now)
-                   or (j.jobStatus = com.jipsa.job.JobStatus.RUNNING and j.ownershipExpiresAt is not null and j.ownershipExpiresAt < :now))
+                   or (j.jobStatus = com.jipsa.job.JobStatus.RUNNING and j.ownershipExpiresAt is not null and j.ownershipExpiresAt < :now and j.attempts < j.maxAttempts))
             """)
     int claim(@Param("id") Long id, @Param("workerId") String workerId,
               @Param("now") LocalDateTime now, @Param("expiry") LocalDateTime expiry);
+
+    @Query("""
+            select j.id from Job j
+            where j.jobStatus = com.jipsa.job.JobStatus.RUNNING
+              and j.ownershipExpiresAt is not null
+              and j.ownershipExpiresAt < :now
+              and j.attempts >= j.maxAttempts
+            """)
+    List<Long> findExpiredExhaustedIds(@Param("now") LocalDateTime now);
+
+    @Modifying(clearAutomatically = true)
+    @Query("delete from Job j where j.fileId = :fileId")
+    void deleteByFileId(@Param("fileId") Long fileId);
 }

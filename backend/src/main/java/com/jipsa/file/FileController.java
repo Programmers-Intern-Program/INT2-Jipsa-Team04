@@ -2,6 +2,7 @@ package com.jipsa.file;
 
 import com.jipsa.common.CurrentUserProvider;
 import com.jipsa.common.SuccessResponse;
+import jakarta.validation.Valid;
 import org.springframework.core.io.Resource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -78,6 +79,13 @@ public class FileController {
         return new SuccessResponse(true);
     }
 
+    @DeleteMapping("/{id}/permanent")
+    public SuccessResponse permanentDelete(@PathVariable Long id) {
+        Long userId = currentUserProvider.requireUserId();
+        fileService.permanentDelete(userId, id);
+        return new SuccessResponse(true);
+    }
+
     @GetMapping("/storage")
     public StorageUsageResponse storage() {
         Long userId = currentUserProvider.requireUserId();
@@ -99,14 +107,14 @@ public class FileController {
     }
 
     @PatchMapping("/{id}/star")
-    public SuccessResponse star(@PathVariable Long id, @RequestBody StarRequest request) {
+    public SuccessResponse star(@PathVariable Long id, @Valid @RequestBody StarRequest request) {
         Long userId = currentUserProvider.requireUserId();
         fileService.setStar(userId, id, request.star());
         return new SuccessResponse(true);
     }
 
     @PatchMapping("/{id}/name")
-    public SuccessResponse rename(@PathVariable Long id, @RequestBody RenameRequest request) {
+    public SuccessResponse rename(@PathVariable Long id, @Valid @RequestBody RenameRequest request) {
         Long userId = currentUserProvider.requireUserId();
         fileService.rename(userId, id, request.name());
         return new SuccessResponse(true);

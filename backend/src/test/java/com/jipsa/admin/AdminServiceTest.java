@@ -1,6 +1,5 @@
 package com.jipsa.admin;
 
-import com.jipsa.common.exception.ForbiddenException;
 import com.jipsa.user.Users;
 import com.jipsa.user.UsersRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,6 +22,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+/**
+ * AdminService의 비즈니스 로직만 검증한다. ADMIN 권한 검증은 더 이상 이 서비스의 책임이
+ * 아니다 — {@code AdminController}의 {@code @PreAuthorize("hasRole('ADMIN')")}이 인증 계층에서
+ * 걸러내므로, 실제 로그인 토큰(ADMIN/USERS)으로 200/403을 확인하는 통합 테스트는
+ * {@code AdminAuthorizationIntegrationTest}를 참고.
+ */
 @ExtendWith(MockitoExtension.class)
 class AdminServiceTest {
 
@@ -53,16 +58,7 @@ class AdminServiceTest {
     }
 
     @Test
-    void listUsers_관리자가아니면_403() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "USERS")));
-
-        assertThatThrownBy(() -> adminService.listUsers(ADMIN_ID, 0, 20))
-                .isInstanceOf(ForbiddenException.class);
-    }
-
-    @Test
-    void listUsers_관리자면_문서수와함께_목록을반환한다() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
+    void listUsers_문서수와함께_목록을반환한다() {
         AdminUserProjection projection = mockProjection(TARGET_ID, "USERS", "ACTIVE", false, 3L);
         when(usersRepository.findAllWithDocumentCount(any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(projection)));
@@ -77,8 +73,6 @@ class AdminServiceTest {
 
     @Test
     void suspend_자기자신을대상으로하면_400() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
-
         SuspendUserRequest request = new SuspendUserRequest("TEMP_SUSPEND", "약관 위반", null);
 
         assertThatThrownBy(() -> adminService.suspend(ADMIN_ID, ADMIN_ID, request))
@@ -87,7 +81,6 @@ class AdminServiceTest {
 
     @Test
     void suspend_대상사용자가없으면_404() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
         when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.empty());
 
         SuspendUserRequest request = new SuspendUserRequest("TEMP_SUSPEND", "약관 위반", null);
@@ -98,7 +91,6 @@ class AdminServiceTest {
 
     @Test
     void suspend_정상요청이면_제재이력을생성하고_상태를변경한다() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
         Users target = userWithRole(TARGET_ID, "USERS");
         target.setStatus("ACTIVE");
         when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(target));
@@ -118,7 +110,6 @@ class AdminServiceTest {
 
     @Test
     void suspend_유효하지않은sanctionType이면_400() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
         when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(userWithRole(TARGET_ID, "USERS")));
 
         SuspendUserRequest request = new SuspendUserRequest("NOT_A_TYPE", "사유", null);
@@ -130,7 +121,6 @@ class AdminServiceTest {
     @Test
     void suspend_계정정지가아닌sanctionType이면_400() {
         // WARNING은 SanctionType엔 있지만 "계정 정지"를 뜻하지 않아 suspend 엔드포인트에서 거부해야 함
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
         when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(userWithRole(TARGET_ID, "USERS")));
 
         SuspendUserRequest request = new SuspendUserRequest("WARNING", "사유", null);
@@ -141,7 +131,6 @@ class AdminServiceTest {
 
     @Test
     void suspend_이미정지된사용자면_409() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
         Users target = userWithRole(TARGET_ID, "USERS");
         target.setStatus("SUSPENDED");
         when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(target));
@@ -154,7 +143,6 @@ class AdminServiceTest {
 
     @Test
     void suspend_이미삭제된사용자면_409() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
         Users target = userWithRole(TARGET_ID, "USERS");
         target.setDel(true);
         when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(target));
@@ -167,7 +155,6 @@ class AdminServiceTest {
 
     @Test
     void unsuspend_활성제재이력이없으면_404() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
         when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(userWithRole(TARGET_ID, "USERS")));
         when(userSanctionRepository.findFirstByUsersIdAndSanctionTypeInAndSanctionStatusOrderByStartedAtDesc(
                         TARGET_ID, SUSPENDABLE_TYPES_FOR_TEST, SanctionStatus.ACTIVE))
@@ -179,7 +166,6 @@ class AdminServiceTest {
 
     @Test
     void unsuspend_이미삭제된사용자면_409() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
         Users target = userWithRole(TARGET_ID, "USERS");
         target.setDel(true);
         when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(target));
@@ -190,7 +176,6 @@ class AdminServiceTest {
 
     @Test
     void unsuspend_정상요청이면_제재를해제하고_상태를복원한다() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
         Users target = userWithRole(TARGET_ID, "USERS");
         target.setStatus("SUSPENDED");
         when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(target));
@@ -211,7 +196,6 @@ class AdminServiceTest {
 
     @Test
     void delete_정상요청이면_소프트삭제하고_제재이력을남긴다() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
         Users target = userWithRole(TARGET_ID, "USERS");
         when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(target));
 
@@ -226,7 +210,6 @@ class AdminServiceTest {
 
     @Test
     void delete_이미삭제된사용자면_409() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
         Users target = userWithRole(TARGET_ID, "USERS");
         target.setDel(true);
         when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(target));
@@ -237,7 +220,6 @@ class AdminServiceTest {
 
     @Test
     void updateRole_유효하지않은값이면_400() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
         when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(userWithRole(TARGET_ID, "USERS")));
 
         assertThatThrownBy(() -> adminService.updateRole(ADMIN_ID, TARGET_ID, new UpdateRoleRequest("USER")))
@@ -246,7 +228,6 @@ class AdminServiceTest {
 
     @Test
     void updateRole_정상요청이면_role을변경한다() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
         Users target = userWithRole(TARGET_ID, "USERS");
         when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(target));
 
@@ -257,8 +238,6 @@ class AdminServiceTest {
 
     @Test
     void updateRole_자기자신이면_400() {
-        when(usersRepository.findById(ADMIN_ID)).thenReturn(Optional.of(userWithRole(ADMIN_ID, "ADMIN")));
-
         assertThatThrownBy(() -> adminService.updateRole(ADMIN_ID, ADMIN_ID, new UpdateRoleRequest("USERS")))
                 .isInstanceOf(SelfTargetNotAllowedException.class);
     }

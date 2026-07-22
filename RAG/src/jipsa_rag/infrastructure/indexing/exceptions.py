@@ -19,6 +19,14 @@ class LocalRagStorageError(IndexStorageError):
         super().__init__(f"Local RAG storage operation failed: {operation}")
 
 
+class IndexRunOwnershipLostError(LocalRagStorageError):
+    """현재 실행이 더 이상 해당 파일 색인의 최신 소유자가 아님을 나타낸다.
+
+    오래된 실행은 이 예외가 발생한 뒤 문서 상태를 성공 또는 실패로
+    확정하거나 다른 실행이 만든 Qdrant Point를 보상 삭제하면 안 된다.
+    """
+
+
 class VectorDatabaseError(IndexStorageError):
     """Qdrant 저장 계층에서 발생하는 모든 예외의 기준 클래스."""
 

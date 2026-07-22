@@ -3,18 +3,37 @@ package com.jipsa.admin;
 import com.jipsa.common.CurrentUserProvider;
 import com.jipsa.common.SuccessResponse;
 import jakarta.validation.Valid;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/v1/admin/users")
+@PreAuthorize("hasRole('ADMIN')")
 public class AdminController {
 
     private final AdminService adminService;
     private final CurrentUserProvider currentUserProvider;
+    private final AdminAccessGuard adminAccessGuard;
 
-    public AdminController(AdminService adminService, CurrentUserProvider currentUserProvider) {
+    public AdminController(AdminService adminService, CurrentUserProvider currentUserProvider,
+                            AdminAccessGuard adminAccessGuard) {
         this.adminService = adminService;
         this.currentUserProvider = currentUserProvider;
+        this.adminAccessGuard = adminAccessGuard;
+    }
+
+    /**
+     * {@code @ModelAttribute} 메서드는 이 컨트롤러의 모든 요청 핸들러 실행 전에 Spring MVC가
+     * 자동으로 호출한다(현재/향후 메서드 전부 커버, 개별 메서드에서 호출 누락될 일이 없음).
+     * {@code hasRole('ADMIN')}은 토큰 발급 시점 role만 보므로, 여기서 DB의 현재 role을 한 번 더
+     * 확인해 권한 회수가 재로그인 없이 바로 다음 요청부터 반영되게 한다.
+     */
+    @ModelAttribute
+    public void verifyStillAdmin() {
+        if (!adminAccessGuard.isCurrentlyAdmin()) {
+            throw new AccessDeniedException("관리자 권한이 없습니다.");
+        }
     }
 
     /** GET /api/v1/admin/users — 전체 사용자 목록. */

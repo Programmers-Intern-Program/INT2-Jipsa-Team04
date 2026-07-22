@@ -3,9 +3,11 @@ package com.jipsa.common;
 import com.jipsa.common.exception.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
@@ -97,6 +99,20 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleMessageNotReadable(HttpMessageNotReadableException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiResponse.fail(new ApiError("BAD_REQUEST", "요청 본문의 형식이 올바르지 않습니다.")));
+    }
+
+    // @PreAuthorize("hasRole('ADMIN')") 등 메서드 보안에서 인가 실패 시 Spring Security가 던진다.
+    // 처리하지 않으면 catch(Exception.class)로 떨어져 500으로 잘못 응답한다.
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAccessDenied(AccessDeniedException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiResponse.fail(new ApiError("FORBIDDEN", "접근 권한이 없습니다.")));
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ApiResponse<Void>> handleDataIntegrity(DataIntegrityViolationException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiResponse.fail(new ApiError("BAD_REQUEST", "요청 값이 제약 조건을 위반했습니다.")));
     }
 
     @ExceptionHandler(Exception.class)

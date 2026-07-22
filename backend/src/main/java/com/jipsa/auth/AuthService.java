@@ -93,8 +93,8 @@ public class AuthService {
     @Transactional
     public AccessTokenResponse refreshAccessToken(String rawRefreshToken) {
         Long userId = refreshTokenService.validateAndTouch(rawRefreshToken);
-        userService.verifyLoginable(userId);
-        return new AccessTokenResponse(jwtService.generateToken(userId));
+        var user = userService.verifyLoginable(userId);
+        return new AccessTokenResponse(jwtService.generateToken(user.getId(), user.getRole()));
     }
 
     /**

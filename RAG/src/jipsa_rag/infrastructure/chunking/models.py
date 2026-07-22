@@ -32,6 +32,21 @@ def _normalize_sha256(
     return normalized_value
 
 
+def _normalize_required_text(
+    value: str,
+    *,
+    field_name: str,
+) -> str:
+    """Chunk ID 식별 정보에 사용할 필수 문자열을 정규화한다."""
+
+    normalized_value = value.strip()
+
+    if not normalized_value:
+        raise ValueError(f"{field_name} must not be empty.")
+
+    return normalized_value
+
+
 def _freeze_metadata(
     metadata: ChunkMetadata,
 ) -> ChunkMetadata:
@@ -42,15 +57,25 @@ def _freeze_metadata(
 
 @dataclass(frozen=True, slots=True)
 class ChunkingContext:
-    """결정적 Chunk ID를 생성하는 데 필요한 문서 식별 정보."""
+    """결정적 Chunk ID를 생성하는 데 필요한 문서·파서·임베딩 식별 정보.
+
+    동일한 원본 파일이라도 파서 버전이나 임베딩 모델이 바뀌면
+    이전 청크와 검색 의미가 달라질 수 있다.
+
+    따라서 Chunk ID는 파일 식별 정보뿐 아니라 파서 버전과
+    임베딩 모델 식별자까지 포함하여 서로 다른 색인 결과가
+    같은 Qdrant Point ID 또는 Local RAG Chunk_ID를 공유하지 않게 한다.
+    """
 
     users_idx: int
     file_idx: int
     file_hash: str
+    parser_version: str
+    embedding_model: str
     index_version: int = 1
 
     def __post_init__(self) -> None:
-        """식별자, 파일 해시 및 색인 버전을 검증한다."""
+        """식별자, 파일 해시, 파서·임베딩 정보 및 색인 버전을 검증한다."""
 
         if self.users_idx <= 0:
             raise ValueError("users_idx must be greater than zero.")
@@ -67,6 +92,22 @@ class ChunkingContext:
             _normalize_sha256(
                 self.file_hash,
                 field_name="file_hash",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "parser_version",
+            _normalize_required_text(
+                self.parser_version,
+                field_name="parser_version",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "embedding_model",
+            _normalize_required_text(
+                self.embedding_model,
+                field_name="embedding_model",
             ),
         )
 
