@@ -170,10 +170,19 @@ public class OrganizeService {
         return userSettingService.getOrCreate(userId).getSensitivity();
     }
 
-    /** confidence가 없으면(비교 기준 자체가 없으므로) 필터링하지 않고 그대로 적용한다. */
+    /**
+     * sensitivity가 null이면(=요청 전체에 confidence가 하나도 없는 완전 레거시 케이스) 비교 기준
+     * 자체가 없으므로 필터링하지 않고 그대로 적용한다. 반면 sensitivity가 있는데(=이 배치의 다른
+     * 매핑은 confidence를 채워 왔는데) 이 매핑만 confidence가 비어 있으면, AI 응답이 스키마를
+     * 어겼다고 보고 안전하게 보류한다 — 여기서 그대로 적용해버리면 confidence 기반 안전장치가
+     * 매핑 하나만 값을 안 줘도 무력화된다.
+     */
     private boolean isBelowThreshold(Double confidence, BigDecimal sensitivity) {
-        if (confidence == null) {
+        if (sensitivity == null) {
             return false;
+        }
+        if (confidence == null) {
+            return true;
         }
         return BigDecimal.valueOf(confidence).compareTo(sensitivity) < 0;
     }
