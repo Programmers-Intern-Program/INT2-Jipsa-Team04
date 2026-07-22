@@ -308,4 +308,28 @@ class FileServiceTest {
         assertThat(result.usedBytes()).isEqualTo(2048L);
         assertThat(result.quotaBytes()).isEqualTo(1000L);
     }
+
+    @Test
+    void permanentDeleteRemovesFileAndS3() {
+        File file = ownedFile();
+        file.setDeletedAt(LocalDateTime.now());
+        file.setS3Key("files/key-1");
+        when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
+        when(fileMetadataRepository.findById(1L)).thenReturn(Optional.empty());
+
+        fileService.permanentDelete(1L, 1L);
+
+        verify(s3Service).delete("test-bucket", "files/key-1");
+        verify(jobRepository).deleteByFileId(1L);
+        verify(fileRepository).delete(file);
+    }
+
+    @Test
+    void permanentDeleteRejectsFileNotInTrash() {
+        File file = ownedFile();
+        when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
+
+        assertThatThrownBy(() -> fileService.permanentDelete(1L, 1L))
+                .isInstanceOf(BadRequestException.class);
+    }
 }

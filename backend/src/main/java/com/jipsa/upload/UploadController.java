@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -30,9 +31,10 @@ public class UploadController {
     @ResponseStatus(HttpStatus.CREATED)
     public UploadResponse upload(
             @RequestParam(value = "files", required = false) List<MultipartFile> files,
-            @RequestParam(value = "folderId", required = false) Long folderId) {
+            @RequestParam(value = "folderId", required = false) Long folderId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         Long userId = currentUserProvider.requireUserId();
-        return uploadService.upload(userId, files, folderId);
+        return uploadService.upload(userId, files, folderId, idempotencyKey);
     }
 
     @GetMapping("/{id}/status")

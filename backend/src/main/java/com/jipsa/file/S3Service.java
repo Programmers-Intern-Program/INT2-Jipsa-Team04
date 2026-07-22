@@ -29,9 +29,18 @@ public class S3Service {
         this.s3Presigner = s3Presigner;
     }
 
+    public String newKey() {
+        return "files/" + UUID.randomUUID();
+    }
+
     public String upload(String bucket, MultipartFile file) {
+        String key = newKey();
+        upload(bucket, key, file);
+        return key;
+    }
+
+    public void upload(String bucket, String key, MultipartFile file) {
         try {
-            String key = "files/" + UUID.randomUUID();
             s3Client.putObject(
                     PutObjectRequest.builder()
                             .bucket(bucket)
@@ -39,7 +48,6 @@ public class S3Service {
                             .contentType(file.getContentType())
                             .build(),
                     RequestBody.fromInputStream(file.getInputStream(), file.getSize()));
-            return key;
         } catch (IOException e) {
             throw new RuntimeException("S3 업로드 실패", e);
         }

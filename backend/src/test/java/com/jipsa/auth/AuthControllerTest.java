@@ -46,12 +46,12 @@ class AuthControllerTest {
 
     @Test
     void 정상_로그인시_200과_accessToken_refreshToken_isNewUser를_반환한다() throws Exception {
-        given(authService.loginWithGoogle("valid-code"))
+        given(authService.loginWithGoogle("valid-code", "verifier-abc"))
                 .willReturn(new LoginResult("access-jwt", "refresh-raw", true));
 
         mockMvc.perform(post("/api/v1/auth/oauth/google")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"authorizationCode\":\"valid-code\"}"))
+                        .content("{\"authorizationCode\":\"valid-code\",\"codeVerifier\":\"verifier-abc\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.accessToken").value("access-jwt"))
@@ -59,14 +59,14 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.data.isNewUser").value(true))
                 .andExpect(jsonPath("$.error").value(nullValue()));
 
-        verify(authService).loginWithGoogle("valid-code");
+        verify(authService).loginWithGoogle("valid-code", "verifier-abc");
     }
 
     @Test
     void authorizationCode가_누락되면_400() throws Exception {
         mockMvc.perform(post("/api/v1/auth/oauth/google")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{}"))
+                        .content("{\"codeVerifier\":\"verifier-abc\"}"))
                 .andExpect(status().isBadRequest());
     }
 
@@ -74,7 +74,7 @@ class AuthControllerTest {
     void authorizationCode가_null이면_400() throws Exception {
         mockMvc.perform(post("/api/v1/auth/oauth/google")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"authorizationCode\":null}"))
+                        .content("{\"authorizationCode\":null,\"codeVerifier\":\"verifier-abc\"}"))
                 .andExpect(status().isBadRequest());
     }
 
@@ -82,29 +82,53 @@ class AuthControllerTest {
     void authorizationCode가_blank면_400() throws Exception {
         mockMvc.perform(post("/api/v1/auth/oauth/google")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"authorizationCode\":\"   \"}"))
+                        .content("{\"authorizationCode\":\"   \",\"codeVerifier\":\"verifier-abc\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void codeVerifier가_누락되면_400() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/oauth/google")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"authorizationCode\":\"valid-code\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void codeVerifier가_null이면_400() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/oauth/google")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"authorizationCode\":\"valid-code\",\"codeVerifier\":null}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void codeVerifier가_blank면_400() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/oauth/google")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"authorizationCode\":\"valid-code\",\"codeVerifier\":\"   \"}"))
                 .andExpect(status().isBadRequest());
     }
 
     @Test
     void GoogleAuthException이면_401() throws Exception {
-        given(authService.loginWithGoogle(any()))
+        given(authService.loginWithGoogle(any(), any()))
                 .willThrow(new GoogleAuthException("유효하지 않은 Google id_token입니다."));
 
         mockMvc.perform(post("/api/v1/auth/oauth/google")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"authorizationCode\":\"bad-code\"}"))
+                        .content("{\"authorizationCode\":\"bad-code\",\"codeVerifier\":\"verifier-abc\"}"))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
     void AccountLoginBlockedException이면_403() throws Exception {
-        given(authService.loginWithGoogle(any()))
+        given(authService.loginWithGoogle(any(), any()))
                 .willThrow(new AccountLoginBlockedException("탈퇴 이력이 있는 계정입니다."));
 
         mockMvc.perform(post("/api/v1/auth/oauth/google")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"authorizationCode\":\"blocked-code\"}"))
+                        .content("{\"authorizationCode\":\"blocked-code\",\"codeVerifier\":\"verifier-abc\"}"))
                 .andExpect(status().isForbidden());
     }
 

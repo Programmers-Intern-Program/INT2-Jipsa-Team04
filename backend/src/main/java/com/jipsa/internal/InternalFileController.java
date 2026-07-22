@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping("/internal/files")
@@ -28,7 +29,7 @@ public class InternalFileController {
 
     @PostMapping("/{fileIdx}/ingest-complete")
     public ResponseEntity<Void> ingestComplete(@PathVariable Long fileIdx,
-                                               @RequestBody IngestCompleteRequest request) {
+                                               @Valid @RequestBody IngestCompleteRequest request) {
         ingestCallbackService.complete(fileIdx, request);
         return ResponseEntity.noContent().build();
     }

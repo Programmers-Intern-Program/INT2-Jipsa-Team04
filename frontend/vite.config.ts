@@ -6,6 +6,8 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
+    allowedHosts: ['jipsa.uk'],
+    hmr: { clientPort: 443 },
     proxy: {
       // 백엔드(8080)로 /api 요청을 그대로 넘겨준다 - CORS 설정 없이도 동작하고,
       // MyDocumentsView.tsx의 기존 /api/documents/... 상대경로 호출들과도 방식이 통일된다.

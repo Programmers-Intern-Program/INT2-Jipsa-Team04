@@ -35,8 +35,14 @@ app:
     batch-size: 5
     ownership-ttl-ms: 60000
     retry-backoff-ms: 5000
+    reap-interval-ms: 30000
   storage:
     quota-bytes: 107374182400
+  upload:
+    reconcile:
+      enabled: true
+      interval-ms: 300000
+      stale-ms: 900000
   internal:
     presign-ttl-seconds: 900
     token: ${INTERNAL_TOKEN:}
@@ -44,6 +50,7 @@ app:
   rag:
     base-url: ${RAG_BASE_URL:}
     token: ${RAG_INGEST_TOKEN:}
+    read-timeout-ms: ${RAG_READ_TIMEOUT_MS:120000}
 
 # Google OAuth (authorization-code flow, backend-side token exchange).
 # Values come from env vars; empty defaults let the app start without .env

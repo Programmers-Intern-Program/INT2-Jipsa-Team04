@@ -265,10 +265,12 @@ CREATE TABLE `Uploads` (
     `Total` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '업로드 대상 파일 총 개수',
     `Created_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성 일시',
     `Finished_At` DATETIME(6) NULL COMMENT '업로드 배치 종료 일시',
+    `Idempotency_Key` VARCHAR(255) NULL COMMENT '업로드 재시도 멱등성 키. 동일 사용자 내 중복 방지',
 
     PRIMARY KEY (`Uploads_IDX`),
 
     KEY `IX_Uploads_Users_Status` (`Users_IDX`, `Status`, `Created_At`),
+    UNIQUE KEY `UK_Uploads_User_IdempotencyKey` (`Users_IDX`, `Idempotency_Key`),
 
     CONSTRAINT `FK_Uploads_Users`
         FOREIGN KEY (`Users_IDX`)
@@ -405,16 +407,19 @@ CREATE TABLE `Job` (
    ========================= */
 CREATE TABLE `Chunk` (
     `Chunk_IDX` BIGINT NOT NULL AUTO_INCREMENT COMMENT '서버 검색용 청크 고유 식별자(PK)',
+    `Chunk_ID` VARCHAR(128) NOT NULL COMMENT '청크 고유 식별자. VectorDB RAG_Chunk_Vector.Chunk_ID와 논리 매핑',
     `File_IDX` BIGINT NOT NULL COMMENT '파일 식별자(FK)',
     `Chunk_Index` INT UNSIGNED NOT NULL COMMENT '파일 내 청크 순번',
     `Content` TEXT NOT NULL COMMENT '서버 검색/응답용 청크 내용 스냅샷',
     `Page` INT UNSIGNED NULL COMMENT '페이지 번호',
+    `Index_Version` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT '청크가 생성된 색인 버전',
     `Created_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성 일시',
 
     PRIMARY KEY (`Chunk_IDX`),
 
     UNIQUE KEY `UK_Chunk_File_ChunkIndex` (`File_IDX`, `Chunk_Index`),
     KEY `IX_Chunk_File_Page` (`File_IDX`, `Page`, `Chunk_Index`),
+    KEY `IX_Chunk_ChunkID` (`Chunk_ID`),
 
     CONSTRAINT `FK_Chunk_File`
         FOREIGN KEY (`File_IDX`)

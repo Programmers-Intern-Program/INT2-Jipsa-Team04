@@ -39,7 +39,7 @@ class UploadControllerTest {
     @Test
     void uploadReturnsCreatedWithIds() throws Exception {
         when(currentUserProvider.requireUserId()).thenReturn(1L);
-        when(uploadService.upload(anyLong(), any(), any()))
+        when(uploadService.upload(anyLong(), any(), any(), any()))
                 .thenReturn(new UploadResponse(10L, List.of(100L, 101L)));
 
         MockMultipartFile file = new MockMultipartFile(
@@ -54,7 +54,7 @@ class UploadControllerTest {
     @Test
     void uploadReturns400WhenLimitExceeded() throws Exception {
         when(currentUserProvider.requireUserId()).thenReturn(1L);
-        when(uploadService.upload(anyLong(), any(), any()))
+        when(uploadService.upload(anyLong(), any(), any(), any()))
                 .thenThrow(new UploadLimitExceededException("한 번에 최대 5개까지 업로드할 수 있습니다."));
 
         MockMultipartFile file = new MockMultipartFile(

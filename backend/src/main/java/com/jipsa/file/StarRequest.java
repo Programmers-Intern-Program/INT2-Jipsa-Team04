@@ -1,4 +1,6 @@
 package com.jipsa.file;
 
-public record StarRequest(boolean star) {
+import jakarta.validation.constraints.NotNull;
+
+public record StarRequest(@NotNull Boolean star) {
 }

@@ -94,6 +94,17 @@ export function listTrash(page = 0): Promise<FileListResponse> {
     return apiFetch<FileListResponse>(`/files/trash?page=${page}`);
 }
 
+export async function listAllTrash(): Promise<Document[]> {
+    const first = await listTrash(0);
+    const items = [...first.items];
+    const totalPages = first.size > 0 ? Math.ceil(first.total / first.size) : 1;
+    for (let page = 1; page < totalPages; page++) {
+        const res = await listTrash(page);
+        items.push(...res.items);
+    }
+    return items.map(toDocument);
+}
+
 export function restoreFile(fileId: number): Promise<void> {
     return apiFetch<{ success: boolean }>(`/files/${fileId}/restore`, {
         method: "PATCH",
@@ -197,6 +208,12 @@ export function getFileStatus(fileId: number): Promise<FileStatusInfo> {
 
 export function deleteFile(fileId: number): Promise<void> {
     return apiFetch<{ success: boolean }>(`/files/${fileId}`, {
+        method: "DELETE",
+    }).then(() => undefined);
+}
+
+export function permanentDeleteFile(fileId: number): Promise<void> {
+    return apiFetch<{ success: boolean }>(`/files/${fileId}/permanent`, {
         method: "DELETE",
     }).then(() => undefined);
 }

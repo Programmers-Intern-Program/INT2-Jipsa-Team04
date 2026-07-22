@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Grid, 
@@ -31,7 +31,7 @@ import { formatBytes } from "../utils/formatBytes";
 import { mockFolders } from "../mocks/mockData";
 import { getFolderPath, getFolderAncestors, isDescendantOrSelf, ensureFolderPath } from "../utils/folderTree";
 import { listFolders, createFolder, deleteFolder } from "../api/folders";
-import { deleteFile, downloadFile, getFileDetail, getFileStatus, getStorageUsage, listAllFiles, listFiles, listTrash, moveFiles, renameFile, restoreFile, toDocument, toggleStar } from "../api/files";
+import { deleteFile, downloadFile, getFileDetail, getFileStatus, getStorageUsage, listAllFiles, listAllTrash, listFiles, moveFiles, permanentDeleteFile, renameFile, restoreFile, toDocument, toggleStar } from "../api/files";
 import { proposeOrganization, applyOrganization } from "../api/organize";
 import { ApiError } from "../api/client";
 import FileDetailPanel from "./FileDetailPanel";
@@ -43,7 +43,7 @@ interface MyDocumentsViewProps {
   onNavigateToChat: (docIds: string[]) => void;
   isUploadOpen: boolean;
   setIsUploadOpen: (open: boolean) => void;
-  onUpdateDocuments: (docs: Document[]) => void;
+  onUpdateDocuments: React.Dispatch<React.SetStateAction<Document[]>>;
 }
 
 export default function MyDocumentsView({ 
@@ -90,6 +90,8 @@ export default function MyDocumentsView({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
+
+  const starPendingRef = useRef<Set<string>>(new Set());
 
   // 비로그인 상태면 토큰이 없어 401로 실패하는 게 정상. 그 경우 기존 mock 상태를
   // 그대로 유지해 데모가 안 깨지게 한다.
@@ -205,10 +207,10 @@ export default function MyDocumentsView({
       return;
     }
     let cancelled = false;
-    listTrash(0)
-        .then((res) => {
+    listAllTrash()
+        .then((docs) => {
           if (cancelled) return;
-          setTrashDocs(res.items.map(toDocument));
+          setTrashDocs(docs);
         })
         .catch((err) => {
           if (cancelled) return;
@@ -386,21 +388,21 @@ export default function MyDocumentsView({
   };
 
   const handleToggleStar = async (docId: string) => {
+    if (starPendingRef.current.has(docId)) return;
     const doc = documents.find((d) => d.id === docId);
     if (!doc) return;
     const current = !!doc.star;
     const next = !current;
-    onUpdateDocuments(
-        documents.map((d) => (d.id === docId ? { ...d, star: next } : d))
-    );
+    starPendingRef.current.add(docId);
+    onUpdateDocuments((prev) => prev.map((d) => (d.id === docId ? { ...d, star: next } : d)));
     try {
       await toggleStar(Number(docId), next);
     } catch (err) {
       console.warn("[files] PATCH /api/v1/files/{id}/star 실패 - 롤백:", err);
-      onUpdateDocuments(
-          documents.map((d) => (d.id === docId ? { ...d, star: current } : d))
-      );
+      onUpdateDocuments((prev) => prev.map((d) => (d.id === docId ? { ...d, star: current } : d)));
       alert("중요 문서 설정에 실패했습니다.");
+    } finally {
+      starPendingRef.current.delete(docId);
     }
   };
 
@@ -457,9 +459,32 @@ export default function MyDocumentsView({
     }
     if (restoredIds.length > 0) {
       setTrashDocs((prev) => (prev ? prev.filter((d) => !restoredIds.includes(d.id)) : prev));
+      try {
+        onUpdateDocuments(await listAllFiles());
+      } catch (err) {
+        console.warn("[files] 복원 후 목록 재동기화 실패:", err);
+      }
       alert(`${restoredIds.length}개의 문서를 복원했습니다.`);
     } else {
       alert("문서 복원에 실패했습니다.");
+    }
+    setCheckedDocIds([]);
+  };
+
+  const handlePermanentDeleteDocuments = async (docIds: string[]) => {
+    if (!window.confirm(`${docIds.length}개의 문서를 영구 삭제하시겠습니까? 되돌릴 수 없습니다.`)) return;
+    const ids = docIds.map(Number).filter((id) => Number.isFinite(id));
+    const results = await Promise.allSettled(ids.map((id) => permanentDeleteFile(id)));
+    const deletedIds = ids.filter((_, i) => results[i].status === "fulfilled").map(String);
+    if (deletedIds.length < ids.length) {
+      console.warn("[files] 영구 삭제 일부 실패:", ids.length - deletedIds.length);
+    }
+    if (deletedIds.length > 0) {
+      setTrashDocs((prev) => (prev ? prev.filter((d) => !deletedIds.includes(d.id)) : prev));
+      getStorageUsage().then(setStorage).catch(() => {});
+      alert(`${deletedIds.length}개의 문서를 영구 삭제했습니다.`);
+    } else {
+      alert("영구 삭제에 실패했습니다.");
     }
     setCheckedDocIds([]);
   };
@@ -481,7 +506,7 @@ export default function MyDocumentsView({
     const sourceExt = uploadFile
         ? (uploadFile.name.split(".").pop()?.toLowerCase() || "txt")
         : "txt";
-    const baseName = uploadName.replace(/\.(pdf|docx|xlsx|txt)$/i, "");
+    const baseName = uploadName.replace(new RegExp(`\\.${sourceExt}$`, "i"), "");
     const formattedName = `${baseName}.${sourceExt}`;
     const file = uploadFile
         ? new File([uploadFile], formattedName, { type: uploadFile.type || mimeByType[sourceExt] || "text/plain" })
@@ -662,10 +687,7 @@ export default function MyDocumentsView({
     }
   };
 
-  // DELETE /api/v1/folders/{id}를 fire-and-forget으로 호출한다 — 비로그인 상태면
-  // 401이 정상일 수 있어 로컬 상태 갱신은 API 응답을 기다리지 않는다.
-  // 하위 폴더까지 함께 삭제하고, 포함된 문서는 미분류(루트, folderId: null)로 옮긴다.
-  const handleDeleteFolder = (folderId: number, folderName: string) => {
+  const handleDeleteFolder = async (folderId: number, folderName: string) => {
     const collectDescendantIds = (id: number): number[] => {
       const childIds = folders.filter((f) => f.parentFolderId === id).map((f) => f.folderId);
       return [id, ...childIds.flatMap(collectDescendantIds)];
@@ -684,24 +706,22 @@ export default function MyDocumentsView({
 
     if (!window.confirm(confirmMsg)) return;
 
-    const reassign = affectedDocCount > 0
-        ? moveFiles(affectedDocs.map((d) => Number(d.id)).filter((id) => Number.isFinite(id)), null)
-        : Promise.resolve();
-
-    reassign
-        .catch((err) => {
-          console.warn("[files] PATCH /api/v1/files/batch/move 실패 - 로컬 상태만 갱신됨(비로그인 상태면 정상):", err);
-        })
-        .then(() => deleteFolder(folderId))
-        .catch((err) => {
-          console.warn("[folders] DELETE /api/v1/folders 실패 - 로컬 상태만 갱신됨(비로그인 상태면 정상):", err);
-        });
+    try {
+      if (affectedDocCount > 0) {
+        await moveFiles(affectedDocs.map((d) => Number(d.id)).filter((id) => Number.isFinite(id)), null);
+      }
+      await deleteFolder(folderId);
+    } catch (err) {
+      console.warn("[folders] 폴더 삭제 실패 - 상태를 변경하지 않음:", err);
+      alert("폴더 삭제에 실패했습니다.");
+      return;
+    }
 
     setFolders((prev) => prev.filter((f) => !idsToDelete.includes(f.folderId)));
 
     if (affectedDocCount > 0) {
-      onUpdateDocuments(
-          documents.map((d) =>
+      onUpdateDocuments((prev) =>
+          prev.map((d) =>
               d.folderId !== null && idsToDelete.includes(d.folderId) ? { ...d, folderId: null } : d
           )
       );
@@ -1255,12 +1275,20 @@ export default function MyDocumentsView({
                 </div>
                 <div className="flex items-center gap-2">
                   {currentTab === "trash" && (
-                      <button
-                          onClick={() => handleRestoreDocuments(checkedDocIds)}
-                          className="px-3.5 py-2 bg-primary text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
-                      >
-                        <Undo2 className="w-3.5 h-3.5" /> 선택 복원
-                      </button>
+                      <>
+                        <button
+                            onClick={() => handleRestoreDocuments(checkedDocIds)}
+                            className="px-3.5 py-2 bg-primary text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        >
+                          <Undo2 className="w-3.5 h-3.5" /> 선택 복원
+                        </button>
+                        <button
+                            onClick={() => handlePermanentDeleteDocuments(checkedDocIds)}
+                            className="px-3.5 py-2 bg-red-600 text-white text-[11px] font-extrabold rounded-xl hover:bg-red-700 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> 선택 영구 삭제
+                        </button>
+                      </>
                   )}
                   {currentTab !== "trash" && (
                       <>
@@ -2145,14 +2173,14 @@ export default function MyDocumentsView({
                       onClick={() => handleLoadSample("sample1")}
                       className="px-2.5 py-1 bg-primary/5 hover:bg-primary/10 border border-primary/10 text-primary text-[10px] font-bold rounded-lg cursor-pointer animate-pulse"
                     >
-                      📝 정부 바우처 결과보고서(PDF)
+                      📝 정부 바우처 결과보고서(TXT)
                     </button>
                     <button 
                       type="button"
                       onClick={() => handleLoadSample("sample2")}
                       className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 text-indigo-600 text-[10px] font-bold rounded-lg cursor-pointer"
                     >
-                      🏢 사내 복리후생 가이드(DOCX)
+                      🏢 사내 복리후생 가이드(TXT)
                     </button>
                   </div>
                 </div>

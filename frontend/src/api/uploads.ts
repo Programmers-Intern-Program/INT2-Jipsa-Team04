@@ -23,16 +23,21 @@ export interface UploadStatusResponse {
 
 export async function uploadFiles(
     files: File[],
-    folderId?: number | null
+    folderId?: number | null,
+    idempotencyKey?: string
 ): Promise<UploadResult> {
     const form = new FormData();
     files.forEach((f) => form.append("files", f));
     if (folderId != null) form.append("folderId", String(folderId));
 
     const token = localStorage.getItem(TOKEN_STORAGE_KEY);
+    const headers: Record<string, string> = {
+        "Idempotency-Key": idempotencyKey ?? crypto.randomUUID(),
+    };
+    if (token) headers.Authorization = `Bearer ${token}`;
     const response = await fetch("/api/v1/uploads", {
         method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers,
         body: form,
     });
 
