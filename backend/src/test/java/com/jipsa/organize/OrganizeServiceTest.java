@@ -394,6 +394,32 @@ class OrganizeServiceTest {
         assertThat(response.held().get(0).fileId()).isEqualTo(11L);
     }
 
+    /**
+     * 이 배치의 다른 매핑에 confidence가 있으면(=민감도 조회가 실제로 일어나면) confidence가
+     * 빠진 매핑은 무조건 적용이 아니라 보류돼야 한다 — AI 응답이 일부 매핑에서만 confidence를
+     * 빠뜨려도 안전장치가 뚫리면 안 된다는 걸 확인하는 테스트. 요청 전체에 confidence가 하나도
+     * 없는 완전 레거시 케이스(위 "confidence가_없으면_필터링없이_그대로_적용된다")와는 다른 경우다.
+     */
+    @Test
+    void applyProposal_같은배치에_confidence있는매핑이있으면_confidence없는매핑은_보류된다() {
+        givenSensitivity("0.500");
+        when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(ownedFile(10L)));
+        when(fileRepository.findByIdAndDeletedAtIsNull(11L)).thenReturn(Optional.of(ownedFile(11L)));
+        when(folderRepository.findByIdAndUsersId(5L, USER)).thenReturn(Optional.of(new Folder()));
+
+        OrganizeProposal proposal = new OrganizeProposal(
+                List.of(),
+                List.of(new FileMapping(10L, 5L, null, null, 0.9),
+                        new FileMapping(11L, 5L, null, null)));
+
+        OrganizeApplyResponse response = organizeService.applyProposal(USER, proposal);
+
+        verify(fileService).moveToFolder(USER, 10L, 5L);
+        verify(fileService, never()).moveToFolder(eq(USER), eq(11L), any());
+        assertThat(response.held()).hasSize(1);
+        assertThat(response.held().get(0).fileId()).isEqualTo(11L);
+    }
+
     // ---- AI 제안 생성 ----
 
     @Test
