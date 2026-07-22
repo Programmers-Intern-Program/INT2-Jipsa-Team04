@@ -1,4 +1,4 @@
-"""최종 활성 문서와 전체 청크를 Local RAG DB에서 조회한다."""
+"""파일 범위의 최신 성공 색인과 전체 청크를 Local RAG DB에서 조회한다."""
 
 from collections.abc import Mapping, Sequence
 from typing import Final
@@ -16,16 +16,24 @@ from jipsa_rag.infrastructure.indexing.exceptions import (
     LocalRagStorageError,
 )
 
-# 색인 서비스가 성공으로 반환한 RAG_Document_IDX가 여전히 해당 파일의
-# 유일한 최신 활성 문서인지 확인한 뒤 그 문서의 청크 전체를 조회한다.
+# 같은 사용자·파일 범위에서 성공한 색인 실행 중 현재 활성 문서를 소유한
+# 가장 최신 실행을 먼저 선택한 뒤, 해당 문서의 청크 전체를 조회한다.
+#
+# RAG_Index_Run_IDX는 AUTO_INCREMENT PK이므로 값이 클수록 더 나중에 시작된
+# 색인 실행이다. 성공한 재색인이 존재하면 이전 요청이 늦게 콜백 단계에
+# 도착하더라도 이 쿼리는 항상 가장 최신 SUCCESS 실행의 활성 문서를 선택한다.
 #
 # 조건의 목적은 다음과 같다.
-# 1. RAG_Document_IDX, Users_IDX, File_IDX가 모두 일치해야 한다.
-# 2. INDEXED이면서 논리 삭제되지 않은 문서만 허용한다.
+#
+# 1. Users_IDX와 File_IDX가 요청 범위와 일치해야 한다.
+# 2. SUCCESS 실행이 소유한 INDEXED·미삭제 문서만 선택한다.
 # 3. 청크의 Index_Version이 상위 문서의 Index_Version과 같아야 한다.
-# 4. 같은 사용자·파일에 다른 활성 INDEXED 문서가 존재하면 오래된 실행의
-#    콜백일 수 있으므로 결과를 반환하지 않는다.
-# 5. Chunk_Index 순서로 정렬하여 0부터 이어지는 최종 스냅샷을 구성한다.
+# 4. 최신 실행은 MAX(RAG_Index_Run_IDX)로 결정한다.
+# 5. Chunk_Index 순서로 정렬하여 0부터 이어지는 전체 스냅샷을 구성한다.
+#
+# 동일한 인제스트 요청이 반복되어 기존 RAG_Document를 멱등 재사용한 경우에도
+# 새로운 SUCCESS 실행 이력은 생성된다. 이때 최신 실행이 같은 문서를 가리키므로
+# 저장된 결정적 Chunk_ID 전체가 그대로 다시 반환된다.
 _SELECT_LATEST_ACTIVE_CHUNKS: Final = text(
     """
     SELECT
@@ -44,42 +52,50 @@ _SELECT_LATEST_ACTIVE_CHUNKS: Final = text(
         chunk.`Sheet_Name` AS `sheet_name`,
         chunk.`Section_Title` AS `section_title`
     FROM `RAG_Document` AS document
+    INNER JOIN `RAG_Index_Run` AS latest_successful_run
+        ON latest_successful_run.`RAG_Document_IDX`
+            = document.`RAG_Document_IDX`
+       AND latest_successful_run.`RAG_Index_Run_IDX` = (
+           SELECT MAX(candidate_run.`RAG_Index_Run_IDX`)
+           FROM `RAG_Index_Run` AS candidate_run
+           INNER JOIN `RAG_Document` AS candidate_document
+               ON candidate_document.`RAG_Document_IDX`
+                   = candidate_run.`RAG_Document_IDX`
+           WHERE candidate_run.`Users_IDX`
+                     = :users_idx
+             AND candidate_run.`File_IDX`
+                     = :file_idx
+             AND candidate_run.`Status`
+                     = 'SUCCESS'
+             AND candidate_document.`Users_IDX`
+                     = :users_idx
+             AND candidate_document.`File_IDX`
+                     = :file_idx
+             AND candidate_document.`Index_Status`
+                     = 'INDEXED'
+             AND candidate_document.`Deleted_At`
+                     IS NULL
+       )
     INNER JOIN `RAG_Chunk` AS chunk
         ON chunk.`RAG_Document_IDX`
             = document.`RAG_Document_IDX`
        AND chunk.`Index_Version`
             = document.`Index_Version`
-    WHERE document.`RAG_Document_IDX`
-            = :rag_document_idx
-      AND document.`Users_IDX`
-            = :users_idx
+    WHERE document.`Users_IDX`
+              = :users_idx
       AND document.`File_IDX`
-            = :file_idx
+              = :file_idx
       AND document.`Index_Status`
-            = 'INDEXED'
+              = 'INDEXED'
       AND document.`Deleted_At`
-            IS NULL
-      AND NOT EXISTS (
-          SELECT 1
-          FROM `RAG_Document` AS other_active_document
-          WHERE other_active_document.`Users_IDX`
-                    = document.`Users_IDX`
-            AND other_active_document.`File_IDX`
-                    = document.`File_IDX`
-            AND other_active_document.`RAG_Document_IDX`
-                    <> document.`RAG_Document_IDX`
-            AND other_active_document.`Index_Status`
-                    = 'INDEXED'
-            AND other_active_document.`Deleted_At`
-                    IS NULL
-      )
+              IS NULL
     ORDER BY chunk.`Chunk_Index`
     """
 )
 
 
 class LocalRagActiveChunkRepository:
-    """Local RAG DB에서 성공한 최종 색인의 전체 청크를 조회한다."""
+    """Local RAG DB에서 가장 최신인 성공 색인의 전체 청크를 조회한다."""
 
     def __init__(
         self,
@@ -94,13 +110,17 @@ class LocalRagActiveChunkRepository:
         *,
         users_idx: int,
         file_idx: int,
-        rag_document_idx: int,
     ) -> IndexedDocumentSnapshot:
-        """지정한 최종 문서가 최신 활성 색인이면 전체 청크를 반환한다.
+        """파일 범위에서 가장 최신인 성공 색인의 전체 청크를 반환한다.
 
-        조회 대상 문서가 삭제되었거나, 아직 INDEXED가 아니거나,
-        다른 활성 문서가 존재하거나, 청크가 누락된 경우에는 정상적인
-        성공 콜백을 만들 수 없으므로 LocalRagStorageError를 발생시킨다.
+        호출자가 특정 RAG_Document_IDX를 지정하지 않도록 설계했다.
+
+        이전 인제스트 요청이 재색인 요청보다 늦게 콜백 단계에 도착해도
+        저장소가 현재 최신 SUCCESS 실행의 활성 문서를 직접 선택하므로,
+        이전 문서의 청크가 성공 payload에 포함되지 않는다.
+
+        활성 성공 문서가 없거나 청크가 누락된 경우에는 완전한 성공 콜백을
+        만들 수 없으므로 LocalRagStorageError를 발생시킨다.
         """
 
         _validate_positive_identifier(
@@ -110,10 +130,6 @@ class LocalRagActiveChunkRepository:
         _validate_positive_identifier(
             file_idx,
             field_name="file_idx",
-        )
-        _validate_positive_identifier(
-            rag_document_idx,
-            field_name="rag_document_idx",
         )
 
         try:
@@ -126,7 +142,6 @@ class LocalRagActiveChunkRepository:
                     {
                         "users_idx": users_idx,
                         "file_idx": file_idx,
-                        "rag_document_idx": rag_document_idx,
                     },
                 )
 
