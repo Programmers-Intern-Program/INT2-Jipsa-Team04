@@ -663,9 +663,19 @@ export default function MyDocumentsView({
   // 아직 적용 전이면 confidence/민감도로 "적용될 매핑"을 추정, 적용 후면 실제 held 응답으로
   // 정확히 계산한다 — 어느 쪽이든 결과는 { appliedMappings, tempIdsToCreate } 형태로 통일해서 쓴다.
   const getOrganizeApplyPreview = (result: OrganizeProposal, applied: OrganizeApplyResponse | null) => {
-    const appliedMappings = applied
-      ? result.mappings.filter((m) => !applied.held.some((h) => h.fileId === m.fileId))
-      : result.mappings.filter((m) => m.confidence == null || m.confidence >= sensitivity);
+    let appliedMappings: FileMapping[];
+    if (applied) {
+      appliedMappings = result.mappings.filter((m) => !applied.held.some((h) => h.fileId === m.fileId));
+    } else {
+      // 백엔드(OrganizeService.isBelowThreshold)와 같은 규칙을 따른다: 이 제안 안에 confidence를
+      // 가진 매핑이 하나도 없으면(완전 레거시 제안) 필터링 없이 전부 적용될 것으로 본다. 반면
+      // 하나라도 confidence가 있으면(=apply 시 민감도 조회가 실제로 일어남), confidence가 빠진
+      // 매핑도 서버에서는 보류되므로 여기서 "적용될 것"으로 잘못 미리 보여주면 안 된다.
+      const anyConfidencePresent = result.mappings.some((m) => m.confidence != null);
+      appliedMappings = result.mappings.filter(
+        (m) => !anyConfidencePresent || (m.confidence != null && m.confidence >= sensitivity)
+      );
+    }
     return { appliedMappings, tempIdsToCreate: computeTempIdsToCreate(appliedMappings, result.newFolders) };
   };
 
