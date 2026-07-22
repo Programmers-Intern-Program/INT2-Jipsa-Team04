@@ -5,62 +5,115 @@ services:
   # Qdrant Vector Database
   # ============================================================
   qdrant:
+    # Jipsa RAG에서 사용하는 Qdrant VectorDB 이미지입니다.
     image: qdrant/qdrant:v1.18.2
+
+    # 다른 Docker 프로젝트의 Qdrant와 구분하기 위한
+    # Jipsa RAG 전용 컨테이너 이름입니다.
     container_name: jipsa-qdrant
-    restart: unless-stopped
+
+    # Docker Desktop 실행만으로 컨테이너가 자동 시작되지 않도록 합니다.
+    #
+    # 컨테이너 실행과 종료는 다음 스크립트가 담당합니다.
+    #
+    # - scripts/start-local-rag.ps1
+    # - scripts/stop-local-rag.ps1
+    restart: "no"
 
     ports:
-      # RAG 서버가 실행되는 로컬 PC에서만 접근할 수 있도록
-      # 모든 네트워크 인터페이스가 아닌 127.0.0.1에만 바인딩합니다.
+      # Qdrant REST API입니다.
+      #
+      # 외부 네트워크에 직접 노출하지 않고
+      # 현재 로컬 PC에서만 접근하도록 127.0.0.1에 바인딩합니다.
       - "127.0.0.1:6333:6333"
 
-      # Qdrant gRPC 포트입니다.
-      # 초기 구현은 REST를 사용하지만 이후 대량 적재 최적화에 대비해 노출합니다.
+      # Qdrant gRPC API입니다.
+      #
+      # 초기 구현은 REST API를 사용하지만,
+      # 이후 대량 벡터 적재 최적화를 위해 함께 노출합니다.
       - "127.0.0.1:6334:6334"
 
     volumes:
-      # Collection, 벡터, payload, index 등 Qdrant 데이터를 보존합니다.
+      # Collection, 벡터, payload 및 index 데이터를 보존합니다.
+      #
+      # 컨테이너를 재생성해도 기존 RAG 색인 데이터가 유지됩니다.
       - jipsa_qdrant_storage:/qdrant/storage
 
-      # Qdrant Snapshot 파일을 컨테이너 재생성 이후에도 보존합니다.
+      # Qdrant Snapshot 데이터를 별도로 보존합니다.
       - jipsa_qdrant_snapshots:/qdrant/snapshots
 
   # ============================================================
   # Hugging Face Text Embeddings Inference
   # ============================================================
   embedding:
-    # NVIDIA CUDA를 사용하는 Hugging Face TEI 이미지입니다.
-    image: ghcr.io/huggingface/text-embeddings-inference:cuda-1.9
+    # RTX 3060 Ti는 NVIDIA Ampere 아키텍처이며
+    # CUDA Compute Capability 8.6을 사용합니다.
+    #
+    # 따라서 Hugging Face TEI의 Ampere 8.6 전용 이미지를 사용합니다.
+    image: ghcr.io/huggingface/text-embeddings-inference:86-1.9
+
+    # Jipsa RAG 전용 TEI 컨테이너 이름입니다.
     container_name: jipsa-embedding
-    restart: unless-stopped
+
+    # CUDA 오류나 CPU 폴백 상태에서 무한 재시작하지 않도록
+    # Docker 자동 재시작을 사용하지 않습니다.
+    restart: "no"
+
+    # 현재 TEI 이미지에 포함된 기본 Entrypoint 대신
+    # Jipsa 프로젝트에서 보정한 CUDA Entrypoint를 실행합니다.
+    #
+    # /bin/bash를 명시적으로 사용하므로 Windows Host 파일의
+    # 실행 권한 비트에 의존하지 않습니다.
+    entrypoint:
+      - "/bin/bash"
+      - "/opt/jipsa/cuda-entrypoint.sh"
 
     ports:
-      # 로컬 애플리케이션 서버가 사용하는 8080 포트와 충돌하지 않도록
-      # 호스트 포트 18081을 컨테이너의 HTTP 포트 80에 연결합니다.
+      # Windows Host의 18081 포트를
+      # TEI 컨테이너 HTTP 포트 80에 연결합니다.
+      #
+      # 대응하는 환경 변수:
+      #
+      # JIPSA_RAG_EMBEDDING_BASE_URL=http://127.0.0.1:18081
       - "127.0.0.1:18081:80"
 
     volumes:
-      # 다운로드한 Hugging Face 모델 파일을 Docker Volume에 보존합니다.
-      # 컨테이너를 재생성하더라도 동일 모델을 다시 다운로드하지 않습니다.
+      # Hugging Face Hub에서 다운로드한 모델 파일을 보존합니다.
+      #
+      # 컨테이너를 재생성해도 Qwen3 모델 Cache가 유지됩니다.
       - jipsa_embedding_cache:/data
 
+      # 수정된 CUDA Entrypoint를 컨테이너에 읽기 전용으로 마운트합니다.
+      #
+      # source 경로는 이 compose.yaml 파일이 있는
+      # infra/qdrant 디렉터리를 기준으로 계산됩니다.
+      - type: bind
+        source: ./cuda-entrypoint.sh
+        target: /opt/jipsa/cuda-entrypoint.sh
+        read_only: true
+
     command:
-      # RTX 3060 Ti 8GB 환경에서 사용할 다국어 임베딩 모델입니다.
+      # RAG 설정에서 사용하는 임베딩 모델입니다.
+      #
+      # start-local-rag.ps1이 검증된 환경 변수 값을 전달하며,
+      # 값이 없는 직접 Compose 실행에서는 기본 모델을 사용합니다.
       - "--model-id"
-      - "Qwen/Qwen3-Embedding-0.6B"
+      - "${JIPSA_RAG_EMBEDDING_MODEL:-Qwen/Qwen3-Embedding-0.6B}"
 
     deploy:
       resources:
         reservations:
           devices:
-            # embedding 컨테이너에 NVIDIA GPU 1개를 할당합니다.
+            # TEI 컨테이너에 NVIDIA GPU 한 개를 전달합니다.
+            #
+            # 현재 환경에서는 RTX 3060 Ti 한 개가 전달됩니다.
             - driver: nvidia
               count: 1
               capabilities:
                 - gpu
 
 volumes:
-  # Qdrant의 Collection, 벡터, payload 및 index 데이터입니다.
+  # Qdrant Collection, 벡터, payload 및 index 데이터입니다.
   jipsa_qdrant_storage:
     name: jipsa_qdrant_storage
 
@@ -68,6 +121,6 @@ volumes:
   jipsa_qdrant_snapshots:
     name: jipsa_qdrant_snapshots
 
-  # Hugging Face 임베딩 모델 캐시 데이터입니다.
+  # Hugging Face TEI 모델 Cache 데이터입니다.
   jipsa_embedding_cache:
     name: jipsa_embedding_cache
