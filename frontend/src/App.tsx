@@ -26,10 +26,11 @@ import AdminView from "./components/AdminView";
 // Import types
 import type { Document, AISettings, ChatMessage, ChatSession, SessionUser, MeResponse } from "./types";
 
-// mockDocuments: 정적 mock 데이터, 백엔드 API 연동은 별도 이슈에서 처리.
-// mockAISettings: 최초 렌더링용 fallback 초기값일 뿐 — 실제 값은 아래 useEffect가
-// GET /api/v1/users/me/settings로 즉시 덮어쓴다(로그인 안 한 상태면 실패하고 이 값 유지).
-import { mockDocuments, mockAISettings } from "./mocks/mockData";
+// mockAISettings: 최초 렌더링용 fallback 초기값(설정값이 없을 수는 없어서 필요) — 실제 값은
+// 아래 useEffect가 GET /api/v1/users/me/settings로 로그인 확인 즉시 덮어쓴다. documents는
+// 로그인된 사용자에게 실제 있지도 않은 mock 파일 목록을 보여주는 게 오히려 혼란을 줘서
+// 빈 배열로 시작하고(아래 useEffect 참고), 더 이상 mockDocuments를 쓰지 않는다.
+import { mockAISettings } from "./mocks/mockData";
 import { getUserSettings, updateUserSettings } from "./api/userSettings";
 import { loginWithGoogle, logout as logoutApi } from "./api/auth";
 import { getMe } from "./api/me";
@@ -41,6 +42,7 @@ import {
   verifyOAuthState,
 } from "./utils/oauth";
 import { listAllFiles } from "./api/files";
+import { fetchWithRetry } from "./utils/retry";
 
 const TOKEN_KEY = "aidrive_token";
 const REFRESH_TOKEN_KEY = "aidrive_refresh_token";
@@ -106,9 +108,9 @@ export default function App() {
     () => window.location.pathname === OAUTH_CALLBACK_PATH || localStorage.getItem(TOKEN_KEY) !== null
   );
   const [activeTab, setActiveTab] = useState<string>("dashboard");
-  const [documents, setDocuments] = useState<Document[]>(mockDocuments);
+  const [documents, setDocuments] = useState<Document[]>([]);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>(() => [
-    createChatSession(getInitialSelectedDocIds(mockDocuments))
+    createChatSession(getInitialSelectedDocIds([]))
   ]);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string>(() => chatSessions[0].id);
   const [committedSettings, setCommittedSettings] = useState<AISettings>(mockAISettings);
@@ -189,27 +191,32 @@ export default function App() {
     // isCallback도 아니고 토큰도 없으면 authLoading 초기값이 이미 false다.
   }, []);
 
-  // 실제 설정 조회 시도 — 비로그인 상태면 401로 실패하는 게 정상이고, 그 경우 위에서
-  // 초기화한 mockAISettings를 그대로 유지한다(Folder와 동일 패턴).
+  // 실제 설정 조회 시도 — user가 아직 null일 때(마운트 시점, OAuth 콜백으로 로그인 처리
+  // 중이라 토큰이 저장되기 전)는 아예 시도하지 않고 건너뛴다. user가 채워지는 시점
+  // (로그인 완료/세션 복원)에 맞춰 시도하도록 [user] 의존성을 쓴다. 이 시점엔 로그인이
+  // 확정된 상태라 실패하면 "비로그인이라 401"이 아니라 진짜 오류이므로, mock으로 조용히
+  // 가리지 않고 재시도(fetchWithRetry)한다 — 그래도 실패하면 fallback 기본값을 유지한다.
   useEffect(() => {
-    getUserSettings()
+    if (!user) return;
+    fetchWithRetry(getUserSettings)
       .then(setCommittedSettings)
       .catch((err) => {
-        console.warn("[settings] GET /api/v1/users/me/settings 실패 - mock 데이터 유지(비로그인 상태면 정상):", err);
+        console.error("[settings] GET /api/v1/users/me/settings 재시도 후에도 실패:", err);
       });
-  }, []);
+  }, [user]);
 
-  // 실제 문서 목록 조회 시도 — 지금까지는 스마트 정리 적용 등 특정 동작 후에만 documents가
-  // 실제 데이터로 갱신되고, 앱을 처음 열 때는 아무도 실제 목록을 불러오지 않아서 로그인한
-  // 뒤에도 documents가 계속 mockDocuments로 남아있던 문제(폴더 안 파일이 계속 mock으로
-  // 보이던 원인). 비로그인 상태면 401로 실패하는 게 정상이고, 그 경우 mockDocuments 유지.
+  // 실제 문서 목록 조회 시도 — 위 설정 조회와 같은 이유로 [user] 의존성과 재시도를 쓴다.
+  // 로그인이 확정된 뒤의 실패는 실제 오류이므로, mock 파일 목록으로 가리는 대신 재시도하고
+  // 그래도 실패하면 빈 목록 상태를 유지한다(실제로는 있는데 안 보이는 것보다, 없는 척
+  // 보여주는 mock 쪽이 로그인된 사용자에게 더 혼란스럽다고 판단).
   useEffect(() => {
-    listAllFiles()
+    if (!user) return;
+    fetchWithRetry(listAllFiles)
       .then(setDocuments)
       .catch((err) => {
-        console.warn("[files] GET /api/v1/files 실패 - mock 데이터 유지(비로그인 상태면 정상):", err);
+        console.error("[files] GET /api/v1/files 재시도 후에도 실패:", err);
       });
-  }, []);
+  }, [user]);
 
   // 로그아웃: 가능하면 refresh token 폐기 API를 호출하고(실패해도 무시),
   // 항상 localStorage(토큰·리프레시·사용자)를 정리한 뒤 랜딩으로 돌아간다.
@@ -592,6 +599,7 @@ export default function App() {
                   isUploadOpen={isUploadOpen}
                   setIsUploadOpen={setIsUploadOpen}
                   onUpdateDocuments={setDocuments}
+                  sensitivity={committedSettings.sensitivity}
                 />
               </motion.div>
             )}

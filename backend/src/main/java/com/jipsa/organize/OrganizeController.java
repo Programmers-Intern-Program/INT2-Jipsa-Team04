@@ -1,7 +1,6 @@
 package com.jipsa.organize;
 
 import com.jipsa.common.CurrentUserProvider;
-import com.jipsa.common.SuccessResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -38,11 +37,14 @@ public class OrganizeController {
         return organizeService.generateProposal(userId);
     }
 
-    /** 제안(OrganizeProposal)을 검증하고, 통과하면 실제 파일 이동/이름변경 및 새 폴더 생성을 반영한다. */
+    /**
+     * 제안(OrganizeProposal)을 검증하고, 통과하면 confidence가 사용자 민감도 이상인 매핑만
+     * 실제 파일 이동/이름변경 및 새 폴더 생성으로 반영한다. 민감도 미달 매핑은 응답의
+     * held 목록으로 돌아온다(파일은 그대로 둠).
+     */
     @PostMapping("/apply")
-    public SuccessResponse apply(@RequestBody OrganizeProposal proposal) {
+    public OrganizeApplyResponse apply(@RequestBody OrganizeProposal proposal) {
         Long userId = currentUserProvider.requireUserId();
-        organizeService.applyProposal(userId, proposal);
-        return new SuccessResponse(true);
+        return organizeService.applyProposal(userId, proposal);
     }
 }
