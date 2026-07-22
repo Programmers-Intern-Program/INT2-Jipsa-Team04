@@ -46,7 +46,8 @@ public class AnthropicOrganizeClient implements AiOrganizeClient {
                   "fileId": 파일의 실제 id(숫자),
                   "targetFolderId": "기존 폴더로 옮길 경우 그 실제 id(숫자), 아니면 null",
                   "targetTempId": "새로 만든 폴더로 옮길 경우 그 tempId, 아니면 null",
-                  "newName": "파일명을 바꾸고 싶으면 새 이름, 아니면 null"
+                  "newName": "파일명을 바꾸고 싶으면 새 이름, 아니면 null",
+                  "confidence": 이 매핑이 적절하다고 확신하는 정도를 나타내는 0.0~1.0 사이의 숫자
                 }
               ]
             }
@@ -56,7 +57,19 @@ public class AnthropicOrganizeClient implements AiOrganizeClient {
             - 파일 매핑(mappings) 각 항목은 targetFolderId/targetTempId 중 정확히 하나만 채우거나 둘 다 null(루트로 이동)로 두세요.
             - targetTempId와 parentTempId는 이번 응답의 newFolders에 실제로 있는 tempId만 참조하세요.
             - fileId, parentFolderId, targetFolderId는 입력으로 주어진 값만 사용하고, 존재하지 않는 값을 지어내지 마세요.
-            - 이미 적절한 위치와 이름을 가진 파일은 mappings에 아예 포함하지 않아도 됩니다.
+            - 이미 적절한 위치와 이름을 가진 파일(옮기거나 이름을 바꿀 필요가 전혀 없는 파일)만
+              mappings에서 빼세요. 그 외의 모든 파일은, 어디로 보낼지 확신이 없더라도 반드시
+              mappings에 포함해야 합니다 — 확신이 없다는 것 자체를 낮은 confidence로 표현하는
+              것이지, 응답에서 빼서 표현하는 게 아닙니다. 응답에서 뺀 파일은 사용자에게 검토 대상
+              으로조차 보이지 않으니, 애매한 파일일수록 반드시 포함하고 confidence만 낮게 주세요.
+            - confidence는 항상 채우세요. 파일명·확장자·기존 폴더 구조로 볼 때 이 파일이 그 폴더에 속한다는 근거가
+              뚜렷하면 1.0에 가깝게, 근거가 약하거나 여러 폴더 중 하나를 추측한 경우라면 낮게(0.5 미만도 가능) 주세요.
+              항상 높은 값만 반복해서 주지 말고, 실제 확신 정도에 따라 값을 다르게 매기세요.
+            - 어느 폴더에 넣을지 확신이 서지 않는 파일을 모아두는 용도의 새 폴더("미분류", "기타",
+              "분류 보류" 등)는 newFolders에 만들지 마세요. 이 서비스에서는 폴더가 지정되지 않은
+              파일을 이미 "미분류"로 표시하므로, 그런 이름의 폴더를 실제로 만들면 오히려 혼란만
+              생깁니다. 확신이 낮은 파일도 mappings에서 빼지 말고, 그나마 가장 그럴듯한 기존
+              폴더나 새 폴더를 targetFolderId/targetTempId로 채운 뒤 confidence만 낮게 주세요.
             """;
 
     private final AnthropicClient anthropicClient;
