@@ -86,6 +86,8 @@ class OrganizeControllerTest {
     @Test
     void apply_성공하면_success_true를_반환하고_요청바디를_그대로_전달한다() throws Exception {
         given(currentUserProvider.requireUserId()).willReturn(USER_ID);
+        given(organizeService.applyProposal(eq(USER_ID), any()))
+                .willReturn(new OrganizeApplyResponse(true, List.of()));
 
         String body = """
                 {
@@ -102,11 +104,28 @@ class OrganizeControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true));
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.held").isEmpty());
 
         verify(organizeService).applyProposal(eq(USER_ID), eq(new OrganizeProposal(
                 List.of(new ProposedFolder("t1", "제안폴더", null, null)),
                 List.of(new FileMapping(10L, null, "t1", "새이름.pdf")))));
+    }
+
+    @Test
+    void apply_보류된_매핑이_있으면_held로_반환한다() throws Exception {
+        given(currentUserProvider.requireUserId()).willReturn(USER_ID);
+        given(organizeService.applyProposal(eq(USER_ID), any()))
+                .willReturn(new OrganizeApplyResponse(true,
+                        List.of(new FileMapping(10L, 5L, null, null, 0.2))));
+
+        mockMvc.perform(post("/api/v1/organize/apply")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"newFolders\":[],\"mappings\":[]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.held[0].fileId").value(10))
+                .andExpect(jsonPath("$.held[0].confidence").value(0.2));
     }
 
     @Test
