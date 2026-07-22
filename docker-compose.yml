@@ -17,16 +17,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-  embedding:
-    build: ./embedding
-    ports: ["8000:8000"]
   backend:
     build: ./backend
     depends_on:
       db:
         condition: service_healthy
-      embedding:
-        condition: service_started
     environment:
       SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/Jipsa_AWS_Server?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul
       SPRING_DATASOURCE_USERNAME: jipsa
@@ -39,11 +34,16 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
-      EMBEDDING_URL: http://embedding:8000
       S3_BUCKET: ${S3_BUCKET}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_REGION: ${AWS_REGION}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      INTERNAL_ALLOWED_IPS: ${INTERNAL_ALLOWED_IPS}
+      RAG_BASE_URL: ${RAG_BASE_URL}
+      RAG_INGEST_TOKEN: ${RAG_INGEST_TOKEN}
+      APP_INGEST_ENABLED: ${APP_INGEST_ENABLED:-false}
+      APP_STORAGE_QUOTA_BYTES: ${APP_STORAGE_QUOTA_BYTES:-48318382080}
     ports: ["8080:8080"]
   frontend:
     build: ./frontend
@@ -52,6 +52,8 @@ services:
         condition: service_started
     environment:
       VITE_API_TARGET: http://backend:8080
+      VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      VITE_GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
     ports: ["5173:5173"]
 volumes:
   dbdata:
