@@ -82,7 +82,10 @@ class ChunkSynchronizationRequest(BaseModel):
         examples=[512],
     )
 
-    source_metadata: dict[str, SourceMetadataValue] = Field(
+    source_metadata: dict[
+        str,
+        SourceMetadataValue,
+    ] = Field(
         default_factory=dict,
         description=(
             "원문 위치를 나타내는 페이지, 슬라이드, 시트 또는 "
@@ -158,17 +161,23 @@ class IngestCompleteRequest(BaseModel):
         default=None,
         gt=0,
         description=(
-            "동기화 payload에 포함된 청크 수다. "
+            "동기화 payload에 실제로 포함된 청크 수다. "
             "청크 동기화 데이터가 없는 기존 성공 콜백 또는 "
             "실패 콜백에서는 생략한다."
         ),
         examples=[2],
     )
 
-    chunks: tuple[ChunkSynchronizationRequest, ...] | None = Field(
+    chunks: (
+        tuple[
+            ChunkSynchronizationRequest,
+            ...,
+        ]
+        | None
+    ) = Field(
         default=None,
         min_length=1,
-        description=("AWS DB와 동기화할 최신 청크 데이터 목록이다. 임베딩 벡터는 포함하지 않는다."),
+        description=("AWS DB와 동기화할 최신 활성 청크 전체다. 임베딩 벡터는 포함하지 않는다."),
     )
 
     error_message: str | None = Field(
@@ -193,29 +202,52 @@ class IngestCompleteRequest(BaseModel):
         )
 
         has_any_synchronization_field = any(value is not None for value in synchronization_fields)
-
         has_all_synchronization_fields = all(value is not None for value in synchronization_fields)
 
         if self.success:
             if self.error_message is not None:
                 raise ValueError("Successful ingestion must not include an error message.")
 
-            # 최신 활성 청크 조회와 성공 콜백 연결은
-            # 후속 작업에서 추가한다.
-            #
-            # 그 전까지 기존 success-only 콜백도 허용하되,
-            # 동기화 데이터를 보내는 경우에는 index_version,
-            # chunk_count, chunks를 하나의 완전한 묶음으로 전송한다.
+            # 기존 success-only 클라이언트 호출은 하위 호환성을 위해 허용한다.
+            # 실제 POST /ingest 성공 경로에서는 최신 활성 청크 조회 후
+            # index_version, chunk_count, chunks를 모두 포함한다.
             if has_any_synchronization_field and not has_all_synchronization_fields:
                 raise ValueError(
                     "Chunk synchronization requires index_version, chunk_count, and chunks."
                 )
+
+            if has_all_synchronization_fields:
+                # all()의 결과만으로는 정적 타입 검사기가 None이 제거되었다고
+                # 추론하지 못하므로 실제 비교에 사용할 필드를 다시 확인한다.
+                if self.chunk_count is None or self.chunks is None:
+                    raise ValueError(
+                        "Chunk synchronization requires index_version, chunk_count, and chunks."
+                    )
+
+                # 선언된 개수와 실제 HTTP payload의 청크 배열 길이가 다르면
+                # AWS DB가 일부 청크만 저장할 수 있으므로 요청 생성 단계에서
+                # 즉시 거부한다.
+                if self.chunk_count != len(self.chunks):
+                    raise ValueError("chunk_count must match the number of chunks.")
+
+                expected_chunk_indexes = tuple(range(len(self.chunks)))
+                actual_chunk_indexes = tuple(chunk.chunk_index for chunk in self.chunks)
+
+                if actual_chunk_indexes != expected_chunk_indexes:
+                    raise ValueError("chunk indexes must be contiguous and start at zero.")
+
+                chunk_ids = tuple(chunk.chunk_id for chunk in self.chunks)
+
+                if len(set(chunk_ids)) != len(chunk_ids):
+                    raise ValueError("chunk IDs must be unique.")
 
             return self
 
         if not self.error_message:
             raise ValueError("Failed ingestion must include an error message.")
 
+        # 실패 콜백에는 부분 생성된 청크, 색인 버전 또는 청크 개수를
+        # 포함하지 않는다.
         if has_any_synchronization_field:
             raise ValueError("Failed ingestion must not include chunk synchronization data.")
 
