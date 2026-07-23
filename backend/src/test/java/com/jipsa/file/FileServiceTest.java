@@ -265,6 +265,51 @@ class FileServiceTest {
     }
 
     @Test
+    void restoreDetachesFileFromDeletedFolder() {
+        File file = ownedFile();
+        file.setUploadsId(7L);
+        file.setFolderId(5L);
+        file.setDeletedAt(LocalDateTime.now());
+        Folder folder = new Folder();
+        folder.setDeletedAt(LocalDateTime.now());
+        when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
+        when(folderRepository.findById(5L)).thenReturn(Optional.of(folder));
+
+        fileService.restore(1L, 1L);
+
+        assertThat(file.getFolderId()).isNull();
+    }
+
+    @Test
+    void restoreDetachesFileWhenFolderNoLongerExists() {
+        File file = ownedFile();
+        file.setUploadsId(7L);
+        file.setFolderId(5L);
+        file.setDeletedAt(LocalDateTime.now());
+        when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
+        when(folderRepository.findById(5L)).thenReturn(Optional.empty());
+
+        fileService.restore(1L, 1L);
+
+        assertThat(file.getFolderId()).isNull();
+    }
+
+    @Test
+    void restoreKeepsFolderIdWhenFolderIsActive() {
+        File file = ownedFile();
+        file.setUploadsId(7L);
+        file.setFolderId(5L);
+        file.setDeletedAt(LocalDateTime.now());
+        Folder folder = new Folder();
+        when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
+        when(folderRepository.findById(5L)).thenReturn(Optional.of(folder));
+
+        fileService.restore(1L, 1L);
+
+        assertThat(file.getFolderId()).isEqualTo(5L);
+    }
+
+    @Test
     void restoreRejectsFileOwnedByAnotherUser() {
         File file = ownedFile();
         file.setUsersId(2L);
@@ -331,5 +376,49 @@ class FileServiceTest {
 
         assertThatThrownBy(() -> fileService.permanentDelete(1L, 1L))
                 .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void softDeleteByFolderIdsUsesGivenTimestampForActiveFiles() {
+        File file = ownedFile();
+        file.setFolderId(5L);
+        LocalDateTime deletedAt = LocalDateTime.now();
+        when(fileRepository.findByFolderIdInAndDeletedAtIsNull(List.of(5L))).thenReturn(List.of(file));
+
+        fileService.softDeleteByFolderIds(List.of(5L), deletedAt);
+
+        assertThat(file.getStatus()).isEqualTo(FileStatus.DELETED);
+        assertThat(file.getDeletedAt()).isEqualTo(deletedAt);
+    }
+
+    @Test
+    void restoreByFolderIdsOnlyRestoresFilesMatchingExactTimestamp() {
+        File file = ownedFile();
+        file.setFolderId(5L);
+        file.setUploadsId(9L);
+        LocalDateTime deletedAt = LocalDateTime.now();
+        when(fileRepository.findByFolderIdInAndDeletedAt(List.of(5L), deletedAt)).thenReturn(List.of(file));
+
+        fileService.restoreByFolderIds(List.of(5L), deletedAt);
+
+        assertThat(file.getDeletedAt()).isNull();
+        assertThat(file.getStatus()).isEqualTo(FileStatus.UPLOADED);
+        verify(jobService).enqueueIngest(1L, 9L);
+    }
+
+    @Test
+    void permanentDeleteByFolderIdsCleansUpS3AndJobRecords() {
+        File file = ownedFile();
+        file.setFolderId(5L);
+        file.setS3Key("files/key-2");
+        file.setDeletedAt(LocalDateTime.now());
+        when(fileRepository.findByFolderIdInAndDeletedAtIsNotNull(List.of(5L))).thenReturn(List.of(file));
+        when(fileMetadataRepository.findById(1L)).thenReturn(Optional.empty());
+
+        fileService.permanentDeleteByFolderIds(List.of(5L));
+
+        verify(s3Service).delete("test-bucket", "files/key-2");
+        verify(jobRepository).deleteByFileId(1L);
+        verify(fileRepository).deleteAll(List.of(file));
     }
 }

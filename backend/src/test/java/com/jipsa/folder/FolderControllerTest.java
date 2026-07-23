@@ -175,6 +175,60 @@ class FolderControllerTest {
                 .andExpect(status().isNotFound());
     }
 
+    @Test
+    void trash_휴지통_목록을_반환한다() throws Exception {
+        given(currentUserProvider.requireUserId()).willReturn(USER_ID);
+        given(folderService.listTrash(USER_ID, 0)).willReturn(new FolderTrashListResponse(
+                List.of(new FolderResponse(3L, "삭제된 폴더", null)), 1, 0, 20));
+
+        mockMvc.perform(get("/api/v1/folders/trash"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.folders.length()").value(1))
+                .andExpect(jsonPath("$.folders[0].folderId").value(3))
+                .andExpect(jsonPath("$.total").value(1));
+    }
+
+    @Test
+    void restore_성공시_success_true() throws Exception {
+        given(currentUserProvider.requireUserId()).willReturn(USER_ID);
+
+        mockMvc.perform(patch("/api/v1/folders/{id}/restore", 3))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        verify(folderService).restore(USER_ID, 3L);
+    }
+
+    @Test
+    void restore_대상폴더가_없으면_404() throws Exception {
+        given(currentUserProvider.requireUserId()).willReturn(USER_ID);
+        doThrow(new FolderNotFoundException(3L)).when(folderService).restore(USER_ID, 3L);
+
+        mockMvc.perform(patch("/api/v1/folders/{id}/restore", 3))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void permanentDelete_성공시_success_true() throws Exception {
+        given(currentUserProvider.requireUserId()).willReturn(USER_ID);
+
+        mockMvc.perform(delete("/api/v1/folders/{id}/permanent", 3))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+
+        verify(folderService).permanentDelete(USER_ID, 3L);
+    }
+
+    @Test
+    void permanentDelete_휴지통에_없으면_400() throws Exception {
+        given(currentUserProvider.requireUserId()).willReturn(USER_ID);
+        doThrow(new com.jipsa.common.BadRequestException("휴지통에 있는 폴더만 영구 삭제할 수 있습니다."))
+                .when(folderService).permanentDelete(USER_ID, 3L);
+
+        mockMvc.perform(delete("/api/v1/folders/{id}/permanent", 3))
+                .andExpect(status().isBadRequest());
+    }
+
     // --- GlobalExceptionHandler 공백 보강 (#36) ---
 
     @Test

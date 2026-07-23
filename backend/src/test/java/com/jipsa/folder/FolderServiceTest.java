@@ -1,11 +1,17 @@
 package com.jipsa.folder;
 
+import com.jipsa.common.BadRequestException;
+import com.jipsa.file.File;
+import com.jipsa.file.FileRepository;
+import com.jipsa.file.FileStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -24,9 +30,22 @@ class FolderServiceTest {
     @Autowired
     private FolderRepository folderRepository;
 
+    @Autowired
+    private FileRepository fileRepository;
+
     private static final Long USER = 1L;
     private static final Long OTHER_USER = 2L;
     private static final Long NON_EXISTENT_ID = 999_999_999L;
+
+    private File fileIn(Long folderId) {
+        File file = new File();
+        file.setUsersId(USER);
+        file.setFolderId(folderId);
+        file.setName("문서.pdf");
+        file.setS3Key("files/" + UUID.randomUUID());
+        file.setFileType("pdf");
+        return fileRepository.save(file);
+    }
 
     @Test
     void create_루트폴더_생성() {
@@ -139,7 +158,7 @@ class FolderServiceTest {
     }
 
     @Test
-    void delete_자손폴더까지_함께_삭제() {
+    void delete_자손폴더까지_함께_소프트삭제() {
         Long root = folderService.create(USER, "루트", null);
         Long child1 = folderService.create(USER, "자식1", root);
         Long child2 = folderService.create(USER, "자식2", root);
@@ -147,10 +166,30 @@ class FolderServiceTest {
 
         folderService.delete(USER, root);
 
-        assertThat(folderRepository.findById(root)).isEmpty();
-        assertThat(folderRepository.findById(child1)).isEmpty();
-        assertThat(folderRepository.findById(child2)).isEmpty();
-        assertThat(folderRepository.findById(grandchild)).isEmpty();
+        assertThat(folderRepository.findById(root).orElseThrow().getDeletedAt()).isNotNull();
+        assertThat(folderRepository.findById(child1).orElseThrow().getDeletedAt()).isNotNull();
+        assertThat(folderRepository.findById(child2).orElseThrow().getDeletedAt()).isNotNull();
+        assertThat(folderRepository.findById(grandchild).orElseThrow().getDeletedAt()).isNotNull();
+    }
+
+    @Test
+    void delete_이후_목록조회에서_제외() {
+        Long root = folderService.create(USER, "루트", null);
+
+        folderService.delete(USER, root);
+
+        assertThat(folderService.list(USER)).extracting(FolderResponse::folderId).doesNotContain(root);
+    }
+
+    @Test
+    void delete_하위파일도_함께_휴지통으로_이동() {
+        Long root = folderService.create(USER, "루트", null);
+        File file = fileIn(root);
+
+        folderService.delete(USER, root);
+
+        File reloaded = fileRepository.findById(file.getId()).orElseThrow();
+        assertThat(reloaded.getDeletedAt()).isNotNull();
     }
 
     @Test
@@ -161,9 +200,9 @@ class FolderServiceTest {
 
         folderService.delete(USER, child);
 
-        assertThat(folderRepository.findById(child)).isEmpty();
-        assertThat(folderRepository.findById(root)).isPresent();
-        assertThat(folderRepository.findById(sibling)).isPresent();
+        assertThat(folderRepository.findById(child).orElseThrow().getDeletedAt()).isNotNull();
+        assertThat(folderRepository.findById(root).orElseThrow().getDeletedAt()).isNull();
+        assertThat(folderRepository.findById(sibling).orElseThrow().getDeletedAt()).isNull();
     }
 
     @Test
@@ -172,5 +211,88 @@ class FolderServiceTest {
 
         assertThatThrownBy(() -> folderService.delete(USER, otherFolderId))
                 .isInstanceOf(FolderNotFoundException.class);
+    }
+
+    @Test
+    void delete_이미삭제된_폴더면_존재하지않는것으로_처리() {
+        Long id = folderService.create(USER, "폴더", null);
+        folderService.delete(USER, id);
+
+        assertThatThrownBy(() -> folderService.delete(USER, id))
+                .isInstanceOf(FolderNotFoundException.class);
+    }
+
+    @Test
+    void restore_삭제된_폴더와_자손_하위파일까지_함께_복원() {
+        Long root = folderService.create(USER, "루트", null);
+        Long child = folderService.create(USER, "자식", root);
+        File file = fileIn(child);
+
+        folderService.delete(USER, root);
+        folderService.restore(USER, root);
+
+        assertThat(folderRepository.findById(root).orElseThrow().getDeletedAt()).isNull();
+        assertThat(folderRepository.findById(child).orElseThrow().getDeletedAt()).isNull();
+        assertThat(fileRepository.findById(file.getId()).orElseThrow().getDeletedAt()).isNull();
+        assertThat(folderService.list(USER)).extracting(FolderResponse::folderId).contains(root, child);
+    }
+
+    @Test
+    void restore_폴더삭제_이전에_따로_지워진_파일은_함께_복원되지_않는다() {
+        Long root = folderService.create(USER, "루트", null);
+        File file = fileIn(root);
+        file.setStatus(FileStatus.DELETED);
+        file.setDeletedAt(LocalDateTime.now().minusDays(1));
+        fileRepository.save(file);
+
+        folderService.delete(USER, root);
+        folderService.restore(USER, root);
+
+        assertThat(folderRepository.findById(root).orElseThrow().getDeletedAt()).isNull();
+        assertThat(fileRepository.findById(file.getId()).orElseThrow().getDeletedAt()).isNotNull();
+    }
+
+    @Test
+    void restore_부모가_삭제상태로_남아있으면_자식복원시_루트로_이동() {
+        Long root = folderService.create(USER, "루트", null);
+        Long child = folderService.create(USER, "자식", root);
+
+        folderService.delete(USER, root);
+        folderService.restore(USER, child);
+
+        Folder restoredChild = folderRepository.findById(child).orElseThrow();
+        assertThat(restoredChild.getDeletedAt()).isNull();
+        assertThat(restoredChild.getParentFolderId()).isNull();
+        assertThat(folderRepository.findById(root).orElseThrow().getDeletedAt()).isNotNull();
+    }
+
+    @Test
+    void restore_삭제되지_않은_폴더면_예외() {
+        Long id = folderService.create(USER, "폴더", null);
+
+        assertThatThrownBy(() -> folderService.restore(USER, id))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void restore_다른사람_폴더면_예외() {
+        Long otherFolderId = folderService.create(OTHER_USER, "남의 폴더", null);
+
+        assertThatThrownBy(() -> folderService.restore(USER, otherFolderId))
+                .isInstanceOf(FolderNotFoundException.class);
+    }
+
+    @Test
+    void listTrash_삭제된_폴더만_반환() {
+        Long active = folderService.create(USER, "활성", null);
+        Long deleted = folderService.create(USER, "삭제됨", null);
+        folderService.delete(USER, deleted);
+
+        FolderTrashListResponse result = folderService.listTrash(USER, 0);
+
+        assertThat(result.folders()).extracting(FolderResponse::folderId)
+                .contains(deleted)
+                .doesNotContain(active);
+        assertThat(result.total()).isEqualTo(1);
     }
 }
