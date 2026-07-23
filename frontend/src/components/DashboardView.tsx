@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import type { Document } from "../types";
 import { formatBytes } from "../utils/formatBytes";
+import { formatDateTime } from "../utils/formatDateTime";
 import { mockFolders } from "../mocks/mockData";
 import { isDescendantOrSelf } from "../utils/folderTree";
 import { listFolders } from "../api/folders";
@@ -303,7 +304,7 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
                     </div>
                   </td>
                   <td className="px-8 py-5 text-body-sm text-on-surface-variant">
-                    {doc.modifiedAt}
+                    {formatDateTime(doc.modifiedAt)}
                   </td>
                   <td className="px-8 py-5">
                     <span className={`inline-flex items-center gap-1 text-xs font-bold ${
