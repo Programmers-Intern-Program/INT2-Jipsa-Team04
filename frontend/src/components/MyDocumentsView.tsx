@@ -812,19 +812,29 @@ export default function MyDocumentsView({
     }
 
     // 왼쪽 사이드바 폴더 트리는 탭과 무관하게 항상 떠 있어서, "휴지통" 탭을 보고 있는 채로도
-    // 여기서 폴더를 삭제할 수 있다. trashFolders는 탭이 "trash"로 바뀔 때만 다시 불러오므로
-    // (currentTab이 이미 "trash"면 그 effect가 다시 안 돈다), 방금 삭제한 폴더가 휴지통 탭에
-    // 바로 안 보이는 문제가 있었다 — 그래서 여기서도 직접 최신 상태로 반영한다.
+    // 여기서 폴더를 삭제할 수 있다. trashFolders/trashDocs는 탭이 "trash"로 바뀔 때만 다시
+    // 불러오므로(currentTab이 이미 "trash"면 그 effect가 다시 안 돈다), 방금 삭제한 폴더와
+    // 그 안의 파일이 휴지통 탭에 바로 안 보이는 문제가 있었다 — 그래서 여기서도 직접 반영한다.
     if (currentTab === "trash") {
       try {
-        setTrashFolders(await listAllFolderTrash());
+        const [freshTrashFolders, freshTrashDocs] = await Promise.all([
+          listAllFolderTrash(),
+          listAllTrash(),
+        ]);
+        setTrashFolders(freshTrashFolders);
+        setTrashDocs(freshTrashDocs);
       } catch (err) {
         console.warn("[folders] 삭제 후 휴지통 목록 재동기화 실패:", err);
       }
     }
   };
 
-  /** 휴지통 폴더 복원 — 하위 폴더·파일도 서버가 함께 복원하므로, 폴더/문서 목록을 통째로 재동기화한다. */
+  /**
+   * 휴지통 폴더 복원 — 서버는 이 폴더의 하위 폴더·파일까지 전부 함께 복원한다.
+   * 방금 누른 폴더 하나만 trashFolders에서 지우면, 같이 복원된 하위 폴더·파일은 이미
+   * 활성 상태가 됐는데도 휴지통 화면엔 그대로 남아서 다시 복원/영구삭제를 시도하면
+   * "이미 처리된 리소스"라 실패한다 — 그래서 활성/휴지통 목록을 전부 다시 불러온다.
+   */
   const handleRestoreFolder = async (folderId: number, folderName: string) => {
     try {
       await restoreFolder(folderId);
@@ -833,18 +843,28 @@ export default function MyDocumentsView({
       alert("폴더 복원에 실패했습니다.");
       return;
     }
-    setTrashFolders((prev) => (prev ? prev.filter((f) => f.folderId !== folderId) : prev));
     try {
-      const [freshFolders, freshDocs] = await Promise.all([listFolders(), listAllFiles()]);
+      const [freshFolders, freshDocs, freshTrashFolders, freshTrashDocs] = await Promise.all([
+        listFolders(),
+        listAllFiles(),
+        listAllFolderTrash(),
+        listAllTrash(),
+      ]);
       setFolders(freshFolders);
       onUpdateDocuments(freshDocs);
+      setTrashFolders(freshTrashFolders);
+      setTrashDocs(freshTrashDocs);
     } catch (err) {
       console.warn("[folders] 복원 후 목록 재동기화 실패:", err);
     }
     alert(`'${folderName}' 폴더를 복원했습니다.`);
   };
 
-  /** 휴지통 폴더 영구 삭제 — 하위 파일 S3 실물까지 서버가 정리한다. */
+  /**
+   * 휴지통 폴더 영구 삭제 — 하위 파일 S3 실물까지 서버가 함께 정리한다.
+   * 복원과 같은 이유로, 선택한 폴더 하나만 trashFolders에서 지우면 같이 영구삭제된
+   * 하위 폴더·파일이 휴지통 화면에 유령처럼 남으므로 휴지통 목록을 통째로 재동기화한다.
+   */
   const handlePermanentDeleteFolder = async (folderId: number, folderName: string) => {
     if (!window.confirm(`'${folderName}' 폴더를 영구 삭제하시겠습니까? 안의 파일까지 모두 되돌릴 수 없습니다.`)) return;
     try {
@@ -854,7 +874,16 @@ export default function MyDocumentsView({
       alert("폴더 영구 삭제에 실패했습니다.");
       return;
     }
-    setTrashFolders((prev) => (prev ? prev.filter((f) => f.folderId !== folderId) : prev));
+    try {
+      const [freshTrashFolders, freshTrashDocs] = await Promise.all([
+        listAllFolderTrash(),
+        listAllTrash(),
+      ]);
+      setTrashFolders(freshTrashFolders);
+      setTrashDocs(freshTrashDocs);
+    } catch (err) {
+      console.warn("[folders] 영구 삭제 후 휴지통 재동기화 실패:", err);
+    }
     getStorageUsage().then(setStorage).catch(() => {});
     alert(`'${folderName}' 폴더를 영구 삭제했습니다.`);
   };
