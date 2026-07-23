@@ -193,6 +193,28 @@ class ErrorCode(Enum):
         message="The document vectors could not be stored.",
     )
 
+    # Qdrant가 관련 청크 검색 요청을 거부했거나 질의 임베딩 모델·차원이
+    # 현재 Collection 계약과 일치하지 않는 경우 사용한다.
+    #
+    # 저장 실패와 검색 실패를 같은 오류 코드로 합치면 애플리케이션 서버가
+    # 재시도 또는 장애 분석 시 어느 단계에서 실패했는지 구분할 수 없으므로
+    # 검색 전용 오류 코드를 별도로 정의한다.
+    VECTOR_SEARCH_FAILED = ErrorDefinition(
+        status_code=HTTPStatus.BAD_GATEWAY,
+        code="VECTOR_SEARCH_FAILED",
+        message="The vector search request could not be completed.",
+    )
+
+    # Qdrant 검색은 성공했지만 payload 필드, 사용자 범위, 활성 상태,
+    # Point ID, 임베딩 모델 또는 결과 정렬 계약이 일치하지 않는 경우 사용한다.
+    #
+    # 청크 원문이나 잘못된 payload 값은 외부 메시지에 포함하지 않는다.
+    INVALID_VECTOR_SEARCH_RESULT = ErrorDefinition(
+        status_code=HTTPStatus.BAD_GATEWAY,
+        code="INVALID_VECTOR_SEARCH_RESULT",
+        message="The vector database returned an invalid search result.",
+    )
+
     FILE_TOO_LARGE = ErrorDefinition(
         status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
         code="FILE_TOO_LARGE",
