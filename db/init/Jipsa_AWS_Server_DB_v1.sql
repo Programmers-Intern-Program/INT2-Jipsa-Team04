@@ -237,10 +237,11 @@ CREATE TABLE `Folder` (
     `Name` VARCHAR(255) NOT NULL COMMENT '폴더명',
     `Created_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성 일시',
     `Updated_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정 일시',
+    `Deleted_At` DATETIME(6) NULL COMMENT '논리 삭제 일시. NULL이면 활성 상태',
 
     PRIMARY KEY (`Folder_IDX`),
 
-    KEY `IX_Folder_Users_Parent` (`Users_IDX`, `Parent_Folder_IDX`),
+    KEY `IX_Folder_Users_Parent` (`Users_IDX`, `Parent_Folder_IDX`, `Deleted_At`),
     KEY `IX_Folder_Parent` (`Parent_Folder_IDX`),
 
     CONSTRAINT `FK_Folder_Users`

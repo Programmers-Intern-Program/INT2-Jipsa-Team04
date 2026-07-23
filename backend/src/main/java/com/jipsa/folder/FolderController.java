@@ -56,11 +56,34 @@ public class FolderController {
         return SuccessResponse.ok();
     }
 
-    /** DELETE /api/v1/folders/{id} — 하위 폴더 전부 재귀 삭제, 삭제 전 소유자 검증. */
+    /** DELETE /api/v1/folders/{id} — 하위 폴더 전부 소프트 삭제(휴지통 이동), 삭제 전 소유자 검증. */
     @DeleteMapping("/{id}")
     public SuccessResponse delete(@PathVariable Long id) {
         Long userId = currentUserProvider.requireUserId();
         folderService.delete(userId, id);
+        return SuccessResponse.ok();
+    }
+
+    /** GET /api/v1/folders/trash — 휴지통 목록. */
+    @GetMapping("/trash")
+    public FolderTrashListResponse trash(@RequestParam(defaultValue = "0") int page) {
+        Long userId = currentUserProvider.requireUserId();
+        return folderService.listTrash(userId, page);
+    }
+
+    /** PATCH /api/v1/folders/{id}/restore — 휴지통의 폴더를 복원, 하위 폴더·파일도 함께 복원. */
+    @PatchMapping("/{id}/restore")
+    public SuccessResponse restore(@PathVariable Long id) {
+        Long userId = currentUserProvider.requireUserId();
+        folderService.restore(userId, id);
+        return SuccessResponse.ok();
+    }
+
+    /** DELETE /api/v1/folders/{id}/permanent — 휴지통의 폴더를 영구 삭제, 하위 파일 S3 실물까지 정리. */
+    @DeleteMapping("/{id}/permanent")
+    public SuccessResponse permanentDelete(@PathVariable Long id) {
+        Long userId = currentUserProvider.requireUserId();
+        folderService.permanentDelete(userId, id);
         return SuccessResponse.ok();
     }
 
