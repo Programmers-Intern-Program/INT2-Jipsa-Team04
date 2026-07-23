@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import type { Document, FileMapping, Folder as FolderType, OrganizeApplyResponse, OrganizeProposal, ProposedFolder } from "../types";
 import { formatBytes } from "../utils/formatBytes";
+import { formatDateTime } from "../utils/formatDateTime";
 import { fetchWithRetry } from "../utils/retry";
 import { getFolderPath, getFolderAncestors, isDescendantOrSelf } from "../utils/folderTree";
 import {
@@ -1981,7 +1982,7 @@ export default function MyDocumentsView({
                             </div>
                           </td>
                           <td className="px-6 py-4 text-xs font-semibold text-on-surface-variant font-sans whitespace-nowrap">
-                            {doc.modifiedAt}
+                            {formatDateTime(doc.modifiedAt)}
                           </td>
                           <td className="px-6 py-4 text-xs font-semibold text-on-surface-variant font-sans whitespace-nowrap">
                             {formatBytes(doc.sizeBytes)}
