@@ -3,7 +3,6 @@ package com.jipsa.file;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -20,11 +19,20 @@ public interface FileRepository extends JpaRepository<File, Long> {
 
     List<File> findByUploadsId(Long uploadsId);
 
-    @Modifying(clearAutomatically = true)
-    @Query("update File f set f.folderId = null where f.folderId in :folderIds")
-    void detachFromFolders(@Param("folderIds") List<Long> folderIds);
-
     Page<File> findByUsersIdAndDeletedAtIsNotNullOrderByDeletedAtDesc(Long userId, Pageable pageable);
+
+    /** 폴더 소프트 삭제 시 함께 휴지통으로 보낼 활성 파일 조회용. */
+    List<File> findByFolderIdInAndDeletedAtIsNull(List<Long> folderIds);
+
+    /** 폴더 영구삭제 시 정리 대상 — 이 폴더들 아래 있는 삭제된 파일 전부(휴지통에 있던 시점 무관). */
+    List<File> findByFolderIdInAndDeletedAtIsNotNull(List<Long> folderIds);
+
+    /**
+     * 폴더 복원 시 함께 복원할 파일 조회용 — 이 폴더가 삭제될 때 "같이" 삭제된 파일만 고른다
+     * (deletedAt이 폴더 자신의 삭제 시각과 정확히 같은 것만). 폴더 삭제보다 먼저, 별개로
+     * 휴지통에 들어간 파일까지 폴더 복원에 딸려서 되살아나는 걸 막기 위함.
+     */
+    List<File> findByFolderIdInAndDeletedAt(List<Long> folderIds, LocalDateTime deletedAt);
 
     @Query("select coalesce(sum(f.sizeBytes), 0) from File f " +
             "where f.usersId = :userId and f.deletedAt is null")

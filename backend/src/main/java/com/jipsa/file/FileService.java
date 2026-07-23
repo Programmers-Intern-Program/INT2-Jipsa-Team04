@@ -114,6 +114,52 @@ public class FileService {
         file.setDeletedAt(LocalDateTime.now());
     }
 
+    /**
+     * 폴더 소프트 삭제 시 그 안의 활성 파일들을 함께 휴지통으로 보낸다(FolderService에서 호출).
+     * deletedAt은 호출부(FolderService.delete())가 폴더들에 찍은 것과 동일한 값을 넘겨받는다 —
+     * "이 폴더 삭제로 같이 삭제된 파일"과 "원래 따로 삭제돼 있던 파일"을 나중에 복원 시 구분하기 위함
+     * (restoreByFolderIds 참고).
+     */
+    @Transactional
+    public void softDeleteByFolderIds(List<Long> folderIds, LocalDateTime deletedAt) {
+        fileRepository.findByFolderIdInAndDeletedAtIsNull(folderIds)
+                .forEach(file -> {
+                    file.setStatus(FileStatus.DELETED);
+                    file.setDeletedAt(deletedAt);
+                });
+    }
+
+    /**
+     * 폴더 복원 시 그 안의 파일들을 함께 복원한다(FolderService에서 호출).
+     * deletedAt이 정확히 일치하는 파일만 복원 대상으로 삼는다 — 폴더가 삭제되기 전에 이미
+     * 별도로 휴지통에 들어가 있던 파일까지 폴더 복원에 딸려서 되살아나는 걸 막기 위함.
+     */
+    @Transactional
+    public void restoreByFolderIds(List<Long> folderIds, LocalDateTime deletedAt) {
+        fileRepository.findByFolderIdInAndDeletedAt(folderIds, deletedAt)
+                .forEach(file -> {
+                    file.setDeletedAt(null);
+                    file.setStatus(FileStatus.UPLOADED);
+                    file.setProcessingStage(null);
+                    file.setErrorMessage(null);
+                    jobService.enqueueIngest(file.getId(), file.getUploadsId());
+                });
+    }
+
+    /** 폴더 영구 삭제 시 그 안의 삭제된 파일들을 S3 실물까지 함께 정리한다(FolderService에서 호출). */
+    @Transactional
+    public void permanentDeleteByFolderIds(List<Long> folderIds) {
+        List<File> files = fileRepository.findByFolderIdInAndDeletedAtIsNotNull(folderIds);
+        files.forEach(file -> {
+            if (file.getS3Key() != null && !file.getS3Key().isBlank()) {
+                s3Service.delete(bucket, file.getS3Key());
+            }
+            jobRepository.deleteByFileId(file.getId());
+            fileMetadataRepository.findById(file.getId()).ifPresent(fileMetadataRepository::delete);
+        });
+        fileRepository.deleteAll(files);
+    }
+
     @Transactional(readOnly = true)
     public FileListResponse listTrash(Long userId, int page) {
         Pageable pageable = PageRequest.of(page, PAGE_SIZE);
@@ -133,11 +179,23 @@ public class FileService {
         if (file.getDeletedAt() == null) {
             throw new BadRequestException("삭제되지 않은 파일입니다: " + fileId);
         }
+        // 파일이 속한 폴더가 여전히 삭제(휴지통) 상태면 그 폴더 밑에 그대로 둘 수 없다 —
+        // 나중에 그 폴더가 영구삭제될 때 이 파일의 Folder_IDX가 참조 무결성을 깨는 걸 막기 위해
+        // 루트로 꺼내놓는다. 사용자가 폴더까지 되돌리고 싶으면 폴더 복원을 별도로 하면 된다.
+        if (file.getFolderId() != null && isFolderDeletedOrMissing(file.getFolderId())) {
+            file.setFolderId(null);
+        }
         file.setDeletedAt(null);
         file.setStatus(FileStatus.UPLOADED);
         file.setProcessingStage(null);
         file.setErrorMessage(null);
         jobService.enqueueIngest(file.getId(), file.getUploadsId());
+    }
+
+    private boolean isFolderDeletedOrMissing(Long folderId) {
+        return folderRepository.findById(folderId)
+                .map(folder -> folder.getDeletedAt() != null)
+                .orElse(true);
     }
 
     @Transactional
