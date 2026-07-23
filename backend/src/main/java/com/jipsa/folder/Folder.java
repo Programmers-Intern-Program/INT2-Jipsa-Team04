@@ -38,7 +38,9 @@ public class Folder {
     @Column(name = "Updated_At")
     private LocalDateTime updatedAt;
 
-    // NOTE: no `Del`/soft-delete column on this table's DDL — Folder deletion is a hard delete.
+    @Column(name = "Deleted_At")
+    private LocalDateTime deletedAt;
+
     public Folder(Long usersId, String name, Long parentFolderId) {
         this.usersId = usersId;
         this.name = name;
