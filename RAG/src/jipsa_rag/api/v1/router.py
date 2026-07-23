@@ -3,6 +3,9 @@
 from fastapi import APIRouter, Depends
 
 from jipsa_rag.api.internal_auth import verify_rag_ingest_token
+from jipsa_rag.api.v1.endpoints.chunk_search import (
+    router as chunk_search_router,
+)
 from jipsa_rag.api.v1.endpoints.file_processing import (
     router as file_processing_router,
 )
@@ -27,6 +30,21 @@ router.include_router(health_router)
 # 내부 인증 토큰을 검증한 호출자에게만 응답한다.
 router.include_router(
     network_diagnostics_router,
+    dependencies=[
+        Depends(verify_rag_ingest_token),
+    ],
+)
+
+# 관련 청크 검색은 사용자 문서 원문을 응답하므로
+# 반드시 내부 인증을 통과해야 한다.
+#
+# 검색 엔드포인트 함수 안에서 개별적으로 인증하면 향후 같은 라우터에
+# 경로가 추가될 때 dependency 누락으로 인증 우회가 발생할 수 있다.
+#
+# 따라서 라우터를 통합하는 시점에 공통 dependency를 적용하여
+# 모든 /chunks 경로를 보호한다.
+router.include_router(
+    chunk_search_router,
     dependencies=[
         Depends(verify_rag_ingest_token),
     ],

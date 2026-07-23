@@ -71,6 +71,12 @@ dependencies = [
     # =========================================================
     "tenacity>=9.1.4,<10.0",
 
+    # =========================================================
+    # [Vector Database]
+    # - 청크 임베딩 벡터 저장
+    # - 사용자 및 활성 상태 기반 관련 청크 검색
+    # - 로컬 메모리 모드를 이용한 검색 통합 테스트
+    # =========================================================
     "qdrant-client>=1.18.0,<1.19.0",
 ]
 
@@ -117,14 +123,54 @@ dev = [
 # Pytest
 # =============================================================
 [tool.pytest.ini_options]
-addopts = "-ra -q --strict-config --strict-markers"
+
+# -ra:
+# 테스트 종료 시 skip, xfail, fail 등의 추가 요약 정보를 출력한다.
+#
+# -q:
+# 테스트 진행 로그를 간결하게 출력한다.
+#
+# --strict-config:
+# 잘못되었거나 지원되지 않는 Pytest 설정이 존재하면 즉시 실패한다.
+#
+# --strict-markers:
+# 등록되지 않은 pytest marker를 사용하면 즉시 실패한다.
+#
+# --import-mode=importlib:
+# 테스트 파일을 sys.path 앞에 직접 삽입하는 기본 prepend 방식 대신
+# Python importlib을 사용하여 각 테스트 파일을 고유한 경로로 불러온다.
+#
+# 다음처럼 서로 다른 디렉터리에 같은 파일명의 테스트가 있어도
+# 모두 `test_chunk_search`라는 하나의 최상위 모듈로 충돌하지 않게 한다.
+#
+# - tests/unit/services/test_chunk_search.py
+# - tests/unit/api/v1/endpoints/test_chunk_search.py
+# - tests/integration/test_chunk_search.py
+#
+# 이 설정으로 Pytest의 `import file mismatch` 수집 오류를 방지한다.
+addopts = "-ra -q --strict-config --strict-markers --import-mode=importlib"
+
+# 인수 없이 `uv run pytest`를 실행했을 때
+# 기본적으로 tests 디렉터리 아래의 테스트만 수집한다.
 testpaths = ["tests"]
+
+# 테스트 실행 중 jipsa_rag 패키지를 설치 경로와 관계없이
+# RAG/src 디렉터리에서 가져올 수 있도록 Python 경로를 지정한다.
 pythonpath = ["src"]
 
-# 비동기 테스트와 fixture가 각각 독립된 이벤트 루프를 사용하도록
-# 기본 이벤트 루프 범위를 테스트 함수 단위로 명시한다.
+# 비동기 테스트에서 명시적으로 pytest.mark.asyncio를 사용하도록
+# 엄격한 asyncio 모드를 적용한다.
+#
+# 다른 비동기 테스트 프레임워크와 이벤트 루프를 암묵적으로 공유하지 않아
+# 테스트 간 이벤트 루프 상태가 섞이는 것을 방지한다.
 asyncio_mode = "strict"
+
+# 비동기 fixture가 각 테스트 함수마다 독립적인 이벤트 루프를 사용하도록
+# fixture 이벤트 루프의 기본 범위를 function으로 제한한다.
 asyncio_default_fixture_loop_scope = "function"
+
+# 비동기 테스트 함수도 각각 독립적인 이벤트 루프를 사용하도록
+# 테스트 이벤트 루프의 기본 범위를 function으로 제한한다.
 asyncio_default_test_loop_scope = "function"
 
 
@@ -132,35 +178,49 @@ asyncio_default_test_loop_scope = "function"
 # Ruff
 # =============================================================
 [tool.ruff]
+
+# Python 3.12 문법과 표준 라이브러리를 기준으로 검사한다.
 target-version = "py312"
+
+# 코드 한 줄의 최대 길이를 100자로 제한한다.
 line-length = 100
+
+# 애플리케이션 소스와 테스트 코드를 모두 Ruff 검사 대상으로 지정한다.
 src = ["src", "tests"]
+
 
 [tool.ruff.lint]
 select = [
-    # 기본 Python 오류 및 스타일 검사
+    # 기본 Python 문법 오류 및 PEP 8 스타일 검사
     "E",
     "F",
 
-    # import 정렬
+    # import 순서와 그룹 정렬 검사
     "I",
 
-    # 일반적인 버그 가능성 검사
+    # 일반적으로 발생하기 쉬운 버그 패턴 검사
     "B",
 
-    # 최신 Python 문법 사용
+    # 현재 Python 버전에서 사용할 수 있는 최신 문법 적용 검사
     "UP",
 
-    # 불필요하게 복잡한 코드 단순화
+    # 불필요하거나 과도하게 복잡한 표현 단순화 검사
     "SIM",
 
-    # Ruff 전용 검사
+    # Ruff가 제공하는 전용 품질 검사
     "RUF",
 ]
 
+
 [tool.ruff.format]
+
+# 문자열에는 기본적으로 큰따옴표를 사용한다.
 quote-style = "double"
+
+# 들여쓰기에는 공백을 사용한다.
 indent-style = "space"
+
+# 현재 운영체제와 Git 설정에 맞춰 줄바꿈 형식을 처리한다.
 line-ending = "auto"
 
 
@@ -168,10 +228,43 @@ line-ending = "auto"
 # Mypy
 # =============================================================
 [tool.mypy]
+
+# 프로젝트가 지원하는 Python 버전을 기준으로 타입을 검사한다.
 python_version = "3.12"
+
+# Pydantic 모델의 Field, validator 및 생성자 타입을
+# Mypy가 정확하게 분석할 수 있도록 공식 플러그인을 적용한다.
 plugins = ["pydantic.mypy"]
+
+# jipsa_rag 패키지를 찾을 소스 루트를 지정한다.
 mypy_path = "src"
+
+# tests 아래의 여러 디렉터리에 같은 파일명이 존재하더라도
+# 전체 디렉터리 경로를 기준으로 서로 다른 모듈로 인식하게 한다.
+#
+# 예:
+# - tests.unit.services.test_chunk_search
+# - tests.unit.api.v1.endpoints.test_chunk_search
+# - tests.integration.test_chunk_search
+#
+# 이 설정은 Mypy의 `Duplicate module named` 오류를 방지한다.
+# Pytest의 파일 수집 충돌은 위의 `--import-mode=importlib`이 처리한다.
+explicit_package_bases = true
+
+# Any 사용, 반환 타입 누락, Optional 오용 등 잠재적인 타입 문제를
+# 가장 엄격한 수준으로 검사한다.
 strict = true
+
+# 존재하지만 실제로 적용되지 않는 Mypy 설정이 있으면 경고한다.
 warn_unused_configs = true
+
+# 오류 메시지에 오류 코드 예시를 함께 표시한다.
+#
+# 예:
+# - [arg-type]
+# - [return-value]
+# - [assignment]
 show_error_codes = true
+
+# 터미널에서 오류 위치와 관련 코드를 읽기 쉽게 출력한다.
 pretty = true
