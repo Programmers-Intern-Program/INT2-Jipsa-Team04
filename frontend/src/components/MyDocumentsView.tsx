@@ -29,7 +29,7 @@ import {
 import type { Document, FileMapping, Folder as FolderType, OrganizeApplyResponse, OrganizeProposal, ProposedFolder } from "../types";
 import { formatBytes } from "../utils/formatBytes";
 import { fetchWithRetry } from "../utils/retry";
-import { getFolderPath, getFolderAncestors, isDescendantOrSelf, ensureFolderPath } from "../utils/folderTree";
+import { getFolderPath, getFolderAncestors, isDescendantOrSelf } from "../utils/folderTree";
 import {
   listFolders,
   createFolder,
@@ -133,39 +133,33 @@ export default function MyDocumentsView({
     localStorage.setItem("aidrive_folders", JSON.stringify(folders));
   }, [folders]);
 
-  // 비로그인 상태라 인증 토큰이 없어 API가 실패하면(401 등) 기존 로컬 mock 로직(ensureFolderPath)으로
-  // 폴백 — 로그인 안 한 사용자도 "폴더 생성" 데모 흐름은 그대로 동작해야 하기 때문이다.
   const createFolderPathViaApi = async (
     currentFolders: FolderType[],
-    segments: string[]
+    segments: string[],
+    startParentId: number | null = null
   ): Promise<{ folders: FolderType[]; leafId: number | null }> => {
-    try {
-      let working = [...currentFolders];
-      let parentId: number | null = null;
-      let leafId: number | null = null;
+    let working = [...currentFolders];
+    let parentId: number | null = startParentId;
+    let leafId: number | null = null;
 
-      for (const rawName of segments) {
-        const name = rawName.trim();
-        if (!name) continue;
+    for (const rawName of segments) {
+      const name = rawName.trim();
+      if (!name) continue;
 
-        const existing = working.find((f) => f.parentFolderId === parentId && f.name === name);
-        if (existing) {
-          parentId = existing.folderId;
-          leafId = existing.folderId;
-          continue;
-        }
-
-        const newId = await createFolder(name, parentId);
-        working = [...working, { folderId: newId, name, parentFolderId: parentId }];
-        parentId = newId;
-        leafId = newId;
+      const existing = working.find((f) => f.parentFolderId === parentId && f.name === name);
+      if (existing) {
+        parentId = existing.folderId;
+        leafId = existing.folderId;
+        continue;
       }
 
-      return { folders: working, leafId };
-    } catch (err) {
-      console.warn("[folders] POST /api/v1/folders 실패 - 로컬 mock으로 폴백(비로그인 상태면 정상):", err);
-      return ensureFolderPath(currentFolders, segments);
+      const newId = await createFolder(name, parentId);
+      working = [...working, { folderId: newId, name, parentFolderId: parentId }];
+      parentId = newId;
+      leafId = newId;
     }
+
+    return { folders: working, leafId };
   };
 
   // Folder collapse state
@@ -2654,11 +2648,16 @@ export default function MyDocumentsView({
                   onClick={async () => {
                     const segments = newFolderName.trim().split("/").filter(Boolean);
                     if (segments.length === 0) return;
-                    const { folders: updatedFolders } = await createFolderPathViaApi(folders, segments);
-                    setFolders(updatedFolders);
-                    setIsNewFolderModalOpen(false);
-                    setNewFolderName("");
-                    alert("새 폴더가 성공적으로 생성되었습니다.");
+                    try {
+                      const { folders: updatedFolders } = await createFolderPathViaApi(folders, segments, selectedFolder);
+                      setFolders(updatedFolders);
+                      setIsNewFolderModalOpen(false);
+                      setNewFolderName("");
+                      alert("새 폴더가 성공적으로 생성되었습니다.");
+                    } catch (err) {
+                      console.warn("[folders] POST /api/v1/folders 실패:", err);
+                      alert("폴더 생성에 실패했습니다.");
+                    }
                   }}
                   className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-opacity-95 shadow-md shadow-primary/10 cursor-pointer"
                 >
@@ -2762,11 +2761,16 @@ export default function MyDocumentsView({
                         onClick={async () => {
                           const segments = newFolderNameInMove.trim().split("/").filter(Boolean);
                           if (segments.length === 0) return;
-                          const { folders: updatedFolders, leafId } = await createFolderPathViaApi(folders, segments);
-                          setFolders(updatedFolders);
-                          setMoveTargetFolder(leafId);
-                          setIsCreatingNewFolderInMove(false);
-                          setNewFolderNameInMove("");
+                          try {
+                            const { folders: updatedFolders, leafId } = await createFolderPathViaApi(folders, segments);
+                            setFolders(updatedFolders);
+                            setMoveTargetFolder(leafId);
+                            setIsCreatingNewFolderInMove(false);
+                            setNewFolderNameInMove("");
+                          } catch (err) {
+                            console.warn("[folders] POST /api/v1/folders 실패:", err);
+                            alert("폴더 생성에 실패했습니다.");
+                          }
                         }}
                         className="px-3 bg-secondary text-white text-xs font-bold rounded-lg hover:bg-opacity-95 cursor-pointer"
                       >
