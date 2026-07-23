@@ -31,37 +31,6 @@ export function isDescendantOrSelf(folderId: number | null, ancestorId: number, 
   return false;
 }
 
-/**
- * "기획/디자인/2026" 같은 슬래시 구분 경로를 받아 없는 중간 폴더를 생성하며 끝까지 내려간다.
- * 이미 존재하는 구간은 재사용한다. 새 폴더가 추가된 목록과 최종(leaf) folderId를 반환한다.
- */
-export function ensureFolderPath(folders: Folder[], segments: string[]): { folders: Folder[]; leafId: number | null } {
-  let current = [...folders];
-  let parentId: number | null = null;
-  let leafId: number | null = null;
-  let nextId = current.reduce((max, f) => Math.max(max, f.folderId), 0) + 1;
-
-  for (const rawName of segments) {
-    const name = rawName.trim();
-    if (!name) continue;
-
-    const existing = current.find((f) => f.parentFolderId === parentId && f.name === name);
-    if (existing) {
-      parentId = existing.folderId;
-      leafId = existing.folderId;
-      continue;
-    }
-
-    const created: Folder = { folderId: nextId, name, parentFolderId: parentId };
-    current = [...current, created];
-    parentId = nextId;
-    leafId = nextId;
-    nextId += 1;
-  }
-
-  return { folders: current, leafId };
-}
-
 export interface FolderMatch {
   folderId: number;
   path: string;
