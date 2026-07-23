@@ -30,7 +30,14 @@ import type { Document, FileMapping, Folder as FolderType, OrganizeApplyResponse
 import { formatBytes } from "../utils/formatBytes";
 import { fetchWithRetry } from "../utils/retry";
 import { getFolderPath, getFolderAncestors, isDescendantOrSelf, ensureFolderPath } from "../utils/folderTree";
-import { listFolders, createFolder, deleteFolder } from "../api/folders";
+import {
+  listFolders,
+  createFolder,
+  deleteFolder,
+  listAllFolderTrash,
+  restoreFolder,
+  permanentDeleteFolder,
+} from "../api/folders";
 import { deleteFile, downloadFile, getFileDetail, getFileStatus, getStorageUsage, listAllFiles, listAllTrash, listFiles, moveFiles, permanentDeleteFile, renameFile, restoreFile, toDocument, toggleStar } from "../api/files";
 import { proposeOrganization, applyOrganization } from "../api/organize";
 import { ApiError } from "../api/client";
@@ -68,6 +75,7 @@ export default function MyDocumentsView({
   const [searchSize, setSearchSize] = useState(20);
   const [searchPage, setSearchPage] = useState(0);
   const [trashDocs, setTrashDocs] = useState<Document[] | null>(null);
+  const [trashFolders, setTrashFolders] = useState<FolderType[] | null>(null);
   const [storage, setStorage] = useState<{ usedBytes: number; quotaBytes: number } | null>(null);
 
   // AI Organize state
@@ -216,6 +224,7 @@ export default function MyDocumentsView({
   useEffect(() => {
     if (currentTab !== "trash") {
       setTrashDocs(null);
+      setTrashFolders(null);
       return;
     }
     let cancelled = false;
@@ -228,6 +237,16 @@ export default function MyDocumentsView({
           if (cancelled) return;
           console.warn("[files] GET /api/v1/files/trash 실패 - 빈 목록 표시(비로그인 상태면 정상):", err);
           setTrashDocs([]);
+        });
+    listAllFolderTrash()
+        .then((folders) => {
+          if (cancelled) return;
+          setTrashFolders(folders);
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          console.warn("[folders] GET /api/v1/folders/trash 실패 - 빈 목록 표시(비로그인 상태면 정상):", err);
+          setTrashFolders([]);
         });
     return () => {
       cancelled = true;
@@ -371,8 +390,11 @@ export default function MyDocumentsView({
     if (currentTab === "mydrive" && !searchQuery) {
       return currentLevelFolders.length === 0 && currentLevelDocuments.length === 0;
     }
+    if (currentTab === "trash") {
+      return currentLevelDocuments.length === 0 && (trashFolders?.length ?? 0) === 0;
+    }
     return currentLevelDocuments.length === 0;
-  }, [currentTab, searchQuery, currentLevelFolders, currentLevelDocuments]);
+  }, [currentTab, searchQuery, currentLevelFolders, currentLevelDocuments, trashFolders]);
 
   // Handle Drag events
   const handleDrag = (e: React.DragEvent) => {
@@ -745,6 +767,12 @@ export default function MyDocumentsView({
     }
   };
 
+  /**
+   * 폴더 삭제(소프트) — 이제 서버가 하위 폴더·파일을 전부 휴지통으로 함께 보낸다.
+   * 예전엔(하드 삭제 시절) 삭제 전에 안의 파일을 [미분류]로 미리 옮겨야 했지만, 지금 그렇게
+   * 하면 그 파일들이 이 폴더의 소프트 삭제 대상(folderId 기준)에서 빠져버려서 휴지통이 아니라
+   * 그냥 활성 상태로 [미분류]에 남는다 — 그래서 moveFiles 호출을 없애고 deleteFolder만 부른다.
+   */
   const handleDeleteFolder = async (folderId: number, folderName: string) => {
     const collectDescendantIds = (id: number): number[] => {
       const childIds = folders.filter((f) => f.parentFolderId === id).map((f) => f.folderId);
@@ -759,15 +787,12 @@ export default function MyDocumentsView({
     const subFolderCount = idsToDelete.length - 1;
     const confirmMsg =
         `'${folderName}' 폴더를 삭제하시겠습니까?` +
-        (subFolderCount > 0 ? `\n하위 폴더 ${subFolderCount}개도 함께 삭제됩니다.` : "") +
-        (affectedDocCount > 0 ? `\n포함된 문서 ${affectedDocCount}개는 [미분류]로 이동됩니다.` : "");
+        (subFolderCount > 0 ? `\n하위 폴더 ${subFolderCount}개도 함께 휴지통으로 이동됩니다.` : "") +
+        (affectedDocCount > 0 ? `\n포함된 문서 ${affectedDocCount}개도 휴지통으로 이동됩니다.` : "");
 
     if (!window.confirm(confirmMsg)) return;
 
     try {
-      if (affectedDocCount > 0) {
-        await moveFiles(affectedDocs.map((d) => Number(d.id)).filter((id) => Number.isFinite(id)), null);
-      }
       await deleteFolder(folderId);
     } catch (err) {
       console.warn("[folders] 폴더 삭제 실패 - 상태를 변경하지 않음:", err);
@@ -778,16 +803,60 @@ export default function MyDocumentsView({
     setFolders((prev) => prev.filter((f) => !idsToDelete.includes(f.folderId)));
 
     if (affectedDocCount > 0) {
-      onUpdateDocuments((prev) =>
-          prev.map((d) =>
-              d.folderId !== null && idsToDelete.includes(d.folderId) ? { ...d, folderId: null } : d
-          )
-      );
+      const affectedDocIds = new Set(affectedDocs.map((d) => d.id));
+      onUpdateDocuments((prev) => prev.filter((d) => !affectedDocIds.has(d.id)));
     }
 
     if (selectedFolder !== null && idsToDelete.includes(selectedFolder)) {
       setSelectedFolder(null);
     }
+
+    // 왼쪽 사이드바 폴더 트리는 탭과 무관하게 항상 떠 있어서, "휴지통" 탭을 보고 있는 채로도
+    // 여기서 폴더를 삭제할 수 있다. trashFolders는 탭이 "trash"로 바뀔 때만 다시 불러오므로
+    // (currentTab이 이미 "trash"면 그 effect가 다시 안 돈다), 방금 삭제한 폴더가 휴지통 탭에
+    // 바로 안 보이는 문제가 있었다 — 그래서 여기서도 직접 최신 상태로 반영한다.
+    if (currentTab === "trash") {
+      try {
+        setTrashFolders(await listAllFolderTrash());
+      } catch (err) {
+        console.warn("[folders] 삭제 후 휴지통 목록 재동기화 실패:", err);
+      }
+    }
+  };
+
+  /** 휴지통 폴더 복원 — 하위 폴더·파일도 서버가 함께 복원하므로, 폴더/문서 목록을 통째로 재동기화한다. */
+  const handleRestoreFolder = async (folderId: number, folderName: string) => {
+    try {
+      await restoreFolder(folderId);
+    } catch (err) {
+      console.warn("[folders] PATCH /api/v1/folders/{id}/restore 실패:", err);
+      alert("폴더 복원에 실패했습니다.");
+      return;
+    }
+    setTrashFolders((prev) => (prev ? prev.filter((f) => f.folderId !== folderId) : prev));
+    try {
+      const [freshFolders, freshDocs] = await Promise.all([listFolders(), listAllFiles()]);
+      setFolders(freshFolders);
+      onUpdateDocuments(freshDocs);
+    } catch (err) {
+      console.warn("[folders] 복원 후 목록 재동기화 실패:", err);
+    }
+    alert(`'${folderName}' 폴더를 복원했습니다.`);
+  };
+
+  /** 휴지통 폴더 영구 삭제 — 하위 파일 S3 실물까지 서버가 정리한다. */
+  const handlePermanentDeleteFolder = async (folderId: number, folderName: string) => {
+    if (!window.confirm(`'${folderName}' 폴더를 영구 삭제하시겠습니까? 안의 파일까지 모두 되돌릴 수 없습니다.`)) return;
+    try {
+      await permanentDeleteFolder(folderId);
+    } catch (err) {
+      console.warn("[folders] DELETE /api/v1/folders/{id}/permanent 실패:", err);
+      alert("폴더 영구 삭제에 실패했습니다.");
+      return;
+    }
+    setTrashFolders((prev) => (prev ? prev.filter((f) => f.folderId !== folderId) : prev));
+    getStorageUsage().then(setStorage).catch(() => {});
+    alert(`'${folderName}' 폴더를 영구 삭제했습니다.`);
   };
 
   const renderFolderNode = (node: FolderTreeNode, depth: number = 0): React.ReactNode => {
@@ -1450,6 +1519,49 @@ export default function MyDocumentsView({
                   </div>
                 )}
 
+                {/* 1-B. 삭제된 폴더 (휴지통 탭 전용) */}
+                {currentTab === "trash" && trashFolders && trashFolders.length > 0 && (
+                  <div className="space-y-3.5">
+                    <h4 className="text-xs font-extrabold text-on-surface-variant uppercase tracking-wider flex items-center gap-1.5">
+                      <FolderClosed className="w-4 h-4 text-outline" />
+                      삭제된 폴더 ({trashFolders.length}개)
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                      {trashFolders.map((folder) => (
+                        <div
+                          key={`trash-folder-grid-${folder.folderId}`}
+                          className="bg-surface-container-lowest p-4.5 rounded-2xl border border-outline-variant flex items-center justify-between"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="p-2 bg-outline-variant/20 rounded-xl shrink-0">
+                              <FolderClosed className="w-6 h-6 text-outline shrink-0" />
+                            </div>
+                            <p className="font-extrabold text-xs text-on-surface truncate">{folder.name}</p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleRestoreFolder(folder.folderId, folder.name)}
+                              className="p-1.5 rounded-lg text-outline hover:text-primary hover:bg-primary/5 transition-all cursor-pointer"
+                              title="폴더 복원"
+                            >
+                              <Undo2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handlePermanentDeleteFolder(folder.folderId, folder.name)}
+                              className="p-1.5 rounded-lg text-outline hover:text-rose-500 hover:bg-rose-50 transition-all cursor-pointer"
+                              title="폴더 영구 삭제"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* 2. Files Section */}
                 <div className="space-y-3.5">
                   {currentTab === "mydrive" && !searchQuery && currentLevelFolders.length > 0 && (
@@ -1734,6 +1846,50 @@ export default function MyDocumentsView({
                         </tr>
                       );
                     })}
+
+                    {/* 1-B. 삭제된 폴더 Row Section (휴지통 탭 전용) */}
+                    {currentTab === "trash" && trashFolders && trashFolders.map((folder) => (
+                      <tr key={`trash-folder-row-${folder.folderId}`} className="hover:bg-surface-container-low transition-colors group">
+                        <td className="px-6 py-4 text-center">
+                          <FolderClosed className="w-4 h-4 text-outline mx-auto shrink-0" />
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <FolderClosed className="w-5 h-5 text-outline shrink-0" />
+                            <p className="font-bold text-xs text-on-surface leading-tight truncate">{folder.name}</p>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-[10px] font-extrabold text-outline font-sans whitespace-nowrap">
+                          가상 폴더 디렉터리
+                        </td>
+                        <td className="px-6 py-4 text-xs font-semibold text-outline font-sans whitespace-nowrap">-</td>
+                        <td className="px-6 py-4 text-xs font-semibold text-outline font-sans whitespace-nowrap">-</td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-outline bg-surface-container px-2 py-0.5 rounded whitespace-nowrap">
+                            폴더
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-center whitespace-nowrap">
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleRestoreFolder(folder.folderId, folder.name)}
+                              className="px-2.5 py-1.5 bg-primary/10 text-primary text-[10px] font-extrabold rounded-lg hover:bg-primary/20 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1"
+                            >
+                              <Undo2 className="w-3 h-3" /> 복원
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handlePermanentDeleteFolder(folder.folderId, folder.name)}
+                              className="p-1.5 rounded-lg text-outline hover:text-rose-500 hover:bg-rose-50 transition-all cursor-pointer"
+                              title="폴더 영구 삭제"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
 
                     {/* 2. Files Row Section */}
                     {currentLevelDocuments.map((doc) => {
