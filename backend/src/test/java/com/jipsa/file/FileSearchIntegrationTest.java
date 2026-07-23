@@ -43,7 +43,7 @@ class FileSearchIntegrationTest {
         File mine = file(1L, "mine.pdf", "pdf");
         file(2L, "theirs.pdf", "pdf");
 
-        Page<File> result = fileRepository.search(1L, null, null, null, null, null, null,
+        Page<File> result = fileRepository.search(1L, null, null, null, null, null, null, null,
                 PageRequest.of(0, 20));
 
         assertThat(result.getContent()).extracting(File::getId).containsExactly(mine.getId());
@@ -56,9 +56,9 @@ class FileSearchIntegrationTest {
         File other = file(1L, "memo.pdf", "pdf");
         metadata(other.getId(), "[\"memo\"]");
 
-        Page<File> hit = fileRepository.search(1L, null, null, null, "tax", null, null,
+        Page<File> hit = fileRepository.search(1L, null, null, null, "tax", null, null, null,
                 PageRequest.of(0, 20));
-        Page<File> miss = fileRepository.search(1L, null, null, null, "unknown", null, null,
+        Page<File> miss = fileRepository.search(1L, null, null, null, "unknown", null, null, null,
                 PageRequest.of(0, 20));
 
         assertThat(hit.getContent()).extracting(File::getId).containsExactly(tagged.getId());
@@ -72,9 +72,9 @@ class FileSearchIntegrationTest {
         LocalDateTime endOfToday = LocalDate.now().atTime(LocalTime.MAX);
         LocalDateTime startTomorrow = LocalDate.now().plusDays(1).atStartOfDay();
 
-        Page<File> included = fileRepository.search(1L, null, null, null, null, startOfToday, endOfToday,
+        Page<File> included = fileRepository.search(1L, null, null, null, null, startOfToday, endOfToday, null,
                 PageRequest.of(0, 20));
-        Page<File> excluded = fileRepository.search(1L, null, null, null, null, startTomorrow, null,
+        Page<File> excluded = fileRepository.search(1L, null, null, null, null, startTomorrow, null, null,
                 PageRequest.of(0, 20));
 
         assertThat(included.getContent()).extracting(File::getId).contains(today.getId());

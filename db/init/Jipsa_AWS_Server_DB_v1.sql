@@ -345,6 +345,10 @@ CREATE TABLE `File_Metadata` (
     `Summary` TEXT NULL COMMENT '파일 요약 결과',
     `Tags` JSON NULL COMMENT '태그 JSON 배열',
     `Keywords` JSON NULL COMMENT '키워드 JSON 배열',
+    `Document_Type` VARCHAR(100) NULL COMMENT '문서 종류(사용자 선택 분류). NULL이면 미분류',
+    `Extraction_Status` VARCHAR(30) NULL COMMENT 'AI 메타데이터 추출 상태. NULL이면 미실행',
+    `Extraction_Confidence` DECIMAL(4,3) NULL COMMENT '추출 신뢰도 0.000~1.000',
+    `Extracted_Entities` JSON NULL COMMENT '추출된 일반 엔티티(dates/people/amounts/org 등)',
     `Created_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성 일시',
     `Updated_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정 일시',
 

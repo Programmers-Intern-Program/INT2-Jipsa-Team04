@@ -15,6 +15,7 @@ export interface FileListItem {
     summary: string;
     tags: string[];
     securityRank: string | null;
+    documentType: string | null;
 }
 
 export interface FileListResponse {
@@ -28,6 +29,7 @@ export interface FileListParams {
     folderId?: number | null;
     keyword?: string;
     docType?: string;
+    documentType?: string;
     tags?: string;
     dateFrom?: string;
     dateTo?: string;
@@ -39,6 +41,7 @@ export function listFiles(params: FileListParams = {}): Promise<FileListResponse
     if (params.folderId != null) query.set("folderId", String(params.folderId));
     if (params.keyword) query.set("keyword", params.keyword);
     if (params.docType) query.set("docType", params.docType);
+    if (params.documentType) query.set("documentType", params.documentType);
     if (params.tags) query.set("tags", params.tags);
     if (params.dateFrom) query.set("dateFrom", params.dateFrom);
     if (params.dateTo) query.set("dateTo", params.dateTo);
@@ -80,6 +83,7 @@ export function toDocument(item: FileListItem): Document {
         piiDetected: false,
         status: item.status,
         star: item.star,
+        documentType: item.documentType ?? null,
     };
 }
 
@@ -140,6 +144,9 @@ export interface FileDetail {
     processingStage: string | null;
     securityRank: "일반" | "기밀";
     piiDetected: boolean;
+    documentType: string | null;
+    extractionStatus: string | null;
+    extractionConfidence: number | null;
 }
 
 export function getFileDetail(fileId: number): Promise<FileDetail> {
@@ -165,6 +172,24 @@ export function moveFile(fileId: number, folderId: number | null): Promise<void>
         method: "PATCH",
         body: { folderId },
     }).then(() => undefined);
+}
+
+export function setFileTags(fileId: number, tags: string[]): Promise<void> {
+    return apiFetch<{ success: boolean }>(`/files/${fileId}/tags`, {
+        method: "PATCH",
+        body: { tags },
+    }).then(() => undefined);
+}
+
+export function setFileDocumentType(fileId: number, documentType: string | null): Promise<void> {
+    return apiFetch<{ success: boolean }>(`/files/${fileId}/document-type`, {
+        method: "PATCH",
+        body: { documentType },
+    }).then(() => undefined);
+}
+
+export function getDocumentTypes(): Promise<string[]> {
+    return apiFetch<{ documentTypes: string[] }>("/metadata/document-types").then((res) => res.documentTypes);
 }
 
 async function fetchBlob(path: string): Promise<Blob> {

@@ -47,6 +47,8 @@ public interface FileRepository extends JpaRepository<File, Long> {
             "and (:docType is null or f.fileType = :docType) " +
             "and (:dateFrom is null or f.createdAt >= :dateFrom) " +
             "and (:dateTo is null or f.createdAt <= :dateTo) " +
+            "and (:documentType is null or exists (select m2 from FileMetadata m2 " +
+            "where m2.fileId = f.id and m2.documentType = :documentType)) " +
             "and (:tag is null or exists (select m from FileMetadata m " +
             "where m.fileId = f.id and m.tags like concat('%\"', :tag, '\"%')))")
     Page<File> search(@Param("userId") Long userId,
@@ -56,5 +58,6 @@ public interface FileRepository extends JpaRepository<File, Long> {
                       @Param("tag") String tag,
                       @Param("dateFrom") LocalDateTime dateFrom,
                       @Param("dateTo") LocalDateTime dateTo,
+                      @Param("documentType") String documentType,
                       Pageable pageable);
 }

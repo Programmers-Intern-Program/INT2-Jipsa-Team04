@@ -26,11 +26,6 @@ import AdminView from "./components/AdminView";
 // Import types
 import type { Document, AISettings, ChatMessage, ChatSession, SessionUser, MeResponse } from "./types";
 
-// mockAISettings: 최초 렌더링용 fallback 초기값(설정값이 없을 수는 없어서 필요) — 실제 값은
-// 아래 useEffect가 GET /api/v1/users/me/settings로 로그인 확인 즉시 덮어쓴다. documents는
-// 로그인된 사용자에게 실제 있지도 않은 mock 파일 목록을 보여주는 게 오히려 혼란을 줘서
-// 빈 배열로 시작하고(아래 useEffect 참고), 더 이상 mockDocuments를 쓰지 않는다.
-import { mockAISettings } from "./mocks/mockData";
 import { getUserSettings, updateUserSettings } from "./api/userSettings";
 import { loginWithGoogle, logout as logoutApi } from "./api/auth";
 import { getMe } from "./api/me";
@@ -113,7 +108,7 @@ export default function App() {
     createChatSession(getInitialSelectedDocIds([]))
   ]);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string>(() => chatSessions[0].id);
-  const [committedSettings, setCommittedSettings] = useState<AISettings>(mockAISettings);
+  const [committedSettings, setCommittedSettings] = useState<AISettings>({ sensitivity: 0.85, voiceModel: "Nova (명확하고 신뢰감 있는)", responseStyle: "간결형", instantSummary: true, autoHighlight: false, pushNotification: true });
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");

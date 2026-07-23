@@ -14,6 +14,7 @@ public record FileListItem(
         LocalDateTime modifiedAt,
         String summary,
         List<String> tags,
-        String securityRank
+        String securityRank,
+        String documentType
 ) {
 }

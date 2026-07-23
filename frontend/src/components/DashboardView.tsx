@@ -11,10 +11,9 @@ import {
   Merge,
   Highlighter
 } from "lucide-react";
-import type { Document } from "../types";
+import type { Document, Folder as FolderType } from "../types";
 import { formatBytes } from "../utils/formatBytes";
 import { formatDateTime } from "../utils/formatDateTime";
-import { mockFolders } from "../mocks/mockData";
 import { isDescendantOrSelf } from "../utils/folderTree";
 import { listFolders } from "../api/folders";
 
@@ -27,7 +26,7 @@ interface DashboardViewProps {
 export default function DashboardView({ documents, onNavigateToChat, onNavigateToTab }: DashboardViewProps) {
   const [completedActions, setCompletedActions] = useState<string[]>([]);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
-  const [folders, setFolders] = useState(mockFolders);
+  const [folders, setFolders] = useState<FolderType[]>([]);
   useEffect(() => {
     listFolders().then(setFolders).catch(() => {});
   }, []);

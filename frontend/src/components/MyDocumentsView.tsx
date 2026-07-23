@@ -24,6 +24,7 @@ import {
   Trash2,
   ShieldAlert,
   Undo2,
+  Pencil,
   Info
 } from "lucide-react";
 import type { Document, FileMapping, Folder as FolderType, OrganizeApplyResponse, OrganizeProposal, ProposedFolder } from "../types";
@@ -35,11 +36,12 @@ import {
   listFolders,
   createFolder,
   deleteFolder,
+  updateFolder,
   listAllFolderTrash,
   restoreFolder,
   permanentDeleteFolder,
 } from "../api/folders";
-import { deleteFile, downloadFile, getFileDetail, getFileStatus, getStorageUsage, listAllFiles, listAllTrash, listFiles, moveFiles, permanentDeleteFile, renameFile, restoreFile, toDocument, toggleStar } from "../api/files";
+import { deleteFile, downloadFile, getDocumentTypes, getFileDetail, getFileStatus, getStorageUsage, listAllFiles, listAllTrash, listFiles, moveFiles, permanentDeleteFile, renameFile, restoreFile, toDocument, toggleStar } from "../api/files";
 import { proposeOrganization, applyOrganization } from "../api/organize";
 import { ApiError } from "../api/client";
 import FileDetailPanel from "./FileDetailPanel";
@@ -71,6 +73,16 @@ export default function MyDocumentsView({
   const [selectedFolder, setSelectedFolder] = useState<number | null>(null);
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [selectedSecurity, setSelectedSecurity] = useState<string | null>(null);
+  const [selectedDocumentType, setSelectedDocumentType] = useState<string | null>(null);
+  const [tagFilter, setTagFilter] = useState("");
+  const [dateFromFilter, setDateFromFilter] = useState("");
+  const [dateToFilter, setDateToFilter] = useState("");
+  const [documentTypeOptions, setDocumentTypeOptions] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    getDocumentTypes().then((types) => { if (!cancelled) setDocumentTypeOptions(types); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
   const [serverSearchDocs, setServerSearchDocs] = useState<Document[] | null>(null);
   const [searchTotal, setSearchTotal] = useState(0);
   const [searchSize, setSearchSize] = useState(20);
@@ -106,6 +118,17 @@ export default function MyDocumentsView({
   const [uploadContent, setUploadContent] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  type UploadQueueItem = {
+    id: string;
+    file: File;
+    status: "QUEUED" | "UPLOADING" | "PROCESSING" | "READY" | "FAILED" | "INVALID";
+    error?: string;
+  };
+  const [isNewUploadOpen, setIsNewUploadOpen] = useState(false);
+  const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
+  const [isNewUploaderBusy, setIsNewUploaderBusy] = useState(false);
+  const [newUploaderDragActive, setNewUploaderDragActive] = useState(false);
+  const newUploaderInputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
 
   const starPendingRef = useRef<Set<string>>(new Set());
@@ -182,6 +205,8 @@ export default function MyDocumentsView({
   const [moveTargetFolder, setMoveTargetFolder] = useState<number | null>(null);
   const [isCreatingNewFolderInMove, setIsCreatingNewFolderInMove] = useState(false);
   const [newFolderNameInMove, setNewFolderNameInMove] = useState("");
+  const [movingFolderId, setMovingFolderId] = useState<number | null>(null);
+  const [folderMoveTarget, setFolderMoveTarget] = useState<number | null>(null);
 
   useEffect(() => {
     setSearchPage(0);
@@ -317,10 +342,14 @@ export default function MyDocumentsView({
 
       const matchesType = !selectedType || doc.fileType === selectedType;
       const matchesSecurity = !selectedSecurity || doc.securityRank === selectedSecurity;
+      const matchesDocumentType = !selectedDocumentType || doc.documentType === selectedDocumentType;
+      const matchesTag = !tagFilter.trim() || (doc.tags ?? []).some((t) => t.toLowerCase().includes(tagFilter.trim().toLowerCase()));
+      const docDate = (doc.modifiedAt ?? "").slice(0, 10);
+      const matchesDate = (!dateFromFilter || docDate >= dateFromFilter) && (!dateToFilter || docDate <= dateToFilter);
 
-      return matchesSearch && matchesTabAndFolder && matchesType && matchesSecurity;
+      return matchesSearch && matchesTabAndFolder && matchesType && matchesSecurity && matchesDocumentType && matchesTag && matchesDate;
     });
-  }, [documents, serverSearchDocs, trashDocs, searchQuery, selectedFolder, selectedType, selectedSecurity, currentTab, folders]);
+  }, [documents, serverSearchDocs, trashDocs, searchQuery, selectedFolder, selectedType, selectedSecurity, selectedDocumentType, tagFilter, dateFromFilter, dateToFilter, currentTab, folders]);
 
   const sortedFilteredDocuments = useMemo(() => {
     if (currentTab === "recent") {
@@ -523,6 +552,83 @@ export default function MyDocumentsView({
     docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     txt: "text/plain",
+  };
+
+  const NEW_UPLOADER_ALLOWED_EXTS = ["pdf", "docx", "xlsx", "txt"];
+  const NEW_UPLOADER_MAX_BYTES = 50 * 1024 * 1024;
+
+  const validateUploadCandidate = (file: File): string | null => {
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    if (!NEW_UPLOADER_ALLOWED_EXTS.includes(ext)) return "지원하지 않는 형식";
+    if (file.size > NEW_UPLOADER_MAX_BYTES) return "50MB 초과";
+    return null;
+  };
+
+  const addFilesToUploadQueue = (files: File[]) => {
+    if (files.length === 0) return;
+    const items: UploadQueueItem[] = files.map((file) => {
+      const error = validateUploadCandidate(file);
+      return {
+        id: crypto.randomUUID(),
+        file,
+        status: error ? "INVALID" : "QUEUED",
+        error: error ?? undefined,
+      };
+    });
+    setUploadQueue((prev) => [...prev, ...items]);
+  };
+
+  const removeUploadQueueItem = (id: string) => {
+    setUploadQueue((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const handleNewUploaderDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setNewUploaderDragActive(false);
+    addFilesToUploadQueue(Array.from(e.dataTransfer.files));
+  };
+
+  const handleNewUploaderPick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    addFilesToUploadQueue(Array.from(e.target.files ?? []));
+    e.target.value = "";
+  };
+
+  const runNewUploaderUpload = async () => {
+    const pending = uploadQueue.filter((item) => item.status === "QUEUED");
+    if (pending.length === 0) return;
+    setIsNewUploaderBusy(true);
+    const setItem = (id: string, patch: Partial<UploadQueueItem>) =>
+        setUploadQueue((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+
+    for (const item of pending) {
+      setItem(item.id, { status: "UPLOADING", error: undefined });
+      try {
+        const { fileIds } = await uploadFiles([item.file], selectedFolder);
+        const fileId = fileIds[0];
+        if (fileId == null) {
+          setItem(item.id, { status: "READY" });
+          continue;
+        }
+        setItem(item.id, { status: "PROCESSING" });
+        let status = "PROCESSING";
+        for (let i = 0; i < 20 && status !== "READY" && status !== "FAILED"; i++) {
+          await new Promise((r) => setTimeout(r, 1500));
+          status = (await getFileStatus(fileId)).status;
+        }
+        setItem(item.id, { status: status === "READY" ? "READY" : status === "FAILED" ? "FAILED" : "PROCESSING" });
+      } catch (err) {
+        console.warn("[uploads] 다중 업로드 실패:", err);
+        setItem(item.id, { status: "FAILED", error: "업로드 실패" });
+      }
+    }
+
+    setIsNewUploaderBusy(false);
+    try {
+      onUpdateDocuments(await listAllFiles());
+    } catch (err) {
+      console.warn("[uploads] 업로드 후 목록 재동기화 실패:", err);
+    }
   };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
@@ -883,6 +989,33 @@ export default function MyDocumentsView({
     alert(`'${folderName}' 폴더를 영구 삭제했습니다.`);
   };
 
+  const handleRenameFolder = async (folderId: number, currentName: string) => {
+    const input = window.prompt("폴더의 새 이름을 입력하세요.", currentName);
+    if (input === null) return;
+    const name = input.trim();
+    if (!name || name === currentName) return;
+    try {
+      await updateFolder(folderId, { name });
+      const refreshed = await listFolders();
+      setFolders(refreshed);
+    } catch (err) {
+      console.warn("[folders] 폴더 이름 변경 실패 - 상태를 변경하지 않음:", err);
+      alert("폴더 이름 변경에 실패했습니다.");
+    }
+  };
+
+  const handleMoveFolder = async (folderId: number | null, targetParentId: number | null) => {
+    if (folderId === null) return;
+    try {
+      await updateFolder(folderId, { parentFolderId: targetParentId });
+      const refreshed = await listFolders();
+      setFolders(refreshed);
+    } catch (err) {
+      console.warn("[folders] 폴더 이동 실패 - 상태를 변경하지 않음:", err);
+      alert("폴더 이동에 실패했습니다.");
+    }
+  };
+
   const renderFolderNode = (node: FolderTreeNode, depth: number = 0): React.ReactNode => {
     const hasChildren = node.children.length > 0;
     const isExpanded = expandedFolders[node.id] ?? true; // Default expanded
@@ -934,6 +1067,29 @@ export default function MyDocumentsView({
               {node.totalFileCount}
             </span>
             <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleRenameFolder(node.id, node.name);
+                }}
+                className="p-1 rounded opacity-0 group-hover:opacity-100 text-outline hover:text-primary hover:bg-primary/5 transition-all cursor-pointer"
+                title="폴더 이름 변경"
+            >
+              <Pencil className="w-3 h-3" />
+            </button>
+            <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setFolderMoveTarget(null);
+                  setMovingFolderId(node.id);
+                }}
+                className="p-1 rounded opacity-0 group-hover:opacity-100 text-outline hover:text-primary hover:bg-primary/5 transition-all cursor-pointer"
+                title="폴더 이동"
+            >
+              <FolderInput className="w-3 h-3" />
+            </button>
+            <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
@@ -977,6 +1133,15 @@ export default function MyDocumentsView({
 
         {/* AI 스마트 정리 & Actions Toolbar */}
         <div className="flex items-center gap-4 flex-wrap" id="doc-toolbar-actions">
+          <button
+              type="button"
+              onClick={() => setIsNewUploadOpen(true)}
+              className="flex items-center gap-2 bg-white border-2 border-primary/40 text-primary font-extrabold py-3 px-5 rounded-xl shadow-sm hover:bg-primary/5 hover:scale-[1.01] transition-all cursor-pointer text-body-sm active:scale-95"
+              id="btn-new-multi-uploader"
+          >
+            <Upload className="w-4 h-4" />
+            새 업로더 (다중·베타)
+          </button>
           {/* AI 스마트 정리 Dropdown Trigger Button */}
           <div className="relative">
             <button 
@@ -1338,14 +1503,51 @@ export default function MyDocumentsView({
                 <option value="기밀">기밀 등급 (PII 감지)</option>
               </select>
 
+              <select
+                  value={selectedDocumentType || ""}
+                  onChange={(e) => setSelectedDocumentType(e.target.value || null)}
+                  className="bg-white border border-outline-variant rounded-xl py-2 px-3 text-xs font-semibold text-on-surface-variant focus:ring-2 focus:ring-primary/10 outline-none cursor-pointer hover:border-outline transition-colors"
+              >
+                <option value="">문서 종류 전체</option>
+                {documentTypeOptions.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                ))}
+              </select>
+
+              <input
+                  type="text"
+                  value={tagFilter}
+                  onChange={(e) => setTagFilter(e.target.value)}
+                  placeholder="태그 검색"
+                  className="bg-white border border-outline-variant rounded-xl py-2 px-3 text-xs font-semibold text-on-surface-variant focus:ring-2 focus:ring-primary/10 outline-none hover:border-outline transition-colors w-28"
+              />
+
+              <input
+                  type="date"
+                  value={dateFromFilter}
+                  onChange={(e) => setDateFromFilter(e.target.value)}
+                  className="bg-white border border-outline-variant rounded-xl py-2 px-3 text-xs font-semibold text-on-surface-variant focus:ring-2 focus:ring-primary/10 outline-none cursor-pointer hover:border-outline transition-colors"
+              />
+              <span className="text-xs text-outline">~</span>
+              <input
+                  type="date"
+                  value={dateToFilter}
+                  onChange={(e) => setDateToFilter(e.target.value)}
+                  className="bg-white border border-outline-variant rounded-xl py-2 px-3 text-xs font-semibold text-on-surface-variant focus:ring-2 focus:ring-primary/10 outline-none cursor-pointer hover:border-outline transition-colors"
+              />
+
               {/* Filter Reset */}
-              {(selectedFolder || selectedType || selectedSecurity || searchQuery) && (
+              {(selectedFolder || selectedType || selectedSecurity || searchQuery || selectedDocumentType || tagFilter || dateFromFilter || dateToFilter) && (
                 <button 
                   onClick={() => {
                     setSelectedFolder(null);
                     setSelectedType(null);
                     setSelectedSecurity(null);
                     setSearchQuery("");
+                    setSelectedDocumentType(null);
+                    setTagFilter("");
+                    setDateFromFilter("");
+                    setDateToFilter("");
                   }}
                   className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl transition-all cursor-pointer font-bold text-xs flex items-center gap-1 border border-rose-100"
                 >
@@ -2455,7 +2657,13 @@ export default function MyDocumentsView({
         )}
       </AnimatePresence>
 
-      <FileDetailPanel fileId={detailFileId} folders={folders} onClose={() => setDetailFileId(null)} />
+      <FileDetailPanel
+          fileId={detailFileId}
+          folders={folders}
+          onClose={() => setDetailFileId(null)}
+          onTagsChanged={(id, tags) => onUpdateDocuments((prev) => prev.map((d) => (d.id === String(id) ? { ...d, tags } : d)))}
+          onDocumentTypeChanged={(id, documentType) => onUpdateDocuments((prev) => prev.map((d) => (d.id === String(id) ? { ...d, documentType } : d)))}
+      />
 
       {/* Dynamic Upload Modal Form */}
       <AnimatePresence>
@@ -2586,6 +2794,112 @@ export default function MyDocumentsView({
               </form>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {isNewUploadOpen && (
+            <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+              <motion.div
+                  initial={{ scale: 0.95, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.95, opacity: 0 }}
+                  className="bg-white rounded-3xl w-full max-w-2xl p-6 shadow-2xl border border-outline-variant relative overflow-hidden space-y-4 max-h-[85vh] flex flex-col"
+              >
+                <div className="flex items-center justify-between border-b border-outline-variant pb-3">
+                  <div className="flex items-center gap-2 text-primary">
+                    <Upload className="w-5 h-5" />
+                    <h3 className="text-base font-bold">다중 파일 업로드 <span className="text-[10px] font-bold text-secondary align-middle">BETA</span></h3>
+                  </div>
+                  <button
+                      onClick={() => { if (!isNewUploaderBusy) { setIsNewUploadOpen(false); setUploadQueue([]); } }}
+                      disabled={isNewUploaderBusy}
+                      className="p-1 hover:bg-surface-container rounded-full text-outline hover:text-on-surface cursor-pointer disabled:opacity-40"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div
+                    onDragEnter={(e) => { e.preventDefault(); setNewUploaderDragActive(true); }}
+                    onDragOver={(e) => { e.preventDefault(); setNewUploaderDragActive(true); }}
+                    onDragLeave={(e) => { e.preventDefault(); setNewUploaderDragActive(false); }}
+                    onDrop={handleNewUploaderDrop}
+                    onClick={() => newUploaderInputRef.current?.click()}
+                    className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center ${
+                        newUploaderDragActive ? "border-primary bg-primary/5" : "border-outline-variant hover:border-primary/55"
+                    }`}
+                >
+                  <Upload className="w-9 h-9 mb-2 text-primary" />
+                  <p className="font-bold text-sm text-on-surface">파일을 여기로 끌어다 놓거나 클릭해서 선택하세요</p>
+                  <p className="text-[11px] text-outline mt-1">여러 파일을 한 번에 선택할 수 있습니다 · PDF, DOCX, XLSX, TXT (최대 50MB)</p>
+                  <input
+                      ref={newUploaderInputRef}
+                      type="file"
+                      multiple
+                      accept=".pdf,.docx,.xlsx,.txt"
+                      onChange={handleNewUploaderPick}
+                      className="hidden"
+                  />
+                </div>
+
+                {uploadQueue.length > 0 && (
+                    <div className="flex-1 overflow-y-auto border border-outline-variant/60 rounded-xl divide-y divide-outline-variant/40 bg-surface-container-low">
+                      {uploadQueue.map((item) => (
+                          <div key={item.id} className="p-2.5 flex items-center gap-3 text-xs">
+                            <FileText className="w-4 h-4 text-outline shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <p className="font-semibold text-on-surface truncate">{item.file.name}</p>
+                              <p className="text-[10px] text-outline">{formatBytes(item.file.size)}{item.error ? ` · ${item.error}` : ""}</p>
+                            </div>
+                            {item.status === "UPLOADING" || item.status === "PROCESSING" ? (
+                                <span className="flex items-center gap-1 text-primary font-bold shrink-0">
+                          <span className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
+                                  {item.status === "UPLOADING" ? "업로드 중" : "처리 중"}
+                        </span>
+                            ) : item.status === "READY" ? (
+                                <span className="flex items-center gap-1 text-emerald-600 font-bold shrink-0"><Check className="w-3.5 h-3.5" /> 완료</span>
+                            ) : item.status === "FAILED" ? (
+                                <span className="text-rose-500 font-bold shrink-0">실패</span>
+                            ) : item.status === "INVALID" ? (
+                                <span className="text-amber-600 font-bold shrink-0">제외됨</span>
+                            ) : (
+                                <span className="text-outline font-bold shrink-0">대기</span>
+                            )}
+                            {!isNewUploaderBusy && (item.status === "QUEUED" || item.status === "INVALID" || item.status === "FAILED") && (
+                                <button type="button" onClick={() => removeUploadQueueItem(item.id)} className="p-1 text-outline hover:text-rose-500 shrink-0 cursor-pointer">
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                            )}
+                          </div>
+                      ))}
+                    </div>
+                )}
+
+                <div className="pt-3 border-t border-outline-variant/30 flex items-center justify-between gap-2.5">
+                  <p className="text-[11px] text-outline font-semibold">
+                    {uploadQueue.filter((i) => i.status === "READY").length} / {uploadQueue.filter((i) => i.status !== "INVALID").length} 완료
+                  </p>
+                  <div className="flex gap-2.5">
+                    <button
+                        type="button"
+                        onClick={() => { if (!isNewUploaderBusy) { setIsNewUploadOpen(false); setUploadQueue([]); } }}
+                        disabled={isNewUploaderBusy}
+                        className="px-4 py-2 bg-surface-container hover:bg-surface-container-high rounded-xl text-xs font-bold text-on-surface cursor-pointer disabled:opacity-40"
+                    >
+                      닫기
+                    </button>
+                    <button
+                        type="button"
+                        onClick={runNewUploaderUpload}
+                        disabled={isNewUploaderBusy || uploadQueue.every((i) => i.status !== "QUEUED")}
+                        className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-opacity-95 shadow-md shadow-primary/10 cursor-pointer flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {isNewUploaderBusy ? "업로드 중..." : "업로드 시작"}
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
         )}
       </AnimatePresence>
 
@@ -2819,6 +3133,89 @@ export default function MyDocumentsView({
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {movingFolderId !== null && (
+            <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+              <motion.div
+                  initial={{ scale: 0.95, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.95, opacity: 0 }}
+                  className="bg-white rounded-3xl w-full max-w-lg p-6 shadow-2xl border border-outline-variant relative overflow-hidden space-y-4"
+              >
+                <div className="flex items-center justify-between border-b border-outline-variant pb-3">
+                  <div className="flex items-center gap-2 text-primary">
+                    <FolderInput className="w-5 h-5" />
+                    <h3 className="text-base font-bold">폴더 이동</h3>
+                  </div>
+                  <button
+                      onClick={() => setMovingFolderId(null)}
+                      className="p-1 hover:bg-surface-container rounded-full text-outline hover:text-on-surface cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="space-y-1.5">
+                  <p className="text-xs font-bold text-on-surface">대상 폴더 선택</p>
+                  <div className="border border-outline-variant/60 rounded-xl max-h-[220px] overflow-y-auto divide-y divide-outline-variant/40 bg-surface-container-low">
+                    <div
+                        onClick={() => setFolderMoveTarget(null)}
+                        className={`p-2.5 text-xs font-semibold cursor-pointer transition-colors flex items-center gap-2 ${
+                            folderMoveTarget === null ? "bg-primary/5 text-primary font-bold" : "text-on-surface hover:bg-white"
+                        }`}
+                    >
+                      <HardDrive className="w-3.5 h-3.5" /> [내 드라이브] (Root 최상위)
+                    </div>
+                    {folders
+                        .filter((folder) => !isDescendantOrSelf(folder.folderId, movingFolderId, folders))
+                        .map((folder) => {
+                          const depth = getFolderAncestors(folder.folderId, folders).length - 1;
+                          const fullPath = getFolderPath(folder.folderId, folders);
+                          return (
+                              <div
+                                  key={folder.folderId}
+                                  onClick={() => setFolderMoveTarget(folder.folderId)}
+                                  className={`p-2.5 text-xs font-semibold cursor-pointer transition-colors flex items-center gap-2 ${
+                                      folderMoveTarget === folder.folderId ? "bg-primary/5 text-primary font-bold border-l-2 border-primary" : "text-on-surface hover:bg-white"
+                                  }`}
+                                  style={{ paddingLeft: `${depth * 12 + 10}px` }}
+                              >
+                                <Folder className="w-3.5 h-3.5 text-outline shrink-0" />
+                                <span className="truncate">{folder.name}</span>
+                                {depth > 0 && (
+                                    <span className="text-[10px] text-outline font-normal truncate opacity-75">
+                              ({fullPath})
+                            </span>
+                                )}
+                              </div>
+                          );
+                        })}
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-outline-variant/30 flex justify-end gap-2.5">
+                  <button
+                      type="button"
+                      onClick={() => setMovingFolderId(null)}
+                      className="px-4 py-2 bg-surface-container hover:bg-surface-container-high rounded-xl text-xs font-bold text-on-surface cursor-pointer"
+                  >
+                    취소
+                  </button>
+                  <button
+                      type="button"
+                      onClick={() => {
+                        handleMoveFolder(movingFolderId, folderMoveTarget);
+                        setMovingFolderId(null);
+                      }}
+                      className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-opacity-95 shadow-md shadow-primary/10 cursor-pointer flex items-center gap-1"
+                  >
+                    이동 완료
+                  </button>
+                </div>
+              </motion.div>
+            </div>
         )}
       </AnimatePresence>
     </motion.div>

@@ -42,9 +42,10 @@ public class FileController {
             @RequestParam(required = false) String tags,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
+            @RequestParam(required = false) String documentType,
             @RequestParam(defaultValue = "0") int page) {
         Long userId = currentUserProvider.requireUserId();
-        return fileService.list(userId, folderId, keyword, docType, tags, dateFrom, dateTo, page);
+        return fileService.list(userId, folderId, keyword, docType, tags, dateFrom, dateTo, documentType, page);
     }
 
     @GetMapping("/{id}")
@@ -117,6 +118,20 @@ public class FileController {
     public SuccessResponse rename(@PathVariable Long id, @Valid @RequestBody RenameRequest request) {
         Long userId = currentUserProvider.requireUserId();
         fileService.rename(userId, id, request.name());
+        return new SuccessResponse(true);
+    }
+
+    @PatchMapping("/{id}/document-type")
+    public SuccessResponse setDocumentType(@PathVariable Long id, @RequestBody SetDocumentTypeRequest request) {
+        Long userId = currentUserProvider.requireUserId();
+        fileService.setDocumentType(userId, id, request.documentType());
+        return new SuccessResponse(true);
+    }
+
+    @PatchMapping("/{id}/tags")
+    public SuccessResponse setTags(@PathVariable Long id, @RequestBody SetTagsRequest request) {
+        Long userId = currentUserProvider.requireUserId();
+        fileService.setTags(userId, id, request.tags());
         return new SuccessResponse(true);
     }
 
