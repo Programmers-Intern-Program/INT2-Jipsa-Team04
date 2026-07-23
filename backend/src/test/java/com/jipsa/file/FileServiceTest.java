@@ -189,11 +189,11 @@ class FileServiceTest {
     void listReturnsPageMetadata() {
         File file = ownedFile();
         file.setName("a.pdf");
-        when(fileRepository.search(eq(1L), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(),
+        when(fileRepository.search(eq(1L), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(),
                 any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(file), PageRequest.of(0, 20), 1));
 
-        FileListResponse result = fileService.list(1L, null, null, null, null, null, null, 0);
+        FileListResponse result = fileService.list(1L, null, null, null, null, null, null, null, 0);
 
         assertThat(result.items()).hasSize(1);
         assertThat(result.total()).isEqualTo(1);

@@ -78,7 +78,7 @@ export default function SettingsView({ user, committedSettings, onSaveSettings }
     try {
       await onSaveSettings(localSettings);
       alert("환경 설정 변경 사항이 성공적으로 저장되었습니다!");
-    } catch (err) {
+    } catch {
       alert("설정 저장 중 오류가 발생했습니다.");
     } finally {
       setIsSaving(false);

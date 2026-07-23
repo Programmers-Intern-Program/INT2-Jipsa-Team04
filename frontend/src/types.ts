@@ -60,6 +60,7 @@ export interface Document {
   sizeBytes: number;
   /** was: type */
   fileType: string;
+  documentType?: string | null;
   /** was: folder(문자열 경로). Folder.folderId 참조, null이면 미분류(루트). */
   folderId: number | null;
   /** was: aiTags */

@@ -17,7 +17,10 @@ public record FileDetailResponse(
         FileStatus status,
         String processingStage,
         String securityRank,
-        boolean piiDetected
+        boolean piiDetected,
+        String documentType,
+        String extractionStatus,
+        Double extractionConfidence
 ) {
     public record Entities(
             List<String> dates,

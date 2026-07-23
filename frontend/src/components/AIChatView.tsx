@@ -15,9 +15,9 @@ import {
   Plus,
   Pencil,
 } from "lucide-react";
-import type { Document, ChatSession, ChatMessage } from "../types";
-import { mockFolders } from "../mocks/mockData";
+import type { Document, ChatSession, ChatMessage, Folder } from "../types";
 import { getFolderPath } from "../utils/folderTree";
+import { listFolders } from "../api/folders";
 
 interface AIChatViewProps {
   documents: Document[];
@@ -46,6 +46,10 @@ export default function AIChatView({
 }: AIChatViewProps) {
   const [inputText, setInputText] = useState("");
   const [isAddSourceOpen, setIsAddSourceOpen] = useState(false);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  useEffect(() => {
+    listFolders().then(setFolders).catch(() => {});
+  }, []);
 
   const activeSession = chatSessions.find((s) => s.id === activeChatSessionId) ?? chatSessions[0];
   const selectedDocIds = activeSession.selectedDocIds;
@@ -118,7 +122,7 @@ export default function AIChatView({
                   )}
                   <div className="flex-1 min-w-0">
                     <p className="text-body-sm font-bold text-on-surface truncate leading-tight">{doc.name}</p>
-                    <p className="text-[11px] text-outline mt-1 font-sans">{getFolderPath(doc.folderId, mockFolders)}</p>
+                    <p className="text-[11px] text-outline mt-1 font-sans">{getFolderPath(doc.folderId, folders)}</p>
                   </div>
 
                   {/* Active Indicator Checkbox */}

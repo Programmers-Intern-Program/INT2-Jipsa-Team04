@@ -35,6 +35,18 @@ public class FileMetadata {
     @Column(name = "Keywords")
     private String keywords;
 
+    @Column(name = "Document_Type", length = 100)
+    private String documentType;
+
+    @Column(name = "Extraction_Status", length = 30)
+    private String extractionStatus;
+
+    @Column(name = "Extraction_Confidence")
+    private Double extractionConfidence;
+
+    @Column(name = "Extracted_Entities")
+    private String extractedEntities;
+
     @CreationTimestamp
     @Column(name = "Created_At", updatable = false)
     private LocalDateTime createdAt;

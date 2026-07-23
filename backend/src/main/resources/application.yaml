@@ -51,6 +51,20 @@ app:
     base-url: ${RAG_BASE_URL:}
     token: ${RAG_INGEST_TOKEN:}
     read-timeout-ms: ${RAG_READ_TIMEOUT_MS:120000}
+  metadata:
+    document-types:
+      - 계약서
+      - 보고서
+      - 청구서
+      - 회의록
+      - 이력서
+      - 제안서
+      - 견적서
+      - 영수증
+      - 발표자료
+      - 공문
+      - 논문
+      - 기타
 
 # Google OAuth (authorization-code flow, backend-side token exchange).
 # Values come from env vars; empty defaults let the app start without .env

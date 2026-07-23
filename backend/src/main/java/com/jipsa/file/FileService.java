@@ -61,12 +61,12 @@ public class FileService {
 
     @Transactional(readOnly = true)
     public FileListResponse list(Long userId, Long folderId, String keyword, String docType,
-                                 String tags, LocalDate dateFrom, LocalDate dateTo, int page) {
+                                 String tags, LocalDate dateFrom, LocalDate dateTo, String documentType, int page) {
         Pageable pageable = PageRequest.of(page, PAGE_SIZE, Sort.by(Sort.Direction.DESC, "createdAt"));
         LocalDateTime from = dateFrom == null ? null : dateFrom.atStartOfDay();
         LocalDateTime to = dateTo == null ? null : dateTo.atTime(LocalTime.MAX);
         Page<File> result = fileRepository.search(userId, folderId, escapeLike(keyword), docType,
-                blankToNull(tags), from, to, pageable);
+                blankToNull(tags), from, to, blankToNull(documentType), pageable);
         List<FileListItem> items = toListItems(result.getContent());
         return new FileListResponse(items, result.getTotalElements(), result.getNumber(), result.getSize());
     }
@@ -77,6 +77,9 @@ public class FileService {
         FileMetadata metadata = fileMetadataRepository.findById(fileId).orElse(null);
         String summary = metadata != null && metadata.getSummary() != null ? metadata.getSummary() : "";
         List<String> tags = metadata != null ? parseStringList(metadata.getTags()) : List.of();
+        String documentType = metadata != null ? metadata.getDocumentType() : null;
+        String extractionStatus = metadata != null ? metadata.getExtractionStatus() : null;
+        Double extractionConfidence = metadata != null ? metadata.getExtractionConfidence() : null;
         return new FileDetailResponse(
                 file.getName(),
                 file.getFileType(),
@@ -91,7 +94,10 @@ public class FileService {
                 file.getStatus(),
                 file.getProcessingStage(),
                 file.getSecurityRank(),
-                file.isPiiDetected());
+                file.isPiiDetected(),
+                documentType,
+                extractionStatus,
+                extractionConfidence);
     }
 
     @Transactional(readOnly = true)
@@ -266,6 +272,34 @@ public class FileService {
         file.setName(finalName);
     }
 
+    @Transactional
+    public void setDocumentType(Long userId, Long fileId, String documentType) {
+        File file = requireOwnedFile(userId, fileId);
+        String value = documentType == null || documentType.isBlank() ? null : documentType.trim();
+        FileMetadata metadata = fileMetadataRepository.findById(fileId).orElseGet(() -> {
+            FileMetadata created = new FileMetadata();
+            created.setFileId(file.getId());
+            created.setFileType(file.getFileType());
+            return created;
+        });
+        metadata.setDocumentType(value);
+        fileMetadataRepository.save(metadata);
+    }
+
+    @Transactional
+    public void setTags(Long userId, Long fileId, List<String> tags) {
+        File file = requireOwnedFile(userId, fileId);
+        List<String> normalized = normalizeTags(tags);
+        FileMetadata metadata = fileMetadataRepository.findById(fileId).orElseGet(() -> {
+            FileMetadata created = new FileMetadata();
+            created.setFileId(file.getId());
+            created.setFileType(file.getFileType());
+            return created;
+        });
+        metadata.setTags(writeStringList(normalized));
+        fileMetadataRepository.save(metadata);
+    }
+
     private String applyOriginalExtension(String requestedName, String originalFileType) {
         if (originalFileType == null || originalFileType.isBlank()) {
             return requestedName;
@@ -318,7 +352,8 @@ public class FileService {
                 file.getUpdatedAt(),
                 summary,
                 tags,
-                file.getSecurityRank());
+                file.getSecurityRank(),
+                metadata != null ? metadata.getDocumentType() : null);
     }
 
     private String escapeLike(String keyword) {
@@ -337,6 +372,27 @@ public class FileService {
             return parsed == null ? List.of() : parsed;
         } catch (JsonProcessingException e) {
             return List.of();
+        }
+    }
+
+    private List<String> normalizeTags(List<String> tags) {
+        if (tags == null) {
+            return List.of();
+        }
+        return tags.stream()
+                .filter(tag -> tag != null)
+                .map(String::trim)
+                .filter(tag -> !tag.isEmpty() && tag.length() <= 50)
+                .distinct()
+                .limit(30)
+                .toList();
+    }
+
+    private String writeStringList(List<String> values) {
+        try {
+            return OBJECT_MAPPER.writeValueAsString(values);
+        } catch (JsonProcessingException e) {
+            return "[]";
         }
     }
 
