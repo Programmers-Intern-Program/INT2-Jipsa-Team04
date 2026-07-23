@@ -1,0 +1,3165 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Jipsa RAG Service 구조, 실행, 종료, 진단 및 테스트 가이드">
+  <meta name="theme-color" content="#0f766e">
+  <meta name="source-sha256" content="283dae56dfd4b4e78f5ae00a77647d9779d3c161a22635d89510f224af5a7733">
+  <title>Jipsa RAG Service · Developer Guide</title>
+
+  <style>
+    :root {
+      color-scheme: dark;
+
+      --bg: #07111f;
+      --bg-elevated: #0b1728;
+      --surface: rgba(12, 27, 45, 0.92);
+      --surface-strong: #102239;
+      --surface-soft: rgba(20, 184, 166, 0.07);
+      --border: rgba(148, 163, 184, 0.18);
+      --border-strong: rgba(45, 212, 191, 0.36);
+
+      --text: #e7f2f6;
+      --text-soft: #b8cad3;
+      --text-muted: #8198a6;
+
+      --primary: #14b8a6;
+      --primary-strong: #2dd4bf;
+      --primary-deep: #0f766e;
+      --secondary: #22d3ee;
+      --accent: #8b5cf6;
+      --warning: #fbbf24;
+      --danger: #fb7185;
+      --success: #34d399;
+
+      --code-bg: #06101c;
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+      --radius-sm: 10px;
+      --radius-md: 16px;
+      --radius-lg: 24px;
+      --content-width: 980px;
+      --sidebar-width: 310px;
+    }
+
+    html[data-theme="light"] {
+      color-scheme: light;
+
+      --bg: #f4f8f9;
+      --bg-elevated: #edf4f4;
+      --surface: rgba(255, 255, 255, 0.94);
+      --surface-strong: #ffffff;
+      --surface-soft: rgba(13, 148, 136, 0.08);
+      --border: rgba(15, 23, 42, 0.11);
+      --border-strong: rgba(13, 148, 136, 0.28);
+
+      --text: #10212a;
+      --text-soft: #334c58;
+      --text-muted: #647985;
+
+      --primary: #0f9f91;
+      --primary-strong: #0d9488;
+      --primary-deep: #0f766e;
+      --secondary: #0891b2;
+      --accent: #7c3aed;
+
+      --code-bg: #0b1728;
+      --shadow: 0 20px 65px rgba(15, 23, 42, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-padding-top: 84px;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(circle at 16% 0%, rgba(34, 211, 238, 0.12), transparent 28rem),
+        radial-gradient(circle at 86% 6%, rgba(139, 92, 246, 0.12), transparent 31rem),
+        linear-gradient(180deg, var(--bg), var(--bg-elevated));
+      color: var(--text);
+      font-family:
+        Inter, Pretendard, "Noto Sans KR", "Apple SD Gothic Neo",
+        "Malgun Gothic", system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+      line-height: 1.72;
+      word-break: keep-all;
+      overflow-wrap: anywhere;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(45, 212, 191, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(45, 212, 191, 0.025) 1px, transparent 1px);
+      background-size: 34px 34px;
+      mask-image: linear-gradient(to bottom, black, transparent 70%);
+      z-index: -1;
+    }
+
+    a {
+      color: var(--primary-strong);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    a:hover {
+      color: var(--secondary);
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    .progress-track {
+      position: fixed;
+      inset: 0 0 auto 0;
+      height: 3px;
+      z-index: 1000;
+      background: transparent;
+    }
+
+    .progress-bar {
+      width: 0;
+      height: 100%;
+      background: linear-gradient(90deg, var(--primary), var(--secondary), var(--accent));
+      box-shadow: 0 0 18px rgba(34, 211, 238, 0.6);
+      transition: width 80ms linear;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 900;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      min-height: 68px;
+      padding: 10px clamp(16px, 4vw, 48px);
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--bg) 82%, transparent);
+      backdrop-filter: blur(18px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .brand-mark {
+      display: grid;
+      place-items: center;
+      width: 38px;
+      height: 38px;
+      flex: 0 0 auto;
+      border: 1px solid var(--border-strong);
+      border-radius: 12px;
+      background:
+        linear-gradient(145deg, rgba(20, 184, 166, 0.23), rgba(34, 211, 238, 0.08));
+      box-shadow: inset 0 0 24px rgba(45, 212, 191, 0.08);
+    }
+
+    .brand-mark svg {
+      width: 22px;
+      height: 22px;
+      fill: none;
+      stroke: var(--primary-strong);
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .brand-copy {
+      min-width: 0;
+    }
+
+    .brand-title {
+      display: block;
+      overflow: hidden;
+      color: var(--text);
+      font-size: 0.96rem;
+      font-weight: 800;
+      letter-spacing: -0.015em;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .brand-subtitle {
+      display: block;
+      color: var(--text-muted);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .icon-button {
+      display: inline-grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      color: var(--text-soft);
+      cursor: pointer;
+      transition:
+        transform 160ms ease,
+        border-color 160ms ease,
+        color 160ms ease,
+        background 160ms ease;
+    }
+
+    .icon-button:hover {
+      transform: translateY(-1px);
+      border-color: var(--border-strong);
+      color: var(--primary-strong);
+      background: var(--surface-strong);
+    }
+
+    .icon-button svg {
+      width: 19px;
+      height: 19px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .mobile-toc-button {
+      display: none;
+    }
+
+    .hero-shell {
+      padding: clamp(42px, 8vw, 94px) clamp(18px, 5vw, 64px) 34px;
+    }
+
+    .hero {
+      position: relative;
+      max-width: 1380px;
+      margin: 0 auto;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background:
+        linear-gradient(135deg, rgba(20, 184, 166, 0.13), transparent 42%),
+        linear-gradient(315deg, rgba(139, 92, 246, 0.11), transparent 46%),
+        var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      top: -110px;
+      right: -80px;
+      width: 320px;
+      height: 320px;
+      border-radius: 50%;
+      border: 1px solid rgba(45, 212, 191, 0.14);
+      box-shadow:
+        0 0 0 40px rgba(34, 211, 238, 0.025),
+        0 0 0 82px rgba(139, 92, 246, 0.018);
+      pointer-events: none;
+    }
+
+    .hero-grid {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.7fr);
+      gap: clamp(28px, 5vw, 72px);
+      padding: clamp(30px, 6vw, 72px);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 20px;
+      padding: 7px 11px;
+      border: 1px solid var(--border-strong);
+      border-radius: 999px;
+      background: rgba(20, 184, 166, 0.08);
+      color: var(--primary-strong);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 12px rgba(52, 211, 153, 0.75);
+    }
+
+    .hero h1 {
+      max-width: 860px;
+      margin: 0;
+      color: var(--text);
+      font-size: clamp(2.4rem, 6vw, 5.45rem);
+      line-height: 0.98;
+      letter-spacing: -0.052em;
+    }
+
+    .hero h1 span {
+      display: block;
+      margin-top: 12px;
+      background: linear-gradient(90deg, var(--primary-strong), var(--secondary), #a78bfa);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .hero-description {
+      max-width: 760px;
+      margin: 28px 0 0;
+      color: var(--text-soft);
+      font-size: clamp(1rem, 2vw, 1.2rem);
+      line-height: 1.78;
+    }
+
+    .tech-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: 28px;
+    }
+
+    .tech-pill {
+      padding: 7px 11px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(7, 17, 31, 0.26);
+      color: var(--text-soft);
+      font-size: 0.79rem;
+      font-weight: 700;
+    }
+
+    html[data-theme="light"] .tech-pill {
+      background: rgba(255, 255, 255, 0.58);
+    }
+
+    .hero-stats {
+      display: grid;
+      align-content: center;
+      gap: 12px;
+    }
+
+    .stat-card {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      align-items: center;
+      gap: 13px;
+      padding: 17px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: color-mix(in srgb, var(--surface-strong) 78%, transparent);
+    }
+
+    .stat-icon {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border-radius: 13px;
+      background: linear-gradient(145deg, rgba(20, 184, 166, 0.18), rgba(34, 211, 238, 0.08));
+      color: var(--primary-strong);
+      font-weight: 900;
+    }
+
+    .stat-value {
+      display: block;
+      color: var(--text);
+      font-size: 1.18rem;
+      font-weight: 850;
+      line-height: 1.2;
+    }
+
+    .stat-label {
+      display: block;
+      margin-top: 3px;
+      color: var(--text-muted);
+      font-size: 0.76rem;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: var(--sidebar-width) minmax(0, var(--content-width));
+      justify-content: center;
+      gap: clamp(28px, 4vw, 60px);
+      width: min(100%, 1420px);
+      margin: 0 auto;
+      padding: 34px clamp(18px, 4vw, 54px) 100px;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 94px;
+      align-self: start;
+      max-height: calc(100vh - 116px);
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--surface);
+      box-shadow: 0 15px 50px rgba(0, 0, 0, 0.14);
+    }
+
+    .sidebar-header {
+      padding: 18px 18px 13px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sidebar-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0 0 12px;
+      color: var(--text);
+      font-size: 0.84rem;
+      font-weight: 850;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .sidebar-count {
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--surface-soft);
+      color: var(--primary-strong);
+      font-size: 0.7rem;
+    }
+
+    .toc-search {
+      width: 100%;
+      height: 39px;
+      padding: 0 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      outline: none;
+      background: var(--bg);
+      color: var(--text);
+      transition: border-color 160ms ease, box-shadow 160ms ease;
+    }
+
+    .toc-search::placeholder {
+      color: var(--text-muted);
+    }
+
+    .toc-search:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.12);
+    }
+
+    .toc-scroll {
+      max-height: calc(100vh - 230px);
+      overflow: auto;
+      padding: 10px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border-strong) transparent;
+    }
+
+    .toc-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .toc-list li {
+      margin: 2px 0;
+    }
+
+    .toc-list a {
+      display: block;
+      padding: 8px 10px;
+      border-left: 2px solid transparent;
+      border-radius: 8px;
+      color: var(--text-muted);
+      font-size: 0.79rem;
+      line-height: 1.42;
+      text-decoration: none;
+      transition:
+        color 150ms ease,
+        background 150ms ease,
+        border-color 150ms ease;
+    }
+
+    .toc-list a:hover {
+      color: var(--text);
+      background: var(--surface-soft);
+    }
+
+    .toc-list a.active {
+      border-left-color: var(--primary-strong);
+      background: linear-gradient(90deg, rgba(20, 184, 166, 0.13), transparent);
+      color: var(--primary-strong);
+      font-weight: 800;
+    }
+
+    .toc-level-3 a {
+      padding-left: 23px;
+      font-size: 0.75rem;
+    }
+
+    .toc-empty {
+      display: none;
+      padding: 12px;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      text-align: center;
+    }
+
+    .content {
+      min-width: 0;
+      padding: clamp(25px, 4vw, 52px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+
+    .content > :first-child {
+      margin-top: 0;
+    }
+
+    .content h1 {
+      display: none;
+    }
+
+    .content h2,
+    .content h3,
+    .content h4,
+    .content h5,
+    .content h6 {
+      position: relative;
+      scroll-margin-top: 94px;
+      color: var(--text);
+      letter-spacing: -0.025em;
+    }
+
+    .content h2 {
+      margin: 4.8rem 0 1.4rem;
+      padding: 0 0 0.72rem;
+      border-bottom: 1px solid var(--border);
+      font-size: clamp(1.55rem, 3vw, 2.1rem);
+      line-height: 1.24;
+    }
+
+    .content h2::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      bottom: -1px;
+      width: 86px;
+      height: 2px;
+      background: linear-gradient(90deg, var(--primary), var(--secondary));
+    }
+
+    .content h3 {
+      margin: 2.8rem 0 1rem;
+      font-size: clamp(1.2rem, 2.2vw, 1.5rem);
+      line-height: 1.34;
+    }
+
+    .content h4 {
+      margin: 2.2rem 0 0.8rem;
+      font-size: 1.08rem;
+    }
+
+    .heading-anchor {
+      position: absolute;
+      left: -1.2em;
+      opacity: 0;
+      color: var(--primary);
+      text-decoration: none;
+      transition: opacity 140ms ease;
+    }
+
+    .content h2:hover .heading-anchor,
+    .content h3:hover .heading-anchor,
+    .content h4:hover .heading-anchor {
+      opacity: 1;
+    }
+
+    .content p {
+      margin: 0.95rem 0;
+      color: var(--text-soft);
+    }
+
+    .content strong {
+      color: var(--text);
+      font-weight: 800;
+    }
+
+    .content em {
+      color: color-mix(in srgb, var(--text) 85%, var(--primary));
+    }
+
+    .content hr {
+      height: 1px;
+      margin: 3.5rem 0;
+      border: 0;
+      background: linear-gradient(90deg, transparent, var(--border-strong), transparent);
+    }
+
+    .content ul,
+    .content ol {
+      margin: 1rem 0;
+      padding-left: 1.55rem;
+      color: var(--text-soft);
+    }
+
+    .content li {
+      margin: 0.43rem 0;
+      padding-left: 0.18rem;
+    }
+
+    .content li::marker {
+      color: var(--primary);
+      font-weight: 800;
+    }
+
+    .content .task-list-item {
+      list-style: none;
+      margin-left: -1.25rem;
+    }
+
+    .content input[type="checkbox"] {
+      width: 1rem;
+      height: 1rem;
+      margin: 0 0.55rem 0 0;
+      accent-color: var(--primary);
+      vertical-align: -0.12rem;
+    }
+
+    .content blockquote {
+      margin: 1.5rem 0;
+      padding: 1rem 1.15rem 1rem 1.25rem;
+      border-left: 4px solid var(--primary);
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      background: var(--surface-soft);
+    }
+
+    .content blockquote p {
+      margin: 0;
+      color: var(--text);
+    }
+
+    .content :not(pre) > code {
+      padding: 0.2em 0.42em;
+      border: 1px solid rgba(45, 212, 191, 0.14);
+      border-radius: 6px;
+      background: rgba(20, 184, 166, 0.09);
+      color: var(--primary-strong);
+      font-family:
+        "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.88em;
+      word-break: break-word;
+    }
+
+    .code-shell {
+      position: relative;
+      margin: 1.35rem 0;
+    }
+
+    .code-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 38px;
+      padding: 7px 10px 7px 14px;
+      border: 1px solid var(--border);
+      border-bottom: 0;
+      border-radius: 12px 12px 0 0;
+      background: #0a1725;
+    }
+
+    .code-language {
+      color: #8ba4b3;
+      font-family:
+        "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.72rem;
+      font-weight: 750;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .copy-button {
+      padding: 5px 9px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.035);
+      color: #afc3ce;
+      font-size: 0.72rem;
+      cursor: pointer;
+      transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+    }
+
+    .copy-button:hover {
+      border-color: rgba(45, 212, 191, 0.45);
+      background: rgba(20, 184, 166, 0.09);
+      color: #5eead4;
+    }
+
+    .content pre {
+      margin: 0;
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 0 0 12px 12px;
+      background: var(--code-bg);
+      color: #d8e7ee;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(45, 212, 191, 0.45) transparent;
+    }
+
+    .content pre code {
+      display: block;
+      min-width: max-content;
+      padding: 1.2rem 1.25rem;
+      background: transparent;
+      font-family:
+        "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 0.84rem;
+      line-height: 1.65;
+      white-space: pre;
+      tab-size: 4;
+    }
+
+    .table-shell {
+      margin: 1.4rem 0;
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 13px;
+      background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+    }
+
+    .content table {
+      width: 100%;
+      min-width: 620px;
+      border-collapse: collapse;
+    }
+
+    .content th,
+    .content td {
+      padding: 0.82rem 0.9rem;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .content th {
+      background: rgba(20, 184, 166, 0.08);
+      color: var(--text);
+      font-size: 0.8rem;
+      font-weight: 850;
+      letter-spacing: 0.02em;
+    }
+
+    .content td {
+      color: var(--text-soft);
+      font-size: 0.86rem;
+    }
+
+    .content tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .content tbody tr:hover {
+      background: rgba(34, 211, 238, 0.035);
+    }
+
+    .section-callout {
+      display: none;
+    }
+
+    .document-footer {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 0 clamp(18px, 5vw, 64px) 42px;
+      color: var(--text-muted);
+      font-size: 0.76rem;
+    }
+
+    .palette {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .palette-swatch {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+    }
+
+    .palette-swatch.primary {
+      background: var(--primary);
+    }
+
+    .palette-swatch.secondary {
+      background: var(--secondary);
+    }
+
+    .palette-swatch.accent {
+      background: var(--accent);
+    }
+
+    .back-to-top {
+      position: fixed;
+      right: 22px;
+      bottom: 22px;
+      z-index: 850;
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      border: 1px solid var(--border-strong);
+      border-radius: 14px;
+      background: var(--surface-strong);
+      color: var(--primary-strong);
+      box-shadow: 0 12px 35px rgba(0, 0, 0, 0.22);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(12px);
+      transition: opacity 180ms ease, transform 180ms ease;
+      cursor: pointer;
+    }
+
+    .back-to-top.visible {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
+    }
+
+    .back-to-top svg {
+      width: 19px;
+      height: 19px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .mobile-overlay {
+      display: none;
+    }
+
+    @media (max-width: 1080px) {
+      .layout {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
+      .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        z-index: 1100;
+        width: min(88vw, 360px);
+        height: 100vh;
+        max-height: none;
+        border-radius: 0 18px 18px 0;
+        transform: translateX(-104%);
+        transition: transform 220ms ease;
+      }
+
+      .sidebar.open {
+        transform: translateX(0);
+      }
+
+      .toc-scroll {
+        max-height: calc(100vh - 108px);
+      }
+
+      .mobile-toc-button {
+        display: inline-grid;
+      }
+
+      .mobile-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 1050;
+        display: block;
+        background: rgba(0, 0, 0, 0.52);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 220ms ease;
+      }
+
+      .mobile-overlay.open {
+        opacity: 1;
+        pointer-events: auto;
+      }
+    }
+
+    @media (max-width: 820px) {
+      .hero-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .brand-subtitle {
+        display: none;
+      }
+
+      .content {
+        padding: 24px 19px 36px;
+        border-radius: 18px;
+      }
+
+      .heading-anchor {
+        position: static;
+        margin-right: 0.35rem;
+        opacity: 0.6;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .topbar {
+        padding-inline: 12px;
+      }
+
+      .hero-shell {
+        padding-inline: 12px;
+      }
+
+      .hero-grid {
+        padding: 26px 21px;
+      }
+
+      .hero h1 {
+        font-size: clamp(2.15rem, 13vw, 3.6rem);
+      }
+
+      .hero-stats {
+        grid-template-columns: 1fr;
+      }
+
+      .layout {
+        padding-inline: 12px;
+      }
+
+      .brand-title {
+        max-width: 170px;
+      }
+
+      .document-footer {
+        padding-inline: 18px;
+      }
+    }
+
+    @media print {
+      :root {
+        color-scheme: light;
+      }
+
+      body {
+        background: #ffffff;
+        color: #111827;
+      }
+
+      body::before,
+      .progress-track,
+      .topbar,
+      .hero-shell,
+      .sidebar,
+      .back-to-top,
+      .mobile-overlay,
+      .document-footer,
+      .copy-button {
+        display: none !important;
+      }
+
+      .layout {
+        display: block;
+        width: 100%;
+        padding: 0;
+      }
+
+      .content {
+        width: 100%;
+        max-width: none;
+        padding: 0;
+        border: 0;
+        background: #ffffff;
+        box-shadow: none;
+      }
+
+      .content h1 {
+        display: block;
+      }
+
+      .content h2,
+      .content h3,
+      .content p,
+      .content li,
+      .content td {
+        color: #111827;
+      }
+
+      .content a {
+        color: #0f766e;
+      }
+
+      .content pre {
+        border: 1px solid #cbd5e1;
+        background: #f8fafc;
+        color: #111827;
+        white-space: pre-wrap;
+      }
+
+      .content pre code {
+        min-width: 0;
+        color: #111827;
+        white-space: pre-wrap;
+      }
+
+      .code-toolbar {
+        border-color: #cbd5e1;
+        background: #eef2f7;
+      }
+
+      .code-language {
+        color: #475569;
+      }
+
+      .content h2,
+      .content h3 {
+        break-after: avoid;
+      }
+
+      .code-shell,
+      .table-shell,
+      blockquote {
+        break-inside: avoid;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="progress-track" aria-hidden="true">
+    <div class="progress-bar" id="readingProgress"></div>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5z"></path>
+          <path d="m8 10 4 2.3 4-2.3"></path>
+          <path d="M12 12.3V17"></path>
+        </svg>
+      </div>
+      <div class="brand-copy">
+        <span class="brand-title">Jipsa RAG Service</span>
+        <span class="brand-subtitle">Local AI Infrastructure Guide</span>
+      </div>
+    </div>
+
+    <div class="topbar-actions">
+      <button
+        class="icon-button mobile-toc-button"
+        id="openToc"
+        type="button"
+        aria-label="목차 열기"
+        title="목차 열기"
+      >
+        <svg viewBox="0 0 24 24">
+          <path d="M4 6h16M4 12h16M4 18h16"></path>
+        </svg>
+      </button>
+
+      <button
+        class="icon-button"
+        id="themeToggle"
+        type="button"
+        aria-label="테마 변경"
+        title="테마 변경"
+      >
+        <svg id="themeIcon" viewBox="0 0 24 24">
+          <path d="M12 3a9 9 0 1 0 9 9c0-.4 0-.8-.1-1.2A7 7 0 0 1 12 3Z"></path>
+        </svg>
+      </button>
+
+      <button
+        class="icon-button"
+        id="printDocument"
+        type="button"
+        aria-label="문서 인쇄"
+        title="문서 인쇄"
+      >
+        <svg viewBox="0 0 24 24">
+          <path d="M6 9V3h12v6"></path>
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+          <path d="M6 14h12v7H6z"></path>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <section class="hero-shell">
+    <div class="hero">
+      <div class="hero-grid">
+        <div>
+          <div class="eyebrow">
+            <span class="eyebrow-dot"></span>
+            Developer Documentation
+          </div>
+
+          <h1>
+            Jipsa
+            <span>RAG Service</span>
+          </h1>
+
+          <p class="hero-description">
+            FastAPI, Local RAG DB, Qdrant, TEI, CUDA GPU를 하나의 로컬 실행
+            생명주기로 연결하는 개발자 가이드입니다. 구조, 설정, 실행, 종료,
+            장애 진단, 테스트와 품질 검사 절차를 한 문서에서 확인할 수 있습니다.
+          </p>
+
+          <div class="tech-pills" aria-label="주요 기술">
+            <span class="tech-pill">Python 3.12</span>
+            <span class="tech-pill">FastAPI</span>
+            <span class="tech-pill">Qdrant</span>
+            <span class="tech-pill">TEI</span>
+            <span class="tech-pill">CUDA 12.9</span>
+            <span class="tech-pill">MySQL</span>
+            <span class="tech-pill">PowerShell</span>
+          </div>
+        </div>
+
+        <div class="hero-stats" aria-label="문서 통계">
+          <div class="stat-card">
+            <div class="stat-icon">§</div>
+            <div>
+              <span class="stat-value">23</span>
+              <span class="stat-label">주요 문서 섹션</span>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-icon">&lt;/&gt;</div>
+            <div>
+              <span class="stat-value">94</span>
+              <span class="stat-label">실행 및 검증 코드 블록</span>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-icon">GPU</div>
+            <div>
+              <span class="stat-value">CUDA</span>
+              <span class="stat-label">TEI GPU 추론 검증</span>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-icon">≈</div>
+            <div>
+              <span class="stat-value">22분</span>
+              <span class="stat-label">예상 전체 읽기 시간</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="mobile-overlay" id="mobileOverlay" aria-hidden="true"></div>
+
+  <main class="layout">
+    <aside class="sidebar" id="sidebar" aria-label="문서 목차">
+      <div class="sidebar-header">
+        <div class="sidebar-title">
+          On this page
+          <span class="sidebar-count">137</span>
+        </div>
+        <input
+          class="toc-search"
+          id="tocSearch"
+          type="search"
+          placeholder="목차 검색"
+          aria-label="목차 검색"
+          autocomplete="off"
+        >
+      </div>
+
+      <div class="toc-scroll">
+        <ul class="toc-list" id="tocList">
+          <li class="toc-level-2" data-search-text="목차"><a href="#목차">목차</a></li>
+<li class="toc-level-2" data-search-text="서비스 역할과 시스템 경계"><a href="#서비스-역할과-시스템-경계">서비스 역할과 시스템 경계</a></li>
+<li class="toc-level-3" data-search-text="rag 서비스가 담당하는 작업"><a href="#rag-서비스가-담당하는-작업">RAG 서비스가 담당하는 작업</a></li>
+<li class="toc-level-3" data-search-text="애플리케이션 서버가 담당하는 작업"><a href="#애플리케이션-서버가-담당하는-작업">애플리케이션 서버가 담당하는 작업</a></li>
+<li class="toc-level-3" data-search-text="rag 서비스가 수행하지 않는 작업"><a href="#rag-서비스가-수행하지-않는-작업">RAG 서비스가 수행하지 않는 작업</a></li>
+<li class="toc-level-2" data-search-text="파일 처리 흐름"><a href="#파일-처리-흐름">파일 처리 흐름</a></li>
+<li class="toc-level-3" data-search-text="s3 연동 원칙"><a href="#s3-연동-원칙">S3 연동 원칙</a></li>
+<li class="toc-level-2" data-search-text="현재 구현 범위"><a href="#현재-구현-범위">현재 구현 범위</a></li>
+<li class="toc-level-3" data-search-text="fastapi 애플리케이션"><a href="#fastapi-애플리케이션">FastAPI 애플리케이션</a></li>
+<li class="toc-level-3" data-search-text="설정과 보안"><a href="#설정과-보안">설정과 보안</a></li>
+<li class="toc-level-3" data-search-text="파일 다운로드와 문서 처리"><a href="#파일-다운로드와-문서-처리">파일 다운로드와 문서 처리</a></li>
+<li class="toc-level-3" data-search-text="임베딩과 vectordb"><a href="#임베딩과-vectordb">임베딩과 VectorDB</a></li>
+<li class="toc-level-3" data-search-text="local rag db와 색인 안정성"><a href="#local-rag-db와-색인-안정성">Local RAG DB와 색인 안정성</a></li>
+<li class="toc-level-3" data-search-text="로컬 실행 자동화"><a href="#로컬-실행-자동화">로컬 실행 자동화</a></li>
+<li class="toc-level-2" data-search-text="현재 제한 사항"><a href="#현재-제한-사항">현재 제한 사항</a></li>
+<li class="toc-level-3" data-search-text="지원 문서 형식"><a href="#지원-문서-형식">지원 문서 형식</a></li>
+<li class="toc-level-3" data-search-text="ocr"><a href="#ocr">OCR</a></li>
+<li class="toc-level-3" data-search-text="로컬 인프라 범위"><a href="#로컬-인프라-범위">로컬 인프라 범위</a></li>
+<li class="toc-level-3" data-search-text="readiness 범위"><a href="#readiness-범위">Readiness 범위</a></li>
+<li class="toc-level-2" data-search-text="로컬 실행 구성"><a href="#로컬-실행-구성">로컬 실행 구성</a></li>
+<li class="toc-level-3" data-search-text="포트 포워딩 관계"><a href="#포트-포워딩-관계">포트 포워딩 관계</a></li>
+<li class="toc-level-2" data-search-text="요구 환경"><a href="#요구-환경">요구 환경</a></li>
+<li class="toc-level-3" data-search-text="필수 소프트웨어"><a href="#필수-소프트웨어">필수 소프트웨어</a></li>
+<li class="toc-level-3" data-search-text="현재 gpu와 tei 이미지"><a href="#현재-gpu와-tei-이미지">현재 GPU와 TEI 이미지</a></li>
+<li class="toc-level-3" data-search-text="로컬 리소스"><a href="#로컬-리소스">로컬 리소스</a></li>
+<li class="toc-level-2" data-search-text="설치"><a href="#설치">설치</a></li>
+<li class="toc-level-3" data-search-text="프로젝트 디렉터리 이동"><a href="#프로젝트-디렉터리-이동">프로젝트 디렉터리 이동</a></li>
+<li class="toc-level-3" data-search-text="python 버전 확인"><a href="#python-버전-확인">Python 버전 확인</a></li>
+<li class="toc-level-3" data-search-text="uv 설치 여부 확인"><a href="#uv-설치-여부-확인">uv 설치 여부 확인</a></li>
+<li class="toc-level-3" data-search-text="프로젝트 의존성 동기화"><a href="#프로젝트-의존성-동기화">프로젝트 의존성 동기화</a></li>
+<li class="toc-level-3" data-search-text="docker 확인"><a href="#docker-확인">Docker 확인</a></li>
+<li class="toc-level-3" data-search-text="docker gpu 확인"><a href="#docker-gpu-확인">Docker GPU 확인</a></li>
+<li class="toc-level-2" data-search-text="환경 변수"><a href="#환경-변수">환경 변수</a></li>
+<li class="toc-level-3" data-search-text="환경 파일"><a href="#환경-파일">환경 파일</a></li>
+<li class="toc-level-3" data-search-text="실행 환경 선택"><a href="#실행-환경-선택">실행 환경 선택</a></li>
+<li class="toc-level-3" data-search-text="주요 application 설정"><a href="#주요-application-설정">주요 Application 설정</a></li>
+<li class="toc-level-3" data-search-text="외부 접근 설정"><a href="#외부-접근-설정">외부 접근 설정</a></li>
+<li class="toc-level-3" data-search-text="내부 인증 설정"><a href="#내부-인증-설정">내부 인증 설정</a></li>
+<li class="toc-level-3" data-search-text="local rag db 설정"><a href="#local-rag-db-설정">Local RAG DB 설정</a></li>
+<li class="toc-level-3" data-search-text="파일 다운로드 설정"><a href="#파일-다운로드-설정">파일 다운로드 설정</a></li>
+<li class="toc-level-3" data-search-text="tei 임베딩 설정"><a href="#tei-임베딩-설정">TEI 임베딩 설정</a></li>
+<li class="toc-level-3" data-search-text="qdrant 설정"><a href="#qdrant-설정">Qdrant 설정</a></li>
+<li class="toc-level-3" data-search-text="애플리케이션 서버 설정"><a href="#애플리케이션-서버-설정">애플리케이션 서버 설정</a></li>
+<li class="toc-level-2" data-search-text="로컬 rag 통합 실행"><a href="#로컬-rag-통합-실행">로컬 RAG 통합 실행</a></li>
+<li class="toc-level-3" data-search-text="통합 실행 스크립트"><a href="#통합-실행-스크립트">통합 실행 스크립트</a></li>
+<li class="toc-level-3" data-search-text="실행 전 체크"><a href="#실행-전-체크">실행 전 체크</a></li>
+<li class="toc-level-3" data-search-text="권장 실행 명령"><a href="#권장-실행-명령">권장 실행 명령</a></li>
+<li class="toc-level-3" data-search-text="powershell 실행 정책 오류"><a href="#powershell-실행-정책-오류">PowerShell 실행 정책 오류</a></li>
+<li class="toc-level-3" data-search-text="통합 실행 순서"><a href="#통합-실행-순서">통합 실행 순서</a></li>
+<li class="toc-level-3" data-search-text="준비 상태 제한 시간"><a href="#준비-상태-제한-시간">준비 상태 제한 시간</a></li>
+<li class="toc-level-3" data-search-text="정상 실행 상태"><a href="#정상-실행-상태">정상 실행 상태</a></li>
+<li class="toc-level-2" data-search-text="서버 접근 주소"><a href="#서버-접근-주소">서버 접근 주소</a></li>
+<li class="toc-level-3" data-search-text="로컬 주소"><a href="#로컬-주소">로컬 주소</a></li>
+<li class="toc-level-3" data-search-text="외부 주소"><a href="#외부-주소">외부 주소</a></li>
+<li class="toc-level-3" data-search-text="liveness"><a href="#liveness">Liveness</a></li>
+<li class="toc-level-3" data-search-text="readiness"><a href="#readiness">Readiness</a></li>
+<li class="toc-level-3" data-search-text="ingest"><a href="#ingest">Ingest</a></li>
+<li class="toc-level-2" data-search-text="로컬 rag 종료"><a href="#로컬-rag-종료">로컬 RAG 종료</a></li>
+<li class="toc-level-3" data-search-text="정상 종료"><a href="#정상-종료">정상 종료</a></li>
+<li class="toc-level-3" data-search-text="수동 종료"><a href="#수동-종료">수동 종료</a></li>
+<li class="toc-level-3" data-search-text="비정상 종료 후 정리"><a href="#비정상-종료-후-정리">비정상 종료 후 정리</a></li>
+<li class="toc-level-3" data-search-text="종료 시 유지되는 리소스"><a href="#종료-시-유지되는-리소스">종료 시 유지되는 리소스</a></li>
+<li class="toc-level-3" data-search-text="사용하지 않는 삭제 명령"><a href="#사용하지-않는-삭제-명령">사용하지 않는 삭제 명령</a></li>
+<li class="toc-level-2" data-search-text="실행 실패 시 자동 진단"><a href="#실행-실패-시-자동-진단">실행 실패 시 자동 진단</a></li>
+<li class="toc-level-3" data-search-text="진단 실행 조건"><a href="#진단-실행-조건">진단 실행 조건</a></li>
+<li class="toc-level-3" data-search-text="자동 출력 정보"><a href="#자동-출력-정보">자동 출력 정보</a></li>
+<li class="toc-level-3" data-search-text="docker compose 상태에서 확인할 항목"><a href="#docker-compose-상태에서-확인할-항목">Docker Compose 상태에서 확인할 항목</a></li>
+<li class="toc-level-3" data-search-text="qdrant 로그에서 확인할 항목"><a href="#qdrant-로그에서-확인할-항목">Qdrant 로그에서 확인할 항목</a></li>
+<li class="toc-level-3" data-search-text="tei 로그에서 확인할 항목"><a href="#tei-로그에서-확인할-항목">TEI 로그에서 확인할 항목</a></li>
+<li class="toc-level-3" data-search-text="원본 오류 보존"><a href="#원본-오류-보존">원본 오류 보존</a></li>
+<li class="toc-level-3" data-search-text="실패 후 자동 정지"><a href="#실패-후-자동-정지">실패 후 자동 정지</a></li>
+<li class="toc-level-3" data-search-text="컨테이너 실행 전 실패 예시"><a href="#컨테이너-실행-전-실패-예시">컨테이너 실행 전 실패 예시</a></li>
+<li class="toc-level-2" data-search-text="문제 해결"><a href="#문제-해결">문제 해결</a></li>
+<li class="toc-level-3" data-search-text="docker engine에 연결할 수 없음"><a href="#docker-engine에-연결할-수-없음">Docker Engine에 연결할 수 없음</a></li>
+<li class="toc-level-3" data-search-text="docker compose plugin 실행 실패"><a href="#docker-compose-plugin-실행-실패">Docker Compose Plugin 실행 실패</a></li>
+<li class="toc-level-3" data-search-text="nvidia gpu를 사용할 수 없음"><a href="#nvidia-gpu를-사용할-수-없음">NVIDIA GPU를 사용할 수 없음</a></li>
+<li class="toc-level-3" data-search-text="tei가 cpu로 실행됨"><a href="#tei가-cpu로-실행됨">TEI가 CPU로 실행됨</a></li>
+<li class="toc-level-3" data-search-text="gpu 메모리 부족"><a href="#gpu-메모리-부족">GPU 메모리 부족</a></li>
+<li class="toc-level-3" data-search-text="qdrant 준비 상태 timeout"><a href="#qdrant-준비-상태-timeout">Qdrant 준비 상태 Timeout</a></li>
+<li class="toc-level-3" data-search-text="tei 준비 상태 timeout"><a href="#tei-준비-상태-timeout">TEI 준비 상태 Timeout</a></li>
+<li class="toc-level-3" data-search-text="포트 충돌"><a href="#포트-충돌">포트 충돌</a></li>
+<li class="toc-level-3" data-search-text="fastapi 시작 시 db 연결 실패"><a href="#fastapi-시작-시-db-연결-실패">FastAPI 시작 시 DB 연결 실패</a></li>
+<li class="toc-level-3" data-search-text="local은 성공하지만 외부 접속 실패"><a href="#local은-성공하지만-외부-접속-실패">Local은 성공하지만 외부 접속 실패</a></li>
+<li class="toc-level-3" data-search-text="powershell 창을 닫은 뒤 gpu가 계속 점유됨"><a href="#powershell-창을-닫은-뒤-gpu가-계속-점유됨">PowerShell 창을 닫은 뒤 GPU가 계속 점유됨</a></li>
+<li class="toc-level-2" data-search-text="fastapi 단독 실행"><a href="#fastapi-단독-실행">FastAPI 단독 실행</a></li>
+<li class="toc-level-3" data-search-text="프로젝트 entry point 실행"><a href="#프로젝트-entry-point-실행">프로젝트 Entry Point 실행</a></li>
+<li class="toc-level-3" data-search-text="uvicorn 직접 실행"><a href="#uvicorn-직접-실행">Uvicorn 직접 실행</a></li>
+<li class="toc-level-3" data-search-text="단독 실행의 차이"><a href="#단독-실행의-차이">단독 실행의 차이</a></li>
+<li class="toc-level-2" data-search-text="docker 수동 확인 명령"><a href="#docker-수동-확인-명령">Docker 수동 확인 명령</a></li>
+<li class="toc-level-3" data-search-text="compose 구성 검증"><a href="#compose-구성-검증">Compose 구성 검증</a></li>
+<li class="toc-level-3" data-search-text="전체 컨테이너 상태"><a href="#전체-컨테이너-상태">전체 컨테이너 상태</a></li>
+<li class="toc-level-3" data-search-text="qdrant 로그"><a href="#qdrant-로그">Qdrant 로그</a></li>
+<li class="toc-level-3" data-search-text="tei 로그"><a href="#tei-로그">TEI 로그</a></li>
+<li class="toc-level-3" data-search-text="qdrant 상태"><a href="#qdrant-상태">Qdrant 상태</a></li>
+<li class="toc-level-3" data-search-text="tei 상태"><a href="#tei-상태">TEI 상태</a></li>
+<li class="toc-level-3" data-search-text="tei gpu 할당 확인"><a href="#tei-gpu-할당-확인">TEI GPU 할당 확인</a></li>
+<li class="toc-level-3" data-search-text="qdrant 준비 상태 직접 확인"><a href="#qdrant-준비-상태-직접-확인">Qdrant 준비 상태 직접 확인</a></li>
+<li class="toc-level-3" data-search-text="tei 임베딩 직접 확인"><a href="#tei-임베딩-직접-확인">TEI 임베딩 직접 확인</a></li>
+<li class="toc-level-3" data-search-text="컨테이너 수동 정지"><a href="#컨테이너-수동-정지">컨테이너 수동 정지</a></li>
+<li class="toc-level-2" data-search-text="테스트"><a href="#테스트">테스트</a></li>
+<li class="toc-level-3" data-search-text="테스트 환경 선택"><a href="#테스트-환경-선택">테스트 환경 선택</a></li>
+<li class="toc-level-3" data-search-text="전체 테스트"><a href="#전체-테스트">전체 테스트</a></li>
+<li class="toc-level-3" data-search-text="단위 테스트"><a href="#단위-테스트">단위 테스트</a></li>
+<li class="toc-level-3" data-search-text="통합 테스트"><a href="#통합-테스트">통합 테스트</a></li>
+<li class="toc-level-3" data-search-text="테스트 커버리지"><a href="#테스트-커버리지">테스트 커버리지</a></li>
+<li class="toc-level-3" data-search-text="powershell 스크립트 구문 검사"><a href="#powershell-스크립트-구문-검사">PowerShell 스크립트 구문 검사</a></li>
+<li class="toc-level-2" data-search-text="코드 품질 검사"><a href="#코드-품질-검사">코드 품질 검사</a></li>
+<li class="toc-level-3" data-search-text="자동 포맷"><a href="#자동-포맷">자동 포맷</a></li>
+<li class="toc-level-3" data-search-text="포맷 검사"><a href="#포맷-검사">포맷 검사</a></li>
+<li class="toc-level-3" data-search-text="자동 수정 가능한 린트 오류 수정"><a href="#자동-수정-가능한-린트-오류-수정">자동 수정 가능한 린트 오류 수정</a></li>
+<li class="toc-level-3" data-search-text="린트 검사"><a href="#린트-검사">린트 검사</a></li>
+<li class="toc-level-3" data-search-text="정적 타입 검사"><a href="#정적-타입-검사">정적 타입 검사</a></li>
+<li class="toc-level-3" data-search-text="권장 전체 검사 순서"><a href="#권장-전체-검사-순서">권장 전체 검사 순서</a></li>
+<li class="toc-level-2" data-search-text="의존성 확인"><a href="#의존성-확인">의존성 확인</a></li>
+<li class="toc-level-3" data-search-text="전체 의존성 트리"><a href="#전체-의존성-트리">전체 의존성 트리</a></li>
+<li class="toc-level-3" data-search-text="httpx2 설치 상태"><a href="#httpx2-설치-상태">HTTPX2 설치 상태</a></li>
+<li class="toc-level-3" data-search-text="기존 httpx와 httpx2 설치 여부"><a href="#기존-httpx와-httpx2-설치-여부">기존 HTTPX와 HTTPX2 설치 여부</a></li>
+<li class="toc-level-3" data-search-text="boto3 제거 여부"><a href="#boto3-제거-여부">boto3 제거 여부</a></li>
+<li class="toc-level-2" data-search-text="보안 주의 사항"><a href="#보안-주의-사항">보안 주의 사항</a></li>
+<li class="toc-level-3" data-search-text="git에 커밋하지 않는 값"><a href="#git에-커밋하지-않는-값">Git에 커밋하지 않는 값</a></li>
+<li class="toc-level-3" data-search-text="사용하지 않는 aws 자격 증명"><a href="#사용하지-않는-aws-자격-증명">사용하지 않는 AWS 자격 증명</a></li>
+<li class="toc-level-3" data-search-text="외부 http 노출"><a href="#외부-http-노출">외부 HTTP 노출</a></li>
+<li class="toc-level-3" data-search-text="qdrant와 tei 외부 노출 금지"><a href="#qdrant와-tei-외부-노출-금지">Qdrant와 TEI 외부 노출 금지</a></li>
+<li class="toc-level-3" data-search-text="로그 보안"><a href="#로그-보안">로그 보안</a></li>
+<li class="toc-level-2" data-search-text="주요 파일과 책임"><a href="#주요-파일과-책임">주요 파일과 책임</a></li>
+<li class="toc-level-2" data-search-text="계층별 책임"><a href="#계층별-책임">계층별 책임</a></li>
+<li class="toc-level-3" data-search-text="api"><a href="#api">api</a></li>
+<li class="toc-level-3" data-search-text="services"><a href="#services">services</a></li>
+<li class="toc-level-3" data-search-text="domain"><a href="#domain">domain</a></li>
+<li class="toc-level-3" data-search-text="infrastructure"><a href="#infrastructure">infrastructure</a></li>
+<li class="toc-level-3" data-search-text="core"><a href="#core">core</a></li>
+<li class="toc-level-3" data-search-text="schemas"><a href="#schemas">schemas</a></li>
+<li class="toc-level-2" data-search-text="운영 체크리스트"><a href="#운영-체크리스트">운영 체크리스트</a></li>
+<li class="toc-level-3" data-search-text="최초 실행 전"><a href="#최초-실행-전">최초 실행 전</a></li>
+<li class="toc-level-3" data-search-text="실행 후"><a href="#실행-후">실행 후</a></li>
+<li class="toc-level-3" data-search-text="종료 후"><a href="#종료-후">종료 후</a></li>
+<li class="toc-level-3" data-search-text="pr 전"><a href="#pr-전">PR 전</a></li>
+        </ul>
+        <div class="toc-empty" id="tocEmpty">일치하는 섹션이 없습니다.</div>
+      </div>
+    </aside>
+
+    <article class="content" id="documentContent">
+      <h1 id="jipsa-rag-service"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#jipsa-rag-service">#</a>Jipsa RAG Service</h1>
+<p><code>jipsa-rag</code>는 Jipsa 애플리케이션 서버로부터 파일 식별 정보와
+Presigned GET URL을 전달받아 문서를 다운로드하고, 파싱, 청킹,
+임베딩 생성, Local RAG DB 저장, Qdrant VectorDB 저장 및 후속 검색을
+처리하는 FastAPI 기반 로컬 RAG 서비스입니다.</p>
+<p>RAG 서비스는 AWS 자격 증명을 보관하거나 <code>boto3</code>를 사용하여 S3에
+직접 접근하지 않습니다. S3 접근과 Presigned GET URL 발급은
+AWS에서 실행되는 애플리케이션 서버가 IAM Role을 사용하여 담당합니다.</p>
+<p>현재 로컬 실행 구성은 다음 요소를 함께 사용합니다.</p>
+<ul>
+<li>FastAPI 기반 RAG 애플리케이션</li>
+<li>Local RAG MySQL 또는 MariaDB</li>
+<li>Qdrant VectorDB</li>
+<li>Hugging Face Text Embeddings Inference(TEI)</li>
+<li>NVIDIA CUDA GPU</li>
+<li>PowerShell 기반 로컬 실행 및 종료 자동화</li>
+</ul>
+<hr/>
+<h2 id="목차"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#목차">#</a>목차</h2>
+<ol>
+<li><a href="#%EC%84%9C%EB%B9%84%EC%8A%A4-%EC%97%AD%ED%95%A0%EA%B3%BC-%EC%8B%9C%EC%8A%A4%ED%85%9C-%EA%B2%BD%EA%B3%84">서비스 역할과 시스템 경계</a></li>
+<li><a href="#%ED%8C%8C%EC%9D%BC-%EC%B2%98%EB%A6%AC-%ED%9D%90%EB%A6%84">파일 처리 흐름</a></li>
+<li><a href="#%ED%98%84%EC%9E%AC-%EA%B5%AC%ED%98%84-%EB%B2%94%EC%9C%84">현재 구현 범위</a></li>
+<li><a href="#%ED%98%84%EC%9E%AC-%EC%A0%9C%ED%95%9C-%EC%82%AC%ED%95%AD">현재 제한 사항</a></li>
+<li><a href="#%EB%A1%9C%EC%BB%AC-%EC%8B%A4%ED%96%89-%EA%B5%AC%EC%84%B1">로컬 실행 구성</a></li>
+<li><a href="#%EC%9A%94%EA%B5%AC-%ED%99%98%EA%B2%BD">요구 환경</a></li>
+<li><a href="#%EC%84%A4%EC%B9%98">설치</a></li>
+<li><a href="#%ED%99%98%EA%B2%BD-%EB%B3%80%EC%88%98">환경 변수</a></li>
+<li><a href="#%EB%A1%9C%EC%BB%AC-rag-%ED%86%B5%ED%95%A9-%EC%8B%A4%ED%96%89">로컬 RAG 통합 실행</a></li>
+<li><a href="#%EC%84%9C%EB%B2%84-%EC%A0%91%EA%B7%BC-%EC%A3%BC%EC%86%8C">서버 접근 주소</a></li>
+<li><a href="#%EB%A1%9C%EC%BB%AC-rag-%EC%A2%85%EB%A3%8C">로컬 RAG 종료</a></li>
+<li><a href="#%EC%8B%A4%ED%96%89-%EC%8B%A4%ED%8C%A8-%EC%8B%9C-%EC%9E%90%EB%8F%99-%EC%A7%84%EB%8B%A8">실행 실패 시 자동 진단</a></li>
+<li><a href="#%EB%AC%B8%EC%A0%9C-%ED%95%B4%EA%B2%B0">문제 해결</a></li>
+<li><a href="#fastapi-%EB%8B%A8%EB%8F%85-%EC%8B%A4%ED%96%89">FastAPI 단독 실행</a></li>
+<li><a href="#docker-%EC%88%98%EB%8F%99-%ED%99%95%EC%9D%B8-%EB%AA%85%EB%A0%B9">Docker 수동 확인 명령</a></li>
+<li><a href="#%ED%85%8C%EC%8A%A4%ED%8A%B8">테스트</a></li>
+<li><a href="#%EC%BD%94%EB%93%9C-%ED%92%88%EC%A7%88-%EA%B2%80%EC%82%AC">코드 품질 검사</a></li>
+<li><a href="#%EC%9D%98%EC%A1%B4%EC%84%B1-%ED%99%95%EC%9D%B8">의존성 확인</a></li>
+<li><a href="#%EB%B3%B4%EC%95%88-%EC%A3%BC%EC%9D%98-%EC%82%AC%ED%95%AD">보안 주의 사항</a></li>
+<li><a href="#%EC%A3%BC%EC%9A%94-%ED%8C%8C%EC%9D%BC%EA%B3%BC-%EC%B1%85%EC%9E%84">주요 파일과 책임</a></li>
+<li><a href="#%EA%B3%84%EC%B8%B5%EB%B3%84-%EC%B1%85%EC%9E%84">계층별 책임</a></li>
+<li><a href="#%EC%9A%B4%EC%98%81-%EC%B2%B4%ED%81%AC%EB%A6%AC%EC%8A%A4%ED%8A%B8">운영 체크리스트</a></li>
+</ol>
+<hr/>
+<h2 id="서비스-역할과-시스템-경계"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#서비스-역할과-시스템-경계">#</a>서비스 역할과 시스템 경계</h2>
+<h3 id="rag-서비스가-담당하는-작업"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#rag-서비스가-담당하는-작업">#</a>RAG 서비스가 담당하는 작업</h3>
+<p>RAG 서비스는 애플리케이션 서버가 전달한 파일 정보를 기준으로 다음 작업을
+수행합니다.</p>
+<ul>
+<li>내부 인증 토큰 검증</li>
+<li>애플리케이션 서버의 파일 manifest 조회</li>
+<li>Presigned GET URL을 이용한 원본 파일 다운로드</li>
+<li>S3 Object Key와 파일 메타데이터 검증</li>
+<li>파일 크기, 확장자, MIME Type 및 Magic Byte 검증</li>
+<li>SHA-256 파일 해시 검증</li>
+<li>PDF 페이지 단위 텍스트 추출</li>
+<li>문서 청킹과 청크 메타데이터 생성</li>
+<li>TEI를 이용한 청크 임베딩 생성</li>
+<li>Local RAG DB에 문서, 청크 및 색인 실행 이력 저장</li>
+<li>Qdrant에 임베딩 벡터와 검색용 payload 저장</li>
+<li>신규 색인의 활성 전환과 이전 색인의 비활성 전환</li>
+<li>실패 시 신규 색인 보상 처리</li>
+<li>애플리케이션 서버에 인제스트 완료 결과 콜백</li>
+<li>Request ID 기반 구조화 로그 출력</li>
+</ul>
+<h3 id="애플리케이션-서버가-담당하는-작업"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#애플리케이션-서버가-담당하는-작업">#</a>애플리케이션 서버가 담당하는 작업</h3>
+<p>애플리케이션 서버는 다음 작업을 담당합니다.</p>
+<ul>
+<li>사용자 인증과 인가</li>
+<li>사용자 파일 업로드</li>
+<li>IAM Role 기반 S3 접근</li>
+<li>Presigned GET URL 발급</li>
+<li>파일 manifest 제공</li>
+<li>RAG 인제스트 요청 전송</li>
+<li>RAG 처리 완료 결과 수신</li>
+<li>사용자에게 최종 파일 처리 상태 제공</li>
+</ul>
+<h3 id="rag-서비스가-수행하지-않는-작업"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#rag-서비스가-수행하지-않는-작업">#</a>RAG 서비스가 수행하지 않는 작업</h3>
+<p>RAG 서비스는 다음 작업을 수행하지 않습니다.</p>
+<ul>
+<li>AWS Access Key를 이용한 S3 직접 접근</li>
+<li>AWS Secret Access Key 보관</li>
+<li>AWS Session Token 보관</li>
+<li><code>boto3</code> 또는 AWS SDK 기반 파일 다운로드</li>
+<li>Docker Desktop 프로그램 자체 실행</li>
+<li>Local RAG MySQL 또는 MariaDB 서버 자체 실행</li>
+<li>공유기 포트 포워딩 설정</li>
+<li>DDNS 등록 또는 갱신</li>
+<li>TLS 인증서 발급과 HTTPS 종료</li>
+</ul>
+<hr/>
+<h2 id="파일-처리-흐름"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#파일-처리-흐름">#</a>파일 처리 흐름</h2>
+<p>전체 파일 처리 흐름은 다음과 같습니다.</p>
+<pre><code class="language-text">사용자 파일 업로드
+        ↓
+애플리케이션 서버가 S3에 원본 파일 저장
+        ↓
+애플리케이션 서버가 IAM Role로 Presigned GET URL 발급
+        ↓
+애플리케이션 서버가 RAG 서버의 POST /ingest 호출
+        ↓
+RAG 서버가 X-Internal-Token 검증
+        ↓
+RAG 서버가 애플리케이션 서버에서 파일 manifest 조회
+        ↓
+RAG 서버가 Presigned GET URL로 원본 파일 다운로드
+        ↓
+파일 크기·형식·해시·메타데이터 검증
+        ↓
+PDF 페이지 단위 텍스트 추출
+        ↓
+문서 청킹 및 청크 메타데이터 생성
+        ↓
+TEI CUDA 서버에서 임베딩 생성
+        ↓
+Local RAG DB에 문서·청크·실행 이력 저장
+        ↓
+Qdrant에 비활성 staging Point 저장
+        ↓
+신규 Point 활성화 및 이전 정상 Point 비활성화
+        ↓
+Local RAG DB 색인 상태 확정
+        ↓
+애플리케이션 서버에 ingest-complete 콜백 전송
+</code></pre>
+<h3 id="s3-연동-원칙"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#s3-연동-원칙">#</a>S3 연동 원칙</h3>
+<ul>
+<li>RAG 서버는 AWS 자격 증명을 보관하지 않습니다.</li>
+<li>RAG 서버는 <code>boto3</code>를 사용하지 않습니다.</li>
+<li>애플리케이션 서버가 S3 접근 권한을 관리합니다.</li>
+<li>애플리케이션 서버가 제한된 유효 시간을 가진 Presigned GET URL을 발급합니다.</li>
+<li>RAG 서버는 HTTP 클라이언트로 Presigned GET URL을 사용합니다.</li>
+<li>S3 Object Key는 파일 식별과 경로 검증 정보로 사용합니다.</li>
+<li>Presigned GET URL 전체 값과 Query String은 로그에 기록하지 않습니다.</li>
+<li>만료된 URL, 권한 오류 및 잘못된 요청은 자동 재시도 대상에서 제외합니다.</li>
+</ul>
+<hr/>
+<h2 id="현재-구현-범위"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#현재-구현-범위">#</a>현재 구현 범위</h2>
+<h3 id="fastapi-애플리케이션"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#fastapi-애플리케이션">#</a>FastAPI 애플리케이션</h3>
+<ul>
+<li>FastAPI 애플리케이션 팩토리</li>
+<li>FastAPI lifespan 기반 시작 및 종료 처리</li>
+<li>API v1 Router</li>
+<li>루트 경로의 <code>POST /ingest</code></li>
+<li>기존 파일 처리 API</li>
+<li>Liveness Health Check</li>
+<li>Readiness Health Check</li>
+<li>Swagger UI, ReDoc 및 OpenAPI JSON</li>
+<li>전역 예외 처리</li>
+<li>공통 성공 응답과 오류 응답</li>
+<li>요청 검증 오류 변환</li>
+<li>존재하지 않는 API의 공통 404 응답</li>
+<li>내부 예외 정보의 외부 응답 노출 방지</li>
+</ul>
+<h3 id="설정과-보안"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#설정과-보안">#</a>설정과 보안</h3>
+<ul>
+<li>Python 3.12와 <code>uv</code> 기반 패키지 관리</li>
+<li><code>pydantic-settings</code> 기반 환경별 설정</li>
+<li><code>.env.local</code>, <code>.env.development</code>, <code>.env.test</code> 환경 분리</li>
+<li>필수 환경 변수 타입과 형식 검증</li>
+<li>DB 비밀번호와 내부 토큰의 문자열 노출 방지</li>
+<li><code>INTERNAL_TOKEN</code> 기반 애플리케이션 서버 내부 API 인증</li>
+<li><code>RAG_INGEST_TOKEN</code> 기반 RAG 인제스트 API 인증</li>
+<li>Presigned URL과 민감한 Query String 로그 마스킹</li>
+<li>Request ID 생성과 전달</li>
+<li><code>X-Request-ID</code> 응답 헤더</li>
+<li>구조화된 JSON 로깅</li>
+</ul>
+<h3 id="파일-다운로드와-문서-처리"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#파일-다운로드와-문서-처리">#</a>파일 다운로드와 문서 처리</h3>
+<ul>
+<li>애플리케이션 서버 manifest 조회</li>
+<li>Presigned GET URL 기반 파일 다운로드</li>
+<li>HTTP Streaming 기반 다운로드</li>
+<li>연결 및 읽기 Timeout</li>
+<li>일시적인 네트워크 오류 재시도</li>
+<li>최대 파일 크기 제한</li>
+<li>임시 파일 생성과 정리</li>
+<li>파일 확장자 검증</li>
+<li>MIME Type 검증</li>
+<li>Magic Byte 기반 실제 파일 형식 검증</li>
+<li>빈 파일과 손상된 파일 탐지</li>
+<li>SHA-256 Checksum 생성과 검증</li>
+<li>공통 문서 파서 인터페이스</li>
+<li>문서 형식별 파서 Factory</li>
+<li>PDF 페이지 단위 텍스트 추출</li>
+<li>청킹과 청크 메타데이터 생성</li>
+<li>결정적인 청크 식별자 생성</li>
+</ul>
+<h3 id="임베딩과-vectordb"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#임베딩과-vectordb">#</a>임베딩과 VectorDB</h3>
+<ul>
+<li>Hugging Face TEI 기반 임베딩 생성</li>
+<li><code>Qwen/Qwen3-Embedding-0.6B</code> 모델</li>
+<li>1024차원 임베딩</li>
+<li>임베딩 배치 처리</li>
+<li>Qdrant Collection 준비</li>
+<li>Qdrant Vector Upsert</li>
+<li>검색 필터용 payload 저장</li>
+<li>신규 색인의 비활성 staging</li>
+<li>신규 색인 활성화</li>
+<li>이전 정상 색인 비활성화</li>
+<li>실패한 신규 Point 보상 삭제</li>
+<li>이전 정상 Point 복구</li>
+</ul>
+<h3 id="local-rag-db와-색인-안정성"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#local-rag-db와-색인-안정성">#</a>Local RAG DB와 색인 안정성</h3>
+<ul>
+<li>SQLAlchemy AsyncIO와 AsyncMy 기반 비동기 MySQL 연결</li>
+<li>요청 단위 <code>AsyncSession</code></li>
+<li>요청 실패 시 트랜잭션 Rollback</li>
+<li>애플리케이션 종료 시 DB 연결 풀 정리</li>
+<li>문서와 청크 메타데이터 저장</li>
+<li>색인 실행 이력 저장</li>
+<li>동일 파일과 동일 버전에 대한 멱등 처리</li>
+<li>파일 단위 동시 실행 직렬화</li>
+<li>최신 색인 실행 소유권 검증</li>
+<li>Local RAG DB와 Qdrant 사이의 보상 처리</li>
+<li>파서 버전과 임베딩 모델 변경을 고려한 재색인</li>
+</ul>
+<h3 id="로컬-실행-자동화"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#로컬-실행-자동화">#</a>로컬 실행 자동화</h3>
+<ul>
+<li><code>start-local-rag.ps1</code> 통합 실행 스크립트</li>
+<li><code>stop-local-rag.ps1</code> 안전 종료 스크립트</li>
+<li>Docker Engine과 Docker Compose 사전 검증</li>
+<li>필수 환경 변수 사전 검증</li>
+<li>Qdrant와 TEI 이미지 준비</li>
+<li>Docker NVIDIA GPU 사용 가능 여부 확인</li>
+<li>Qdrant 컨테이너 생성과 실행</li>
+<li>Qdrant <code>/readyz</code> 준비 상태 확인</li>
+<li>TEI CUDA 컨테이너 강제 재생성</li>
+<li>TEI 이미지와 GPU 할당 확인</li>
+<li>TEI 로그의 CUDA 오류와 CPU 폴백 확인</li>
+<li>실제 <code>/embed</code> 요청 기반 GPU 임베딩 검증</li>
+<li>인프라 준비 완료 후 FastAPI 자동 실행</li>
+<li>FastAPI 종료 시 Qdrant와 TEI 자동 정지</li>
+<li>실행 실패 시 컨테이너 상태와 최근 로그 자동 출력</li>
+</ul>
+<hr/>
+<h2 id="현재-제한-사항"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#현재-제한-사항">#</a>현재 제한 사항</h2>
+<h3 id="지원-문서-형식"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#지원-문서-형식">#</a>지원 문서 형식</h3>
+<p>현재 기본 Parser Factory에는 PDF 파서만 등록되어 있습니다.</p>
+<pre><code class="language-text">지원됨: PDF
+미지원: DOCX, XLSX, PPTX
+</code></pre>
+<p><code>DOCX</code>, <code>XLSX</code>, <code>PPTX</code>는 문서 형식 열거형에는 정의될 수 있지만,
+실제 파서가 등록되지 않은 상태에서는 지원하지 않는 문서 형식 오류를
+반환합니다.</p>
+<h3 id="ocr"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#ocr">#</a>OCR</h3>
+<p>현재 PDF 처리는 텍스트 레이어를 추출합니다.</p>
+<p>이미지만 포함된 스캔 PDF에 대한 OCR은 수행하지 않습니다. 따라서 텍스트
+레이어가 없는 PDF는 추출 결과가 비어 있거나 제한적일 수 있습니다.</p>
+<h3 id="로컬-인프라-범위"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#로컬-인프라-범위">#</a>로컬 인프라 범위</h3>
+<p>통합 실행 스크립트는 다음 요소를 자동 실행하지 않습니다.</p>
+<ul>
+<li>Docker Desktop 프로그램</li>
+<li>Local RAG MySQL 또는 MariaDB 서버</li>
+<li>공유기 포트 포워딩</li>
+<li>DDNS 설정</li>
+<li>HTTPS Reverse Proxy</li>
+</ul>
+<h3 id="readiness-범위"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#readiness-범위">#</a>Readiness 범위</h3>
+<p><code>GET /api/v1/health/ready</code>는 Local RAG DB 연결 상태를 확인합니다.</p>
+<p>Qdrant와 TEI의 준비 상태는 <code>start-local-rag.ps1</code>이 FastAPI 실행 전에
+별도로 검증합니다. 현재 Readiness API 응답만으로 Qdrant와 TEI 상태까지
+판단해서는 안 됩니다.</p>
+<hr/>
+<h2 id="로컬-실행-구성"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#로컬-실행-구성">#</a>로컬 실행 구성</h2>
+<p>현재 개발 환경의 기본 포트 구성은 다음과 같습니다.</p>
+<table>
+<thead>
+<tr>
+<th>구성 요소</th>
+<th>바인딩 또는 접근 주소</th>
+<th>용도</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FastAPI Bind</td>
+<td><code>0.0.0.0:8077</code></td>
+<td>모든 IPv4 인터페이스에서 요청 수신</td>
+</tr>
+<tr>
+<td>FastAPI Local</td>
+<td><code>http://127.0.0.1:8077</code></td>
+<td>RAG 실행 PC에서 로컬 접근</td>
+</tr>
+<tr>
+<td>FastAPI External</td>
+<td><code>http://INT2-jipsa.iptime.org:9802</code></td>
+<td>DDNS와 공유기 포트 포워딩을 통한 외부 접근</td>
+</tr>
+<tr>
+<td>Qdrant REST</td>
+<td><code>http://127.0.0.1:6333</code></td>
+<td>로컬 VectorDB REST API</td>
+</tr>
+<tr>
+<td>Qdrant gRPC</td>
+<td><code>127.0.0.1:6334</code></td>
+<td>향후 또는 선택적 gRPC 연결</td>
+</tr>
+<tr>
+<td>TEI</td>
+<td><code>http://127.0.0.1:18081</code></td>
+<td>로컬 CUDA 임베딩 API</td>
+</tr>
+<tr>
+<td>Local RAG DB</td>
+<td><code>127.0.0.1:3306</code></td>
+<td>로컬 MySQL 또는 MariaDB</td>
+</tr>
+</tbody>
+</table>
+<h3 id="포트-포워딩-관계"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#포트-포워딩-관계">#</a>포트 포워딩 관계</h3>
+<p>현재 외부 접근은 다음 매핑을 전제로 합니다.</p>
+<pre><code class="language-text">외부 요청
+http://INT2-jipsa.iptime.org:9802
+        ↓
+공유기 TCP 9802 포트 포워딩
+        ↓
+RAG 실행 PC의 내부 TCP 8077
+        ↓
+FastAPI 0.0.0.0:8077
+</code></pre>
+<p><code>0.0.0.0</code>은 서버가 모든 IPv4 인터페이스에서 수신하도록 지정하는
+바인딩 주소입니다. 브라우저나 HTTP 클라이언트에서 요청할 주소로
+사용하지 않습니다.</p>
+<p>RAG 실행 PC에서는 <code>http://127.0.0.1:8077</code>을 사용하고, 외부에서는
+<code>http://INT2-jipsa.iptime.org:9802</code>를 사용합니다.</p>
+<p>Qdrant와 TEI는 <code>127.0.0.1</code>에만 바인딩되므로 외부 네트워크에 직접
+노출되지 않습니다.</p>
+<hr/>
+<h2 id="요구-환경"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#요구-환경">#</a>요구 환경</h2>
+<h3 id="필수-소프트웨어"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#필수-소프트웨어">#</a>필수 소프트웨어</h3>
+<ul>
+<li>Windows 10 또는 Windows 11</li>
+<li>Windows PowerShell 5.1 이상 또는 PowerShell 7 이상</li>
+<li>Python 3.12</li>
+<li><code>uv</code></li>
+<li>Docker Desktop</li>
+<li>Docker Engine</li>
+<li>Docker Compose v2 Plugin</li>
+<li>NVIDIA GPU Driver</li>
+<li>Docker에서 NVIDIA GPU를 사용할 수 있는 환경</li>
+<li>MySQL 8.0 이상 또는 MariaDB 10.6 이상</li>
+</ul>
+<h3 id="현재-gpu와-tei-이미지"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#현재-gpu와-tei-이미지">#</a>현재 GPU와 TEI 이미지</h3>
+<p>현재 Docker Compose 구성은 다음 환경을 기준으로 작성되어 있습니다.</p>
+<pre><code class="language-text">GPU: NVIDIA GeForce RTX 3060 Ti
+CUDA Compute Capability: 8.6
+TEI Image: ghcr.io/huggingface/text-embeddings-inference:86-1.9
+Embedding Model: Qwen/Qwen3-Embedding-0.6B
+Embedding Dimension: 1024
+</code></pre>
+<p>다른 NVIDIA GPU 아키텍처를 사용할 경우 TEI 이미지 태그와 CUDA
+Entrypoint가 해당 GPU에 적합한지 별도로 확인해야 합니다.</p>
+<h3 id="로컬-리소스"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#로컬-리소스">#</a>로컬 리소스</h3>
+<p>최초 실행 시 Hugging Face 모델 다운로드와 모델 Warmup이 수행될 수
+있습니다. 충분한 디스크 공간, 네트워크 연결 및 GPU 메모리가 필요합니다.</p>
+<p>Qdrant 데이터와 Hugging Face 모델 Cache는 Docker Named Volume에
+보존됩니다. 두 번째 실행부터는 기존 데이터를 재사용하므로 일반적으로
+최초 실행보다 빠릅니다.</p>
+<hr/>
+<h2 id="설치"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#설치">#</a>설치</h2>
+<h3 id="프로젝트-디렉터리-이동"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#프로젝트-디렉터리-이동">#</a>프로젝트 디렉터리 이동</h3>
+<p>PowerShell에서 RAG 프로젝트 루트로 이동합니다.</p>
+<pre><code class="language-powershell">Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG'
+</code></pre>
+<h3 id="python-버전-확인"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#python-버전-확인">#</a>Python 버전 확인</h3>
+<pre><code class="language-powershell">python --version
+</code></pre>
+<p>예상 범위는 다음과 같습니다.</p>
+<pre><code class="language-text">Python 3.12.x
+</code></pre>
+<h3 id="uv-설치-여부-확인"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#uv-설치-여부-확인">#</a>uv 설치 여부 확인</h3>
+<pre><code class="language-powershell">uv --version
+</code></pre>
+<h3 id="프로젝트-의존성-동기화"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#프로젝트-의존성-동기화">#</a>프로젝트 의존성 동기화</h3>
+<pre><code class="language-powershell">uv sync
+</code></pre>
+<p><code>uv</code>는 다음 항목을 동기화합니다.</p>
+<ul>
+<li>프로젝트 런타임 의존성</li>
+<li>개발 및 테스트 의존성</li>
+<li><code>uv.lock</code>에 고정된 패키지 버전</li>
+<li><code>jipsa-rag</code> 실행 Entry Point</li>
+</ul>
+<p>CI 또는 완전히 고정된 Lockfile 상태를 검증해야 하는 경우 다음 명령을
+사용할 수 있습니다.</p>
+<pre><code class="language-powershell">uv sync --frozen
+</code></pre>
+<h3 id="docker-확인"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#docker-확인">#</a>Docker 확인</h3>
+<pre><code class="language-powershell">docker version
+docker compose version
+</code></pre>
+<p>Docker Client 정보만 출력되고 Server 연결에 실패하면 Docker Desktop이
+실행되지 않았거나 Docker Engine 준비가 끝나지 않은 상태입니다.</p>
+<h3 id="docker-gpu-확인"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#docker-gpu-확인">#</a>Docker GPU 확인</h3>
+<p>통합 실행 스크립트가 GPU를 자동 검증하지만, 사전에 Docker GPU 지원을
+직접 확인해야 할 때는 다음 명령을 사용할 수 있습니다.</p>
+<pre><code class="language-powershell">docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu24.04 nvidia-smi
+</code></pre>
+<p>사용 중인 로컬 CUDA 검증 이미지가 이미 정해져 있다면 해당 이미지 태그를
+사용합니다. 검증 이미지가 로컬에 없으면 Docker Registry에서 다운로드될
+수 있습니다.</p>
+<hr/>
+<h2 id="환경-변수"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#환경-변수">#</a>환경 변수</h2>
+<h3 id="환경-파일"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#환경-파일">#</a>환경 파일</h3>
+<p>환경별 dotenv 파일을 사용합니다.</p>
+<pre><code class="language-text">.env.local
+.env.development
+.env.test
+</code></pre>
+<p>Git에는 작성 기준을 제공하는 다음 파일만 포함합니다.</p>
+<pre><code class="language-text">.env.example
+</code></pre>
+<p>실제 환경별 파일은 DB 비밀번호, 내부 토큰 및 내부 주소를 포함할 수 있으므로
+Git에 커밋하지 않습니다.</p>
+<h3 id="실행-환경-선택"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#실행-환경-선택">#</a>실행 환경 선택</h3>
+<p><code>JIPSA_RAG_APP_ENV</code> 값으로 실행 환경을 선택합니다.</p>
+<h4 id="local"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#local">#</a>local</h4>
+<pre><code class="language-powershell">$env:JIPSA_RAG_APP_ENV = 'local'
+</code></pre>
+<p>로드되는 파일:</p>
+<pre><code class="language-text">.env.local
+</code></pre>
+<p><code>JIPSA_RAG_APP_ENV</code>가 설정되지 않으면 기본값으로 <code>local</code>을 사용합니다.</p>
+<h4 id="development"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#development">#</a>development</h4>
+<pre><code class="language-powershell">$env:JIPSA_RAG_APP_ENV = 'development'
+</code></pre>
+<p>로드되는 파일:</p>
+<pre><code class="language-text">.env.development
+</code></pre>
+<h4 id="test"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#test">#</a>test</h4>
+<pre><code class="language-powershell">$env:JIPSA_RAG_APP_ENV = 'test'
+</code></pre>
+<p>로드되는 파일:</p>
+<pre><code class="language-text">.env.test
+</code></pre>
+<h3 id="주요-application-설정"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#주요-application-설정">#</a>주요 Application 설정</h3>
+<pre><code class="language-dotenv">JIPSA_RAG_APP_NAME="Jipsa RAG Service"
+JIPSA_RAG_APP_VERSION=0.1.0
+JIPSA_RAG_API_V1_PREFIX=/api/v1
+JIPSA_RAG_HOST=0.0.0.0
+JIPSA_RAG_PORT=8077
+JIPSA_RAG_DEBUG=true
+</code></pre>
+<h3 id="외부-접근-설정"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#외부-접근-설정">#</a>외부 접근 설정</h3>
+<p>현재 개발 외부 주소를 사용하는 경우 환경 파일에 다음 값을 설정합니다.</p>
+<pre><code class="language-dotenv">JIPSA_RAG_EXTERNAL_BASE_URL=http://INT2-jipsa.iptime.org:9802
+JIPSA_RAG_TUNNEL_PROVIDER=none
+</code></pre>
+<p><code>JIPSA_RAG_EXTERNAL_BASE_URL</code>에는 <code>/ingest</code>, <code>/api/v1</code> 또는 <code>/docs</code> 같은
+API 경로를 포함하지 않습니다. URL 끝에도 <code>/</code>를 붙이지 않습니다.</p>
+<p>공유기 포트 포워딩과 DDNS만 사용하는 경우 Tunnel Provider는 <code>none</code>입니다.</p>
+<h3 id="내부-인증-설정"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#내부-인증-설정">#</a>내부 인증 설정</h3>
+<pre><code class="language-dotenv">INTERNAL_TOKEN=CHANGE_ME_TO_SECURE_RANDOM_INTERNAL_TOKEN
+RAG_INGEST_TOKEN=CHANGE_ME_TO_SECURE_RANDOM_RAG_INGEST_TOKEN
+</code></pre>
+<p>두 토큰의 용도는 서로 다릅니다.</p>
+<table>
+<thead>
+<tr>
+<th>환경 변수</th>
+<th>사용 방향</th>
+<th>사용 위치</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>INTERNAL_TOKEN</code></td>
+<td>RAG → 애플리케이션 서버</td>
+<td>manifest 조회와 ingest-complete 콜백의 <code>X-Internal-Token</code></td>
+</tr>
+<tr>
+<td><code>RAG_INGEST_TOKEN</code></td>
+<td>애플리케이션 서버 → RAG</td>
+<td><code>POST /ingest</code> 요청의 <code>X-Internal-Token</code></td>
+</tr>
+</tbody>
+</table>
+<p>실제 토큰은 최소 32자 이상의 예측하기 어려운 임의 문자열을 사용합니다.
+애플리케이션 서버와 RAG 서버의 대응 값은 반드시 동일해야 합니다.</p>
+<h3 id="local-rag-db-설정"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#local-rag-db-설정">#</a>Local RAG DB 설정</h3>
+<pre><code class="language-dotenv">JIPSA_RAG_DATABASE_HOST=127.0.0.1
+JIPSA_RAG_DATABASE_PORT=3306
+JIPSA_RAG_DATABASE_NAME=Jipsa_Local_RAG
+JIPSA_RAG_DATABASE_USER=jipsa
+JIPSA_RAG_DATABASE_PASSWORD=CHANGE_ME_MYSQL_PASSWORD
+JIPSA_RAG_DATABASE_CHARSET=utf8mb4
+JIPSA_RAG_DATABASE_CHECK_ON_STARTUP=true
+JIPSA_RAG_DATABASE_ECHO=false
+</code></pre>
+<p><code>JIPSA_RAG_DATABASE_CHECK_ON_STARTUP=true</code>이면 FastAPI lifespan 시작 중
+<code>SELECT 1</code> 연결 검사를 수행합니다. DB 연결에 실패하면 FastAPI 시작도
+실패합니다.</p>
+<p>SQL과 바인딩 값이 로그에 노출될 수 있으므로 일반 실행에서는
+<code>JIPSA_RAG_DATABASE_ECHO=false</code>를 유지합니다.</p>
+<h3 id="파일-다운로드-설정"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#파일-다운로드-설정">#</a>파일 다운로드 설정</h3>
+<pre><code class="language-dotenv">JIPSA_RAG_S3_ALLOWED_KEY_PREFIX=files/
+JIPSA_RAG_FILE_DOWNLOAD_ALLOWED_HOST_SUFFIXES=.amazonaws.com
+JIPSA_RAG_FILE_DOWNLOAD_CONNECT_TIMEOUT_SECONDS=5.0
+JIPSA_RAG_FILE_DOWNLOAD_READ_TIMEOUT_SECONDS=60.0
+JIPSA_RAG_FILE_DOWNLOAD_MAX_SIZE_BYTES=52428800
+</code></pre>
+<p>기본 최대 파일 크기 <code>52428800</code>은 50 MiB입니다.</p>
+<h3 id="tei-임베딩-설정"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#tei-임베딩-설정">#</a>TEI 임베딩 설정</h3>
+<pre><code class="language-dotenv">JIPSA_RAG_EMBEDDING_PROVIDER=tei
+JIPSA_RAG_EMBEDDING_BASE_URL=http://127.0.0.1:18081
+JIPSA_RAG_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
+JIPSA_RAG_EMBEDDING_DIM=1024
+JIPSA_RAG_EMBEDDING_BATCH_SIZE=32
+JIPSA_RAG_EMBEDDING_DISTANCE=cosine
+JIPSA_RAG_EMBEDDING_TIMEOUT_SECONDS=60
+</code></pre>
+<p>통합 실행 스크립트는 현재 다음 정합성을 확인합니다.</p>
+<ul>
+<li>Embedding Provider가 <code>tei</code>인지 확인</li>
+<li>Embedding Base URL이 로컬 <code>18081</code> 포트를 사용하는지 확인</li>
+<li>Embedding Dimension이 <code>1024</code>인지 확인</li>
+<li>TEI 컨테이너 이미지가 예상 이미지인지 확인</li>
+<li>NVIDIA GPU가 컨테이너에 할당됐는지 확인</li>
+<li>TEI가 CPU로 폴백하지 않았는지 확인</li>
+<li>실제 <code>/embed</code> 요청이 성공하는지 확인</li>
+</ul>
+<h3 id="qdrant-설정"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#qdrant-설정">#</a>Qdrant 설정</h3>
+<pre><code class="language-dotenv">JIPSA_RAG_VECTOR_DB_PROVIDER=qdrant
+JIPSA_RAG_QDRANT_URL=http://127.0.0.1:6333
+JIPSA_RAG_QDRANT_COLLECTION=rag_chunk_vector_qwen3_embedding_0_6b_1024
+JIPSA_RAG_QDRANT_GRPC_PORT=6334
+JIPSA_RAG_QDRANT_PREFER_GRPC=false
+JIPSA_RAG_QDRANT_API_KEY=
+JIPSA_RAG_QDRANT_TIMEOUT_SECONDS=10
+</code></pre>
+<p>임베딩 모델 또는 출력 차원을 변경하면 기존 Collection을 그대로 재사용하지
+않고 별도의 Collection을 사용하는 것이 안전합니다.</p>
+<h3 id="애플리케이션-서버-설정"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#애플리케이션-서버-설정">#</a>애플리케이션 서버 설정</h3>
+<pre><code class="language-dotenv">JIPSA_RAG_APP_SERVER_BASE_URL=http://127.0.0.1:8080
+JIPSA_RAG_APP_SERVER_CONNECT_TIMEOUT_SECONDS=5.0
+JIPSA_RAG_APP_SERVER_READ_TIMEOUT_SECONDS=30.0
+JIPSA_RAG_APP_SERVER_MAX_ATTEMPTS=3
+JIPSA_RAG_APP_SERVER_RETRY_INITIAL_DELAY_SECONDS=0.25
+JIPSA_RAG_APP_SERVER_RETRY_MAX_DELAY_SECONDS=2.0
+</code></pre>
+<p>개발 애플리케이션 서버 주소를 전달받은 경우
+<code>JIPSA_RAG_APP_SERVER_BASE_URL</code>을 실제 주소로 변경합니다.</p>
+<p>URL 끝에는 <code>/</code>를 붙이지 않으며 <code>/internal</code> 같은 API 경로도 포함하지
+않습니다.</p>
+<hr/>
+<h2 id="로컬-rag-통합-실행"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#로컬-rag-통합-실행">#</a>로컬 RAG 통합 실행</h2>
+<h3 id="통합-실행-스크립트"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#통합-실행-스크립트">#</a>통합 실행 스크립트</h3>
+<p>일반적인 로컬 개발에서는 다음 스크립트를 사용합니다.</p>
+<pre><code class="language-text">scripts/start-local-rag.ps1
+</code></pre>
+<p>이 스크립트는 단순히 Docker 컨테이너만 실행하지 않습니다. Qdrant와 TEI의
+실제 준비 상태를 검증한 뒤 FastAPI를 Foreground Process로 실행하고,
+FastAPI가 종료되면 Docker 컨테이너를 자동으로 정지합니다.</p>
+<h3 id="실행-전-체크"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#실행-전-체크">#</a>실행 전 체크</h3>
+<p>다음 항목이 준비되어 있어야 합니다.</p>
+<ul>
+<li>Docker Desktop 실행 완료</li>
+<li>Docker Engine 준비 완료</li>
+<li>Local RAG MySQL 또는 MariaDB 실행 완료</li>
+<li>현재 환경의 dotenv 파일 작성 완료</li>
+<li>DB 계정과 비밀번호 확인 완료</li>
+<li><code>INTERNAL_TOKEN</code> 설정 완료</li>
+<li><code>RAG_INGEST_TOKEN</code> 설정 완료</li>
+<li>FastAPI 내부 포트 <code>8077</code> 사용 가능</li>
+<li>Qdrant 포트 <code>6333</code>, <code>6334</code> 사용 가능</li>
+<li>TEI 포트 <code>18081</code> 사용 가능</li>
+<li>NVIDIA Driver 정상</li>
+<li>Docker NVIDIA GPU 지원 정상</li>
+<li>최초 모델 다운로드를 위한 네트워크 연결</li>
+</ul>
+<h3 id="권장-실행-명령"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#권장-실행-명령">#</a>권장 실행 명령</h3>
+<pre><code class="language-powershell">Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG'
+
+$env:JIPSA_RAG_APP_ENV = 'development'
+
+.\scripts\start-local-rag.ps1
+</code></pre>
+<p>로컬 환경을 사용할 때는 다음과 같이 실행 환경만 변경합니다.</p>
+<pre><code class="language-powershell">$env:JIPSA_RAG_APP_ENV = 'local'
+.\scripts\start-local-rag.ps1
+</code></pre>
+<h3 id="powershell-실행-정책-오류"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#powershell-실행-정책-오류">#</a>PowerShell 실행 정책 오류</h3>
+<p>스크립트 실행이 Execution Policy로 차단된 경우 현재 PowerShell 프로세스에
+한해서 다음 정책을 적용할 수 있습니다.</p>
+<pre><code class="language-powershell">Set-ExecutionPolicy `
+    -Scope Process `
+    -ExecutionPolicy Bypass
+</code></pre>
+<p>이 설정은 현재 PowerShell 프로세스가 종료되면 유지되지 않습니다.</p>
+<h3 id="통합-실행-순서"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#통합-실행-순서">#</a>통합 실행 순서</h3>
+<p><code>start-local-rag.ps1</code>은 다음 순서로 실행됩니다.</p>
+<ol>
+<li>프로젝트 루트 확인</li>
+<li>Docker Compose 파일 확인</li>
+<li>종료 스크립트 확인</li>
+<li><code>uv</code> 명령 확인</li>
+<li>Docker CLI 확인</li>
+<li><code>JIPSA_RAG_APP_ENV</code> 결정</li>
+<li>환경별 dotenv 파일 확인</li>
+<li>실제 Pydantic Settings를 이용한 환경 변수 검증</li>
+<li>Embedding Provider와 VectorDB Provider 검증</li>
+<li>TEI, Qdrant URL과 Docker Compose 포트 정합성 검증</li>
+<li>Docker Engine 연결 확인</li>
+<li>Docker Compose v2 Plugin 확인</li>
+<li>Docker Compose 구성 검증</li>
+<li>Qdrant와 TEI 이미지 준비</li>
+<li>Docker NVIDIA GPU 사용 가능 여부 확인</li>
+<li>Qdrant 컨테이너 생성과 실행</li>
+<li>Qdrant <code>/readyz</code> 준비 상태 확인</li>
+<li>TEI GPU 컨테이너 강제 재생성과 실행</li>
+<li>TEI 이미지 확인</li>
+<li>TEI NVIDIA GPU 할당 확인</li>
+<li>TEI CUDA 초기화와 CPU 폴백 여부 확인</li>
+<li>실제 <code>/embed</code> 요청 실행</li>
+<li>최종 Docker Compose 상태 출력</li>
+<li><code>uv run jipsa-rag</code>로 FastAPI 실행</li>
+<li>FastAPI 종료 후 Qdrant와 TEI 자동 정지</li>
+<li>임시 프로세스 환경 변수 복원</li>
+<li>실행 전 PowerShell 작업 경로 복원</li>
+</ol>
+<h3 id="준비-상태-제한-시간"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#준비-상태-제한-시간">#</a>준비 상태 제한 시간</h3>
+<p>통합 실행 스크립트는 다음 시간 동안 준비 완료를 기다립니다.</p>
+<table>
+<thead>
+<tr>
+<th>대상</th>
+<th style="text-align:right">최대 대기 시간</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Qdrant</td>
+<td style="text-align:right">120초</td>
+</tr>
+<tr>
+<td>TEI 모델 다운로드·CUDA 초기화·Warmup</td>
+<td style="text-align:right">1200초</td>
+</tr>
+</tbody>
+</table>
+<p>TEI 최초 실행에서는 모델 다운로드로 인해 시간이 오래 걸릴 수 있습니다.
+기존 Hugging Face Cache가 존재하면 일반적으로 더 빠르게 준비됩니다.</p>
+<h3 id="정상-실행-상태"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#정상-실행-상태">#</a>정상 실행 상태</h3>
+<p>정상적으로 준비되면 다음 의미의 메시지가 출력됩니다.</p>
+<pre><code class="language-text">Qdrant 및 TEI 인프라 준비 완료
+Qdrant REST 요청 준비 완료
+TEI NVIDIA GPU 실제 임베딩 요청 성공
+FastAPI RAG 서버 실행
+</code></pre>
+<p>FastAPI 실행 이후에는 Uvicorn 로그와 애플리케이션 JSON 로그가 현재
+PowerShell 창에 계속 출력됩니다.</p>
+<p>해당 PowerShell 창은 FastAPI와 Docker 인프라의 생명주기를 함께 관리하므로
+서버를 사용하는 동안 닫지 않습니다.</p>
+<hr/>
+<h2 id="서버-접근-주소"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#서버-접근-주소">#</a>서버 접근 주소</h2>
+<h3 id="로컬-주소"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#로컬-주소">#</a>로컬 주소</h3>
+<p>RAG 서버를 실행하는 PC에서는 다음 주소를 사용합니다.</p>
+<table>
+<thead>
+<tr>
+<th>기능</th>
+<th>주소</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Liveness</td>
+<td><code>http://127.0.0.1:8077/api/v1/health/live</code></td>
+</tr>
+<tr>
+<td>Readiness</td>
+<td><code>http://127.0.0.1:8077/api/v1/health/ready</code></td>
+</tr>
+<tr>
+<td>Swagger UI</td>
+<td><code>http://127.0.0.1:8077/docs</code></td>
+</tr>
+<tr>
+<td>ReDoc</td>
+<td><code>http://127.0.0.1:8077/redoc</code></td>
+</tr>
+<tr>
+<td>OpenAPI JSON</td>
+<td><code>http://127.0.0.1:8077/openapi.json</code></td>
+</tr>
+<tr>
+<td>Ingest</td>
+<td><code>http://127.0.0.1:8077/ingest</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="외부-주소"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#외부-주소">#</a>외부 주소</h3>
+<p>공유기 포트 포워딩과 DDNS가 정상적으로 구성된 경우 다음 주소를 사용합니다.</p>
+<table>
+<thead>
+<tr>
+<th>기능</th>
+<th>주소</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Liveness</td>
+<td><code>http://INT2-jipsa.iptime.org:9802/api/v1/health/live</code></td>
+</tr>
+<tr>
+<td>Readiness</td>
+<td><code>http://INT2-jipsa.iptime.org:9802/api/v1/health/ready</code></td>
+</tr>
+<tr>
+<td>Swagger UI</td>
+<td><code>http://INT2-jipsa.iptime.org:9802/docs</code></td>
+</tr>
+<tr>
+<td>ReDoc</td>
+<td><code>http://INT2-jipsa.iptime.org:9802/redoc</code></td>
+</tr>
+<tr>
+<td>OpenAPI JSON</td>
+<td><code>http://INT2-jipsa.iptime.org:9802/openapi.json</code></td>
+</tr>
+<tr>
+<td>Ingest</td>
+<td><code>http://INT2-jipsa.iptime.org:9802/ingest</code></td>
+</tr>
+</tbody>
+</table>
+<p>통합 실행 스크립트는 공유기 포트 포워딩, DDNS 해석 또는 외부 방화벽을
+자동으로 설정하지 않습니다. FastAPI 로컬 실행이 성공해도 외부 주소 접근은
+별도로 실패할 수 있습니다.</p>
+<h3 id="liveness"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#liveness">#</a>Liveness</h3>
+<pre><code class="language-http">GET /api/v1/health/live
+</code></pre>
+<p>Liveness는 FastAPI 프로세스가 요청에 응답할 수 있는지 확인합니다.
+데이터베이스, Qdrant 또는 TEI와 같은 외부 의존성은 검사하지 않습니다.</p>
+<h3 id="readiness"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#readiness">#</a>Readiness</h3>
+<pre><code class="language-http">GET /api/v1/health/ready
+</code></pre>
+<p>Readiness는 Local RAG DB에 <code>SELECT 1</code>을 실행하여 데이터베이스 연결 상태를
+확인합니다.</p>
+<ul>
+<li>DB 연결 정상: <code>200 OK</code></li>
+<li>DB 연결 실패: <code>503 Service Unavailable</code></li>
+</ul>
+<p>DB 주소, 계정, 비밀번호 및 내부 예외 메시지는 외부 응답에 노출하지
+않습니다.</p>
+<h3 id="ingest"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#ingest">#</a>Ingest</h3>
+<pre><code class="language-http">POST /ingest
+X-Internal-Token: &lt;RAG_INGEST_TOKEN&gt;
+</code></pre>
+<p><code>POST /ingest</code>는 <code>/api/v1</code> prefix를 사용하지 않는 루트 경로입니다.
+애플리케이션 서버와 RAG 서버의 <code>RAG_INGEST_TOKEN</code> 값이 일치해야 합니다.</p>
+<hr/>
+<h2 id="로컬-rag-종료"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#로컬-rag-종료">#</a>로컬 RAG 종료</h2>
+<h3 id="정상-종료"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#정상-종료">#</a>정상 종료</h3>
+<p>통합 실행 중인 PowerShell 창에서 다음 키를 입력합니다.</p>
+<pre><code class="language-text">Ctrl+C
+</code></pre>
+<p><code>Ctrl+C</code>가 입력되면 다음 순서로 종료됩니다.</p>
+<ol>
+<li>Uvicorn 종료 신호 처리</li>
+<li>FastAPI lifespan 종료 시작</li>
+<li>Qdrant Client 정리</li>
+<li>SQLAlchemy AsyncEngine과 연결 풀 정리</li>
+<li>FastAPI 프로세스 종료</li>
+<li><code>stop-local-rag.ps1</code> 호출</li>
+<li>Qdrant 컨테이너 정지</li>
+<li>TEI 컨테이너 정지</li>
+<li>임시 프로세스 환경 변수 복원</li>
+<li>기존 PowerShell 작업 경로 복원</li>
+</ol>
+<p>Windows PowerShell이 <code>Ctrl+C</code>를 <code>PipelineStoppedException</code>으로 전달하는
+경우도 사용자 정상 종료 요청으로 처리하고 인프라 자동 정리를 계속합니다.</p>
+<h3 id="수동-종료"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#수동-종료">#</a>수동 종료</h3>
+<p>FastAPI 실행 창이 비정상적으로 닫혔거나 Qdrant와 TEI만 별도로 정지해야
+하는 경우 다음 명령을 실행합니다.</p>
+<pre><code class="language-powershell">Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG'
+
+.\scripts\stop-local-rag.ps1
+</code></pre>
+<p>수동 종료 대상은 다음과 같습니다.</p>
+<pre><code class="language-text">jipsa-qdrant
+jipsa-embedding
+</code></pre>
+<p>정지할 컨테이너가 없으면 안내 메시지를 출력하고 정상 종료합니다.</p>
+<h3 id="비정상-종료-후-정리"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#비정상-종료-후-정리">#</a>비정상 종료 후 정리</h3>
+<p>다음 상황에서는 PowerShell <code>finally</code> 블록이 실행되지 않을 수 있습니다.</p>
+<ul>
+<li>PowerShell 창 강제 종료</li>
+<li>작업 관리자에서 프로세스 강제 종료</li>
+<li>Windows 종료 또는 재부팅</li>
+<li>Docker Desktop 강제 종료</li>
+<li>전원 장애</li>
+</ul>
+<p>이 경우 새 PowerShell 창에서 다음 명령을 실행합니다.</p>
+<pre><code class="language-powershell">Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG'
+.\scripts\stop-local-rag.ps1
+</code></pre>
+<h3 id="종료-시-유지되는-리소스"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#종료-시-유지되는-리소스">#</a>종료 시 유지되는 리소스</h3>
+<p>종료 스크립트는 <code>docker compose stop</code>을 사용합니다.</p>
+<p>다음 리소스는 삭제하지 않습니다.</p>
+<ul>
+<li>Qdrant Collection</li>
+<li>Qdrant Vector와 payload</li>
+<li>Qdrant Index</li>
+<li>Qdrant Snapshot</li>
+<li>Qdrant Storage Named Volume</li>
+<li>Qdrant Snapshot Named Volume</li>
+<li>Hugging Face 모델 Cache Named Volume</li>
+<li>Docker 이미지</li>
+<li>Docker 컨테이너 정의</li>
+<li>Docker Compose 네트워크</li>
+</ul>
+<p>따라서 다음 실행에서 기존 Qdrant 데이터와 다운로드된 모델을 재사용할 수
+있습니다.</p>
+<h3 id="사용하지-않는-삭제-명령"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#사용하지-않는-삭제-명령">#</a>사용하지 않는 삭제 명령</h3>
+<p>데이터 손실 방지를 위해 일반 종료 절차에서 다음 명령을 사용하지 않습니다.</p>
+<pre><code class="language-text">docker compose down --volumes
+docker compose down -v
+docker volume rm
+</code></pre>
+<hr/>
+<h2 id="실행-실패-시-자동-진단"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#실행-실패-시-자동-진단">#</a>실행 실패 시 자동 진단</h2>
+<h3 id="진단-실행-조건"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#진단-실행-조건">#</a>진단 실행 조건</h3>
+<p>Qdrant 컨테이너 실행을 시도한 이후 오류가 발생하면
+<code>start-local-rag.ps1</code>이 자동으로 실패 진단 정보를 출력합니다.</p>
+<p>컨테이너 실행 전에 발생한 환경 변수 오류나 Docker Engine 연결 오류는
+조회할 컨테이너 로그가 없을 수 있으므로 원본 오류 메시지만 출력합니다.</p>
+<h3 id="자동-출력-정보"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#자동-출력-정보">#</a>자동 출력 정보</h3>
+<p>실패 시 다음 순서로 출력됩니다.</p>
+<pre><code class="language-text">[RAG 로컬 서비스 실행 실패]
+최초 실행 오류 메시지
+
+[Docker Compose 상태]
+docker compose ps --all 결과
+
+[최근 Qdrant 로그]
+jipsa-qdrant 최근 로그 200줄
+
+[최근 TEI 로그]
+jipsa-embedding 최근 로그 200줄
+</code></pre>
+<h3 id="docker-compose-상태에서-확인할-항목"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#docker-compose-상태에서-확인할-항목">#</a>Docker Compose 상태에서 확인할 항목</h3>
+<p><code>docker compose ps --all</code> 결과로 다음 항목을 확인할 수 있습니다.</p>
+<ul>
+<li>컨테이너 생성 여부</li>
+<li>컨테이너 실행 여부</li>
+<li>컨테이너 종료 여부</li>
+<li>Exit 상태</li>
+<li>Health 상태</li>
+<li>컨테이너 이름</li>
+<li>서비스 이름</li>
+<li>포트 매핑</li>
+</ul>
+<h3 id="qdrant-로그에서-확인할-항목"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#qdrant-로그에서-확인할-항목">#</a>Qdrant 로그에서 확인할 항목</h3>
+<ul>
+<li>Qdrant 프로세스 시작 실패</li>
+<li>Storage Volume 접근 실패</li>
+<li>Snapshot 복구 실패</li>
+<li>포트 바인딩 실패</li>
+<li>설정 오류</li>
+<li>프로세스 비정상 종료</li>
+<li><code>/readyz</code> 준비 실패</li>
+</ul>
+<h3 id="tei-로그에서-확인할-항목"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#tei-로그에서-확인할-항목">#</a>TEI 로그에서 확인할 항목</h3>
+<ul>
+<li>NVIDIA GPU 접근 실패</li>
+<li>CUDA 초기화 실패</li>
+<li>잘못된 CUDA 이미지</li>
+<li>GPU 할당 누락</li>
+<li>CPU Backend 폴백</li>
+<li>GPU 메모리 부족</li>
+<li>Hugging Face 모델 다운로드 실패</li>
+<li>모델 Weight 로드 실패</li>
+<li>모델 Warmup 실패</li>
+<li><code>/embed</code> 요청 실패</li>
+</ul>
+<h3 id="원본-오류-보존"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#원본-오류-보존">#</a>원본 오류 보존</h3>
+<p>진단용 Docker 명령이나 로그 조회가 추가로 실패해도 최초 실행 오류를
+덮어쓰지 않습니다.</p>
+<p>각 진단 단계는 독립적으로 처리되며 조회 실패 시 Warning을 출력하고 다음
+진단 단계로 계속 진행합니다.</p>
+<h3 id="실패-후-자동-정지"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#실패-후-자동-정지">#</a>실패 후 자동 정지</h3>
+<p>실패 진단 출력이 끝난 뒤 <code>finally</code> 블록에서 Qdrant와 TEI 정지를
+시도합니다.</p>
+<p>기존 실행 오류가 존재할 때는 인프라 정리 오류로 최초 오류를 덮어쓰지
+않습니다. FastAPI가 정상 종료됐지만 인프라 정지만 실패한 경우에는 정리
+실패를 최종 오류로 전달합니다.</p>
+<h3 id="컨테이너-실행-전-실패-예시"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#컨테이너-실행-전-실패-예시">#</a>컨테이너 실행 전 실패 예시</h3>
+<p>다음 오류는 컨테이너 실행 전에 발생할 수 있습니다.</p>
+<ul>
+<li><code>uv</code> 명령 없음</li>
+<li>Docker CLI 없음</li>
+<li>Docker Engine 연결 실패</li>
+<li>Docker Compose v2 Plugin 없음</li>
+<li>Docker Compose 파일 없음</li>
+<li>종료 스크립트 없음</li>
+<li>dotenv 파일 없음</li>
+<li>필수 환경 변수 누락</li>
+<li>잘못된 URL 또는 포트</li>
+<li>지원하지 않는 Embedding Provider</li>
+<li>지원하지 않는 VectorDB Provider</li>
+<li>잘못된 임베딩 차원</li>
+<li>Docker Compose 구성 오류</li>
+<li>Docker NVIDIA GPU 사전 검증 실패</li>
+</ul>
+<p>이 경우에는 오류가 발생한 단계와 원본 오류 메시지를 먼저 확인합니다.</p>
+<hr/>
+<h2 id="문제-해결"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#문제-해결">#</a>문제 해결</h2>
+<h3 id="docker-engine에-연결할-수-없음"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#docker-engine에-연결할-수-없음">#</a>Docker Engine에 연결할 수 없음</h3>
+<p>증상:</p>
+<pre><code class="language-text">Docker Engine에 연결할 수 없습니다.
+</code></pre>
+<p>확인 순서:</p>
+<ol>
+<li>Docker Desktop이 실행 중인지 확인합니다.</li>
+<li>Docker Desktop 상태가 Engine Running인지 확인합니다.</li>
+<li>다음 명령을 실행합니다.</li>
+</ol>
+<pre><code class="language-powershell">docker version
+</code></pre>
+<ol start="4">
+<li>Windows 재부팅 직후라면 Docker Engine 준비가 끝날 때까지 기다립니다.</li>
+</ol>
+<h3 id="docker-compose-plugin-실행-실패"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#docker-compose-plugin-실행-실패">#</a>Docker Compose Plugin 실행 실패</h3>
+<p>확인 명령:</p>
+<pre><code class="language-powershell">docker compose version
+</code></pre>
+<p><code>docker-compose</code> 구형 명령이 아니라 <code>docker compose</code> v2 Plugin을 사용합니다.</p>
+<h3 id="nvidia-gpu를-사용할-수-없음"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#nvidia-gpu를-사용할-수-없음">#</a>NVIDIA GPU를 사용할 수 없음</h3>
+<p>확인 명령:</p>
+<pre><code class="language-powershell">nvidia-smi
+docker info
+</code></pre>
+<p>확인 항목:</p>
+<ul>
+<li>Windows에서 <code>nvidia-smi</code>가 정상인지 확인</li>
+<li>NVIDIA Driver 설치 상태 확인</li>
+<li>Docker Desktop GPU 지원 상태 확인</li>
+<li>WSL2 Backend 상태 확인</li>
+<li>다른 컨테이너가 GPU 메모리를 과도하게 점유하는지 확인</li>
+</ul>
+<h3 id="tei가-cpu로-실행됨"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#tei가-cpu로-실행됨">#</a>TEI가 CPU로 실행됨</h3>
+<p>통합 실행 스크립트는 CPU 폴백을 정상 상태로 인정하지 않습니다.</p>
+<p>TEI 로그에서 다음 유형의 메시지를 확인합니다.</p>
+<pre><code class="language-text">CUDA_ERROR_NO_DEVICE
+Using CPU instead
+Starting Qwen3 model on Cpu
+</code></pre>
+<p>정상적인 CUDA 실행에서는 GPU Device가 표시되고 실제 <code>/embed</code> 요청이
+성공해야 합니다.</p>
+<h3 id="gpu-메모리-부족"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#gpu-메모리-부족">#</a>GPU 메모리 부족</h3>
+<p>확인 명령:</p>
+<pre><code class="language-powershell">nvidia-smi
+</code></pre>
+<p>불필요한 GPU 프로세스와 컨테이너를 종료한 후 다시 실행합니다.</p>
+<pre><code class="language-powershell">docker ps --all
+</code></pre>
+<h3 id="qdrant-준비-상태-timeout"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#qdrant-준비-상태-timeout">#</a>Qdrant 준비 상태 Timeout</h3>
+<p>Qdrant는 최대 120초 동안 <code>/readyz</code> 응답을 기다립니다.</p>
+<p>확인 명령:</p>
+<pre><code class="language-powershell">docker logs --tail 200 jipsa-qdrant
+</code></pre>
+<p>Storage Volume 오류, 포트 충돌 및 데이터 복구 오류를 확인합니다.</p>
+<h3 id="tei-준비-상태-timeout"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#tei-준비-상태-timeout">#</a>TEI 준비 상태 Timeout</h3>
+<p>TEI는 최초 모델 다운로드와 Warmup을 고려해 최대 1200초 동안 준비를
+기다립니다.</p>
+<p>확인 명령:</p>
+<pre><code class="language-powershell">docker logs --tail 200 jipsa-embedding
+</code></pre>
+<p>확인 항목:</p>
+<ul>
+<li>모델 다운로드 진행 여부</li>
+<li>네트워크 연결</li>
+<li>Hugging Face 접근 오류</li>
+<li>CUDA 초기화 오류</li>
+<li>GPU 메모리 부족</li>
+<li>모델 Warmup 오류</li>
+</ul>
+<h3 id="포트-충돌"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#포트-충돌">#</a>포트 충돌</h3>
+<p>확인 대상 포트:</p>
+<pre><code class="language-text">8077
+6333
+6334
+18081
+3306
+</code></pre>
+<p>PowerShell 확인 명령:</p>
+<pre><code class="language-powershell">Get-NetTCPConnection `
+    -State Listen `
+    -ErrorAction SilentlyContinue |
+    Where-Object {
+        $_.LocalPort -in 8077, 6333, 6334, 18081, 3306
+    } |
+    Sort-Object LocalPort |
+    Format-Table `
+        LocalAddress,
+        LocalPort,
+        OwningProcess `
+        -AutoSize
+</code></pre>
+<p>프로세스 확인:</p>
+<pre><code class="language-powershell">Get-Process -Id &lt;OwningProcess&gt;
+</code></pre>
+<h3 id="fastapi-시작-시-db-연결-실패"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#fastapi-시작-시-db-연결-실패">#</a>FastAPI 시작 시 DB 연결 실패</h3>
+<p><code>JIPSA_RAG_DATABASE_CHECK_ON_STARTUP=true</code>이면 FastAPI 시작 전에 DB
+연결을 확인합니다.</p>
+<p>확인 항목:</p>
+<ul>
+<li>MySQL 또는 MariaDB 실행 여부</li>
+<li>DB Host와 Port</li>
+<li>DB 이름</li>
+<li>DB 사용자</li>
+<li>DB 비밀번호</li>
+<li>사용자 접근 권한</li>
+<li>방화벽</li>
+</ul>
+<h3 id="local은-성공하지만-외부-접속-실패"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#local은-성공하지만-외부-접속-실패">#</a>Local은 성공하지만 외부 접속 실패</h3>
+<p>확인 순서:</p>
+<ol>
+<li>로컬 Liveness를 확인합니다.</li>
+</ol>
+<pre><code class="language-powershell">Invoke-RestMethod `
+    -Method Get `
+    -Uri 'http://127.0.0.1:8077/api/v1/health/live'
+</code></pre>
+<ol start="2">
+<li>FastAPI가 <code>0.0.0.0:8077</code>에 바인딩됐는지 확인합니다.</li>
+<li>Windows Defender Firewall의 TCP 8077 허용 여부를 확인합니다.</li>
+<li>공유기 외부 TCP 9802 → 내부 TCP 8077 포트 포워딩을 확인합니다.</li>
+<li><code>INT2-jipsa.iptime.org</code>의 DNS 해석 결과를 확인합니다.</li>
+</ol>
+<pre><code class="language-powershell">Resolve-DnsName 'INT2-jipsa.iptime.org'
+</code></pre>
+<ol start="6">
+<li>ISP의 CGNAT 또는 외부 인바운드 차단 여부를 확인합니다.</li>
+<li>외부 네트워크에서 다시 요청합니다.</li>
+</ol>
+<h3 id="powershell-창을-닫은-뒤-gpu가-계속-점유됨"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#powershell-창을-닫은-뒤-gpu가-계속-점유됨">#</a>PowerShell 창을 닫은 뒤 GPU가 계속 점유됨</h3>
+<p>강제 종료로 자동 정리가 실행되지 않았을 수 있습니다.</p>
+<pre><code class="language-powershell">Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG'
+.\scripts\stop-local-rag.ps1
+</code></pre>
+<p>이후 다음 명령으로 상태를 확인합니다.</p>
+<pre><code class="language-powershell">docker compose `
+    --file .\infra\qdrant\compose.yaml `
+    ps `
+    --all
+</code></pre>
+<hr/>
+<h2 id="fastapi-단독-실행"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#fastapi-단독-실행">#</a>FastAPI 단독 실행</h2>
+<h3 id="프로젝트-entry-point-실행"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#프로젝트-entry-point-실행">#</a>프로젝트 Entry Point 실행</h3>
+<p>Qdrant와 TEI가 이미 준비된 상태에서 FastAPI 프로세스만 디버깅해야 하는
+경우 다음 명령을 사용할 수 있습니다.</p>
+<pre><code class="language-powershell">$env:JIPSA_RAG_APP_ENV = 'development'
+uv run jipsa-rag
+</code></pre>
+<p>이 명령은 <code>pyproject.toml</code>의 다음 Entry Point를 실행합니다.</p>
+<pre><code class="language-toml">[project.scripts]
+jipsa-rag = "jipsa_rag.main:main"
+</code></pre>
+<p><code>main()</code>은 다음 설정을 읽어 Uvicorn을 실행합니다.</p>
+<ul>
+<li><code>JIPSA_RAG_HOST</code></li>
+<li><code>JIPSA_RAG_PORT</code></li>
+<li><code>JIPSA_RAG_DEBUG</code></li>
+</ul>
+<p><code>JIPSA_RAG_DEBUG=true</code>이면 Uvicorn Reload를 활성화합니다.</p>
+<h3 id="uvicorn-직접-실행"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#uvicorn-직접-실행">#</a>Uvicorn 직접 실행</h3>
+<pre><code class="language-powershell">$env:JIPSA_RAG_APP_ENV = 'development'
+
+uv run uvicorn jipsa_rag.main:app `
+    --reload `
+    --host 0.0.0.0 `
+    --port 8077
+</code></pre>
+<h3 id="단독-실행의-차이"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#단독-실행의-차이">#</a>단독 실행의 차이</h3>
+<p><code>uv run jipsa-rag</code>와 Uvicorn 직접 실행은 다음 작업을 수행하지 않습니다.</p>
+<ul>
+<li>Qdrant 컨테이너 실행</li>
+<li>Qdrant <code>/readyz</code> 확인</li>
+<li>TEI 컨테이너 실행</li>
+<li>NVIDIA GPU 사전 확인</li>
+<li>TEI GPU 할당 확인</li>
+<li>CPU 폴백 확인</li>
+<li>실제 <code>/embed</code> 검증</li>
+<li>FastAPI 종료 후 Docker 컨테이너 정지</li>
+<li>실패 시 Docker 상태와 로그 자동 출력</li>
+</ul>
+<p>일반적인 로컬 실행에서는 다음 통합 스크립트를 우선 사용합니다.</p>
+<pre><code class="language-powershell">.\scripts\start-local-rag.ps1
+</code></pre>
+<hr/>
+<h2 id="docker-수동-확인-명령"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#docker-수동-확인-명령">#</a>Docker 수동 확인 명령</h2>
+<h3 id="compose-구성-검증"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#compose-구성-검증">#</a>Compose 구성 검증</h3>
+<pre><code class="language-powershell">docker compose `
+    --file .\infra\qdrant\compose.yaml `
+    config `
+    --quiet
+</code></pre>
+<h3 id="전체-컨테이너-상태"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#전체-컨테이너-상태">#</a>전체 컨테이너 상태</h3>
+<pre><code class="language-powershell">docker compose `
+    --file .\infra\qdrant\compose.yaml `
+    ps `
+    --all
+</code></pre>
+<h3 id="qdrant-로그"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#qdrant-로그">#</a>Qdrant 로그</h3>
+<pre><code class="language-powershell">docker logs `
+    --tail 200 `
+    jipsa-qdrant
+</code></pre>
+<h3 id="tei-로그"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#tei-로그">#</a>TEI 로그</h3>
+<pre><code class="language-powershell">docker logs `
+    --tail 200 `
+    jipsa-embedding
+</code></pre>
+<h3 id="qdrant-상태"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#qdrant-상태">#</a>Qdrant 상태</h3>
+<pre><code class="language-powershell">docker inspect `
+    --format '{{.State.Status}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.RestartCount}}' `
+    jipsa-qdrant
+</code></pre>
+<h3 id="tei-상태"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#tei-상태">#</a>TEI 상태</h3>
+<pre><code class="language-powershell">docker inspect `
+    --format '{{.State.Status}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.RestartCount}}' `
+    jipsa-embedding
+</code></pre>
+<h3 id="tei-gpu-할당-확인"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#tei-gpu-할당-확인">#</a>TEI GPU 할당 확인</h3>
+<pre><code class="language-powershell">docker inspect `
+    --format '{{json .HostConfig.DeviceRequests}}' `
+    jipsa-embedding
+</code></pre>
+<h3 id="qdrant-준비-상태-직접-확인"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#qdrant-준비-상태-직접-확인">#</a>Qdrant 준비 상태 직접 확인</h3>
+<pre><code class="language-powershell">Invoke-WebRequest `
+    -Method Get `
+    -Uri 'http://127.0.0.1:6333/readyz' `
+    -UseBasicParsing
+</code></pre>
+<h3 id="tei-임베딩-직접-확인"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#tei-임베딩-직접-확인">#</a>TEI 임베딩 직접 확인</h3>
+<pre><code class="language-powershell">$RequestBody = @{
+    inputs = @(
+        'Jipsa RAG TEI GPU readiness test.'
+    )
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod `
+    -Method Post `
+    -Uri 'http://127.0.0.1:18081/embed' `
+    -ContentType 'application/json' `
+    -Body $RequestBody
+</code></pre>
+<h3 id="컨테이너-수동-정지"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#컨테이너-수동-정지">#</a>컨테이너 수동 정지</h3>
+<p>직접 <code>docker compose stop</code>을 실행하는 대신 프로젝트 종료 스크립트를
+사용합니다.</p>
+<pre><code class="language-powershell">.\scripts\stop-local-rag.ps1
+</code></pre>
+<p>종료 정책을 한 곳에서 유지하고 종료 후 상태 출력까지 동일하게 수행하기
+위함입니다.</p>
+<hr/>
+<h2 id="테스트"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#테스트">#</a>테스트</h2>
+<h3 id="테스트-환경-선택"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#테스트-환경-선택">#</a>테스트 환경 선택</h3>
+<pre><code class="language-powershell">$env:JIPSA_RAG_APP_ENV = 'test'
+</code></pre>
+<h3 id="전체-테스트"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#전체-테스트">#</a>전체 테스트</h3>
+<pre><code class="language-powershell">uv run pytest
+</code></pre>
+<p>상세 테스트 이름을 함께 확인하려면 다음 명령을 사용합니다.</p>
+<pre><code class="language-powershell">uv run pytest -v
+</code></pre>
+<h3 id="단위-테스트"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#단위-테스트">#</a>단위 테스트</h3>
+<pre><code class="language-powershell">uv run pytest tests/unit -v
+</code></pre>
+<h3 id="통합-테스트"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#통합-테스트">#</a>통합 테스트</h3>
+<pre><code class="language-powershell">uv run pytest tests/integration -v
+</code></pre>
+<p>DB 통합 테스트는 Local RAG DB에 <code>SELECT 1</code>을 실행하여 연결 가능 여부를
+확인합니다. 데이터를 생성, 수정 또는 삭제하지 않습니다.</p>
+<p>통합 테스트 전에 <code>.env.test</code>의 다음 값을 확인합니다.</p>
+<pre><code class="language-text">JIPSA_RAG_DATABASE_HOST
+JIPSA_RAG_DATABASE_PORT
+JIPSA_RAG_DATABASE_NAME
+JIPSA_RAG_DATABASE_USER
+JIPSA_RAG_DATABASE_PASSWORD
+</code></pre>
+<h3 id="테스트-커버리지"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#테스트-커버리지">#</a>테스트 커버리지</h3>
+<pre><code class="language-powershell">uv run pytest `
+    --cov=src/jipsa_rag `
+    --cov-report=term-missing
+</code></pre>
+<h3 id="powershell-스크립트-구문-검사"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#powershell-스크립트-구문-검사">#</a>PowerShell 스크립트 구문 검사</h3>
+<p><code>start-local-rag.ps1</code>과 <code>stop-local-rag.ps1</code>을 실제 실행하지 않고
+PowerShell Parser로 구문만 확인할 수 있습니다.</p>
+<pre><code class="language-powershell">$ScriptPaths = @(
+    '.\scripts\start-local-rag.ps1',
+    '.\scripts\stop-local-rag.ps1'
+)
+
+foreach ($ScriptPath in $ScriptPaths) {
+    $Tokens = $null
+    $Errors = $null
+
+    [void] [System.Management.Automation.Language.Parser]::ParseFile(
+        (Resolve-Path -LiteralPath $ScriptPath).Path,
+        [ref] $Tokens,
+        [ref] $Errors
+    )
+
+    if ($Errors.Count -gt 0) {
+        $Errors |
+            Format-List
+
+        throw "PowerShell 구문 검사 실패: $ScriptPath"
+    }
+
+    Write-Host "PowerShell 구문 검사 통과: $ScriptPath" `
+        -ForegroundColor Green
+}
+</code></pre>
+<hr/>
+<h2 id="코드-품질-검사"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#코드-품질-검사">#</a>코드 품질 검사</h2>
+<h3 id="자동-포맷"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#자동-포맷">#</a>자동 포맷</h3>
+<pre><code class="language-powershell">uv run ruff format .
+</code></pre>
+<h3 id="포맷-검사"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#포맷-검사">#</a>포맷 검사</h3>
+<pre><code class="language-powershell">uv run ruff format --check .
+</code></pre>
+<h3 id="자동-수정-가능한-린트-오류-수정"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#자동-수정-가능한-린트-오류-수정">#</a>자동 수정 가능한 린트 오류 수정</h3>
+<pre><code class="language-powershell">uv run ruff check --fix .
+</code></pre>
+<h3 id="린트-검사"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#린트-검사">#</a>린트 검사</h3>
+<pre><code class="language-powershell">uv run ruff check .
+</code></pre>
+<h3 id="정적-타입-검사"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#정적-타입-검사">#</a>정적 타입 검사</h3>
+<pre><code class="language-powershell">uv run mypy src tests
+</code></pre>
+<h3 id="권장-전체-검사-순서"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#권장-전체-검사-순서">#</a>권장 전체 검사 순서</h3>
+<pre><code class="language-powershell">Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG'
+
+$env:JIPSA_RAG_APP_ENV = 'test'
+
+uv sync --frozen
+
+if ($LASTEXITCODE -ne 0) {
+    throw "의존성 동기화 실패. 종료 코드: $LASTEXITCODE"
+}
+
+uv run ruff format --check .
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Ruff 포맷 검사 실패. 종료 코드: $LASTEXITCODE"
+}
+
+uv run ruff check .
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Ruff 린트 검사 실패. 종료 코드: $LASTEXITCODE"
+}
+
+uv run mypy src tests
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Mypy 정적 타입 검사 실패. 종료 코드: $LASTEXITCODE"
+}
+
+uv run pytest
+
+if ($LASTEXITCODE -ne 0) {
+    throw "Pytest 실패. 종료 코드: $LASTEXITCODE"
+}
+
+Write-Host ''
+Write-Host 'RAG 전체 품질 검사 통과' -ForegroundColor Green
+</code></pre>
+<hr/>
+<h2 id="의존성-확인"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#의존성-확인">#</a>의존성 확인</h2>
+<h3 id="전체-의존성-트리"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#전체-의존성-트리">#</a>전체 의존성 트리</h3>
+<pre><code class="language-powershell">uv tree
+</code></pre>
+<h3 id="httpx2-설치-상태"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#httpx2-설치-상태">#</a>HTTPX2 설치 상태</h3>
+<pre><code class="language-powershell">uv run python -c "import httpx2; print('httpx2:', httpx2.__version__)"
+</code></pre>
+<h3 id="기존-httpx와-httpx2-설치-여부"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#기존-httpx와-httpx2-설치-여부">#</a>기존 HTTPX와 HTTPX2 설치 여부</h3>
+<pre><code class="language-powershell">uv run python -c "import importlib.util; print('httpx2:', importlib.util.find_spec('httpx2') is not None); print('httpx:', importlib.util.find_spec('httpx') is not None)"
+</code></pre>
+<p>예상 결과:</p>
+<pre><code class="language-text">httpx2: True
+httpx: False
+</code></pre>
+<h3 id="boto3-제거-여부"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#boto3-제거-여부">#</a>boto3 제거 여부</h3>
+<p>RAG 서버는 S3에 직접 접근하지 않으므로 다음 패키지가 의존성 트리에 없어야
+합니다.</p>
+<ul>
+<li><code>boto3</code></li>
+<li><code>boto3-stubs</code></li>
+<li><code>botocore</code></li>
+<li><code>s3transfer</code></li>
+</ul>
+<p>확인 명령:</p>
+<pre><code class="language-powershell">uv tree |
+    Select-String `
+        -Pattern 'boto3|botocore|s3transfer'
+</code></pre>
+<p>아무 내용도 출력되지 않으면 정상입니다.</p>
+<hr/>
+<h2 id="보안-주의-사항"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#보안-주의-사항">#</a>보안 주의 사항</h2>
+<h3 id="git에-커밋하지-않는-값"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#git에-커밋하지-않는-값">#</a>Git에 커밋하지 않는 값</h3>
+<p>다음 값은 Git에 커밋하지 않습니다.</p>
+<ul>
+<li>Local RAG DB 실제 비밀번호</li>
+<li><code>INTERNAL_TOKEN</code></li>
+<li><code>RAG_INGEST_TOKEN</code></li>
+<li>내부 API Key</li>
+<li>Presigned GET URL</li>
+<li>Presigned GET URL Query String</li>
+<li>사용자 업로드 파일 내용</li>
+<li>개인정보</li>
+<li>세션과 인증 토큰</li>
+<li>운영 환경 내부 주소</li>
+</ul>
+<h3 id="사용하지-않는-aws-자격-증명"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#사용하지-않는-aws-자격-증명">#</a>사용하지 않는 AWS 자격 증명</h3>
+<p>RAG 환경 변수에는 다음 값을 추가하지 않습니다.</p>
+<pre><code class="language-text">AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+AWS_SESSION_TOKEN
+</code></pre>
+<h3 id="외부-http-노출"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#외부-http-노출">#</a>외부 HTTP 노출</h3>
+<p>현재 개발 외부 주소는 다음과 같이 HTTP를 사용합니다.</p>
+<pre><code class="language-text">http://INT2-jipsa.iptime.org:9802
+</code></pre>
+<p>HTTP는 전송 구간을 암호화하지 않습니다. 외부 네트워크를 통과하는
+<code>X-Internal-Token</code>과 요청 본문이 노출될 위험이 있습니다.</p>
+<p>개발 검증 범위를 넘어 지속적으로 외부에 노출할 경우 HTTPS Reverse Proxy,
+TLS 인증서, 접근 IP 제한 및 방화벽 정책을 적용해야 합니다.</p>
+<h3 id="qdrant와-tei-외부-노출-금지"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#qdrant와-tei-외부-노출-금지">#</a>Qdrant와 TEI 외부 노출 금지</h3>
+<p>Qdrant와 TEI는 다음 Loopback 주소에만 바인딩합니다.</p>
+<pre><code class="language-text">Qdrant REST: 127.0.0.1:6333
+Qdrant gRPC: 127.0.0.1:6334
+TEI: 127.0.0.1:18081
+</code></pre>
+<p>공유기 포트 포워딩이나 Windows 방화벽 규칙으로 해당 포트를 외부에 직접
+노출하지 않습니다.</p>
+<h3 id="로그-보안"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#로그-보안">#</a>로그 보안</h3>
+<p>로그에는 다음 값을 기록하지 않습니다.</p>
+<ul>
+<li>DB 비밀번호</li>
+<li>내부 인증 토큰 원문</li>
+<li>Presigned GET URL 원문</li>
+<li>Presigned URL Query String</li>
+<li>사용자 파일 원문</li>
+<li>불필요한 개인정보</li>
+</ul>
+<hr/>
+<h2 id="주요-파일과-책임"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#주요-파일과-책임">#</a>주요 파일과 책임</h2>
+<table>
+<thead>
+<tr>
+<th>경로</th>
+<th>책임</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>README.md</code></td>
+<td>RAG 서비스 구조, 실행, 종료, 진단 및 개발 절차 문서</td>
+</tr>
+<tr>
+<td><code>.env.example</code></td>
+<td>환경별 dotenv 파일 작성 기준</td>
+</tr>
+<tr>
+<td><code>pyproject.toml</code></td>
+<td>Python 의존성, 실행 Entry Point, Ruff, Mypy, Pytest 설정</td>
+</tr>
+<tr>
+<td><code>uv.lock</code></td>
+<td>재현 가능한 정확한 Python 의존성 버전</td>
+</tr>
+<tr>
+<td><code>scripts/start-local-rag.ps1</code></td>
+<td>Qdrant·TEI 준비, GPU 검증, FastAPI 실행, 실패 진단, 자동 정지</td>
+</tr>
+<tr>
+<td><code>scripts/stop-local-rag.ps1</code></td>
+<td>Qdrant·TEI 안전 정지와 종료 후 상태 출력</td>
+</tr>
+<tr>
+<td><code>infra/qdrant/compose.yaml</code></td>
+<td>Qdrant, TEI, GPU Reservation 및 Named Volume 정의</td>
+</tr>
+<tr>
+<td><code>infra/qdrant/cuda-entrypoint.sh</code></td>
+<td>TEI CUDA 실행을 위한 보정 Entrypoint</td>
+</tr>
+<tr>
+<td><code>src/jipsa_rag/main.py</code></td>
+<td>FastAPI 생성, lifespan, Router 등록, Uvicorn 실행</td>
+</tr>
+<tr>
+<td><code>src/jipsa_rag/core/config.py</code></td>
+<td>환경 변수 로드와 타입 검증</td>
+</tr>
+<tr>
+<td><code>src/jipsa_rag/core/logging.py</code></td>
+<td>구조화 로그와 민감정보 보호</td>
+</tr>
+<tr>
+<td><code>src/jipsa_rag/core/middleware.py</code></td>
+<td>Request ID와 요청 단위 로그 처리</td>
+</tr>
+<tr>
+<td><code>src/jipsa_rag/api/ingest.py</code></td>
+<td>루트 <code>POST /ingest</code> API</td>
+</tr>
+<tr>
+<td><code>src/jipsa_rag/api/v1/endpoints/health.py</code></td>
+<td>Liveness와 Readiness API</td>
+</tr>
+<tr>
+<td><code>src/jipsa_rag/infrastructure/app_server/ingest_client.py</code></td>
+<td>manifest 조회와 ingest-complete 콜백</td>
+</tr>
+<tr>
+<td><code>src/jipsa_rag/infrastructure/document/parser.py</code></td>
+<td>공통 문서 Parser 계약</td>
+</tr>
+<tr>
+<td><code>src/jipsa_rag/infrastructure/document/parser_factory.py</code></td>
+<td>문서 형식별 Parser 선택</td>
+</tr>
+<tr>
+<td><code>src/jipsa_rag/infrastructure/document/parsers/pdf.py</code></td>
+<td>PDF 페이지 단위 텍스트 추출</td>
+</tr>
+<tr>
+<td><code>src/jipsa_rag/infrastructure/embedding</code></td>
+<td>TEI 임베딩 요청과 임베딩 모델</td>
+</tr>
+<tr>
+<td><code>src/jipsa_rag/infrastructure/indexing</code></td>
+<td>Local RAG DB와 Qdrant 저장 구현</td>
+</tr>
+<tr>
+<td><code>src/jipsa_rag/services/file_indexing.py</code></td>
+<td>색인 staging, 활성 전환, 멱등성, 동시성 및 보상 처리</td>
+</tr>
+<tr>
+<td><code>tests/unit</code></td>
+<td>단위 테스트</td>
+</tr>
+<tr>
+<td><code>tests/integration</code></td>
+<td>실제 외부 의존성을 사용하는 통합 테스트</td>
+</tr>
+</tbody>
+</table>
+<hr/>
+<h2 id="계층별-책임"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#계층별-책임">#</a>계층별 책임</h2>
+<h3 id="api"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#api">#</a><code>api</code></h3>
+<ul>
+<li>FastAPI Router 구성</li>
+<li>HTTP 요청과 응답 처리</li>
+<li>Header, Path, Query 및 Body 검증</li>
+<li>HTTP 상태 코드 관리</li>
+<li>서비스 계층 호출</li>
+<li>외부 응답 DTO 변환</li>
+</ul>
+<p>API 계층에 SQLAlchemy 쿼리나 Qdrant 저장 로직을 직접 작성하지 않습니다.</p>
+<h3 id="services"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#services">#</a><code>services</code></h3>
+<ul>
+<li>파일 처리 유스케이스 조정</li>
+<li>문서 파싱, 청킹, 임베딩 및 저장 흐름 연결</li>
+<li>Local RAG DB와 Qdrant 사이의 처리 순서 관리</li>
+<li>멱등성 처리</li>
+<li>재색인 활성 전환</li>
+<li>실패 보상 처리</li>
+<li>애플리케이션 서버 콜백 시점 관리</li>
+</ul>
+<h3 id="domain"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#domain">#</a><code>domain</code></h3>
+<ul>
+<li>파일, 문서, 청크 및 색인 실행의 핵심 모델</li>
+<li>파일과 문서 처리 상태</li>
+<li>파싱과 색인 상태</li>
+<li>중복 처리 방지 규칙</li>
+<li>외부 라이브러리와 분리된 비즈니스 규칙</li>
+</ul>
+<h3 id="infrastructure"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#infrastructure">#</a><code>infrastructure</code></h3>
+<ul>
+<li>SQLAlchemy와 Local RAG DB</li>
+<li>애플리케이션 서버 HTTP Client</li>
+<li>Presigned GET URL 파일 다운로드 Client</li>
+<li>임시 파일 시스템</li>
+<li>문서 Parser 구현</li>
+<li>TEI Embedding Client</li>
+<li>Qdrant Client와 Vector 저장</li>
+<li>MySQL Advisory Lock</li>
+<li>외부 시스템 오류 변환</li>
+</ul>
+<p>AWS Access Key나 <code>boto3</code>를 이용한 S3 Client를 구성하지 않습니다.</p>
+<h3 id="core"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#core">#</a><code>core</code></h3>
+<ul>
+<li>환경 설정</li>
+<li>공통 오류 코드</li>
+<li>공통 예외</li>
+<li>전역 예외 처리</li>
+<li>Request ID 관리</li>
+<li>요청 추적 Middleware</li>
+<li>구조화 로그</li>
+<li>민감정보 마스킹</li>
+<li>전역 정책</li>
+</ul>
+<h3 id="schemas"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#schemas">#</a><code>schemas</code></h3>
+<ul>
+<li>FastAPI 요청 모델</li>
+<li>FastAPI 응답 모델</li>
+<li>공통 성공과 오류 응답</li>
+<li>애플리케이션 서버 통신 DTO</li>
+<li>Health Check 응답 모델</li>
+</ul>
+<hr/>
+<h2 id="운영-체크리스트"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#운영-체크리스트">#</a>운영 체크리스트</h2>
+<h3 id="최초-실행-전"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#최초-실행-전">#</a>최초 실행 전</h3>
+<ul>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>Python 3.12 설치 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/><code>uv</code> 설치 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/><code>uv sync</code> 완료</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>Docker Desktop 실행 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>Docker Compose v2 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>NVIDIA Driver 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>Docker GPU 사용 가능 여부 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>Local RAG DB 실행 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>Local RAG DB Schema 적용 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/><code>.env.local</code> 또는 <code>.env.development</code> 작성</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>DB 비밀번호 입력</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/><code>INTERNAL_TOKEN</code> 입력</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/><code>RAG_INGEST_TOKEN</code> 입력</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>애플리케이션 서버 주소 입력</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>FastAPI, Qdrant, TEI 포트 충돌 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>DDNS와 포트 포워딩 확인</li>
+</ul>
+<h3 id="실행-후"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#실행-후">#</a>실행 후</h3>
+<ul>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>Qdrant <code>/readyz</code> 성공 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>TEI GPU Device 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>TEI CPU 폴백 없음 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>TEI <code>/embed</code> 성공 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>FastAPI Liveness 성공 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>FastAPI Readiness 성공 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>Swagger UI 접근 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>외부 Liveness 접근 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/><code>POST /ingest</code> 내부 토큰 연동 확인</li>
+</ul>
+<h3 id="종료-후"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#종료-후">#</a>종료 후</h3>
+<ul>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/><code>Ctrl+C</code>로 FastAPI 정상 종료</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>Qdrant 컨테이너 정지 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>TEI 컨테이너 정지 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>GPU 점유 해제 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>Qdrant Named Volume 유지 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>Hugging Face 모델 Cache 유지 확인</li>
+</ul>
+<h3 id="pr-전"><a aria-label="이 섹션으로 이동" class="heading-anchor" href="#pr-전">#</a>PR 전</h3>
+<ul>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/><code>uv sync --frozen</code> 통과</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/><code>uv run ruff format --check .</code> 통과</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/><code>uv run ruff check .</code> 통과</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/><code>uv run mypy src tests</code> 통과</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/><code>uv run pytest</code> 통과</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>PowerShell 스크립트 구문 검사 통과</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>실제 토큰과 비밀번호가 Git 변경 사항에 없는지 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/><code>.env.local</code>, <code>.env.development</code>, <code>.env.test</code>가 Stage되지 않았는지 확인</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>실행과 종료 절차를 실제로 검증했는지 확인</li>
+</ul>
+
+    </article>
+  </main>
+
+  <footer class="document-footer">
+    <span>Jipsa RAG Service · Self-contained HTML Developer Guide</span>
+    <span class="palette">
+      <span class="palette-swatch primary"></span>
+      <span class="palette-swatch secondary"></span>
+      <span class="palette-swatch accent"></span>
+      Jipsa Aurora · Midnight, Teal, Cyan
+    </span>
+  </footer>
+
+  <button class="back-to-top" id="backToTop" type="button" aria-label="맨 위로 이동">
+    <svg viewBox="0 0 24 24">
+      <path d="m18 15-6-6-6 6"></path>
+    </svg>
+  </button>
+
+  <script>
+    (() => {
+      const root = document.documentElement;
+      const themeToggle = document.getElementById("themeToggle");
+      const printButton = document.getElementById("printDocument");
+      const progress = document.getElementById("readingProgress");
+      const backToTop = document.getElementById("backToTop");
+      const content = document.getElementById("documentContent");
+      const sidebar = document.getElementById("sidebar");
+      const overlay = document.getElementById("mobileOverlay");
+      const openToc = document.getElementById("openToc");
+      const tocSearch = document.getElementById("tocSearch");
+      const tocEmpty = document.getElementById("tocEmpty");
+      const tocLinks = [...document.querySelectorAll(".toc-list a")];
+
+      const storedTheme = localStorage.getItem("jipsa-rag-theme");
+      if (storedTheme === "light" || storedTheme === "dark") {
+        root.dataset.theme = storedTheme;
+      } else {
+        root.dataset.theme = window.matchMedia("(prefers-color-scheme: light)").matches
+          ? "light"
+          : "dark";
+      }
+
+      themeToggle.addEventListener("click", () => {
+        const nextTheme = root.dataset.theme === "light" ? "dark" : "light";
+        root.dataset.theme = nextTheme;
+        localStorage.setItem("jipsa-rag-theme", nextTheme);
+      });
+
+      printButton.addEventListener("click", () => window.print());
+
+      const updateScrollUi = () => {
+        const scrollTop = window.scrollY || document.documentElement.scrollTop;
+        const scrollHeight =
+          document.documentElement.scrollHeight - document.documentElement.clientHeight;
+        const ratio = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
+
+        progress.style.width = `${Math.min(100, Math.max(0, ratio))}%`;
+        backToTop.classList.toggle("visible", scrollTop > 680);
+      };
+
+      window.addEventListener("scroll", updateScrollUi, { passive: true });
+      updateScrollUi();
+
+      backToTop.addEventListener("click", () => {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+
+      const closeMobileToc = () => {
+        sidebar.classList.remove("open");
+        overlay.classList.remove("open");
+        document.body.style.overflow = "";
+      };
+
+      openToc.addEventListener("click", () => {
+        sidebar.classList.add("open");
+        overlay.classList.add("open");
+        document.body.style.overflow = "hidden";
+      });
+
+      overlay.addEventListener("click", closeMobileToc);
+
+      tocLinks.forEach((link) => {
+        link.addEventListener("click", closeMobileToc);
+      });
+
+      tocSearch.addEventListener("input", () => {
+        const query = tocSearch.value.trim().toLowerCase();
+        let visibleCount = 0;
+
+        document.querySelectorAll(".toc-list li").forEach((item) => {
+          const text = item.dataset.searchText || "";
+          const visible = !query || text.includes(query);
+          item.hidden = !visible;
+          if (visible) visibleCount += 1;
+        });
+
+        tocEmpty.style.display = visibleCount === 0 ? "block" : "none";
+      });
+
+      const observedHeadings = [
+        ...content.querySelectorAll("h2[id], h3[id]")
+      ];
+
+      const activateToc = (headingId) => {
+        tocLinks.forEach((link) => {
+          const active = link.getAttribute("href") === `#${headingId}`;
+          link.classList.toggle("active", active);
+
+          if (active) {
+            link.scrollIntoView({ block: "nearest" });
+          }
+        });
+      };
+
+      if ("IntersectionObserver" in window) {
+        const headingObserver = new IntersectionObserver(
+          (entries) => {
+            const visibleEntries = entries
+              .filter((entry) => entry.isIntersecting)
+              .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+
+            if (visibleEntries.length > 0) {
+              activateToc(visibleEntries[0].target.id);
+            }
+          },
+          {
+            rootMargin: "-18% 0px -72% 0px",
+            threshold: [0, 1],
+          }
+        );
+
+        observedHeadings.forEach((heading) => headingObserver.observe(heading));
+      }
+
+      content.querySelectorAll("pre").forEach((pre) => {
+        const code = pre.querySelector("code");
+        if (!code) return;
+
+        const languageClass = [...code.classList].find((value) =>
+          value.startsWith("language-")
+        );
+        const language = languageClass
+          ? languageClass.replace("language-", "")
+          : "text";
+
+        const shell = document.createElement("div");
+        shell.className = "code-shell";
+
+        const toolbar = document.createElement("div");
+        toolbar.className = "code-toolbar";
+
+        const label = document.createElement("span");
+        label.className = "code-language";
+        label.textContent = language;
+
+        const copyButton = document.createElement("button");
+        copyButton.className = "copy-button";
+        copyButton.type = "button";
+        copyButton.textContent = "복사";
+
+        copyButton.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(code.innerText);
+            copyButton.textContent = "복사됨";
+          } catch {
+            const range = document.createRange();
+            range.selectNodeContents(code);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            copyButton.textContent = "선택됨";
+          }
+
+          window.setTimeout(() => {
+            copyButton.textContent = "복사";
+          }, 1400);
+        });
+
+        toolbar.append(label, copyButton);
+        pre.parentNode.insertBefore(shell, pre);
+        shell.append(toolbar, pre);
+      });
+
+      content.querySelectorAll("table").forEach((table) => {
+        const shell = document.createElement("div");
+        shell.className = "table-shell";
+        table.parentNode.insertBefore(shell, table);
+        shell.appendChild(table);
+      });
+
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          closeMobileToc();
+        }
+
+        if (
+          event.key === "/" &&
+          !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)
+        ) {
+          event.preventDefault();
+          tocSearch.focus();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
