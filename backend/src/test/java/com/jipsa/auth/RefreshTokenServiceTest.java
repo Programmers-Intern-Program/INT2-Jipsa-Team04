@@ -233,4 +233,40 @@ class RefreshTokenServiceTest {
         verify(repository, never()).deleteById(any());
         verify(repository, never()).save(any());   // 폐기는 dirty checking, 새 INSERT 없음
     }
+
+    // --- revokeAllForUser (관리자 권한 변경 시 방어적 폐기) ---
+
+    @Test
+    void revokeAllForUser_대상자의_활성토큰을_모두_폐기한다() {
+        RefreshToken token1 = tokenWith(7L, LocalDateTime.now().plusDays(1), null);
+        RefreshToken token2 = tokenWith(7L, LocalDateTime.now().plusDays(2), null);
+        when(repository.findByUsersIdAndRevokedAtIsNull(7L)).thenReturn(java.util.List.of(token1, token2));
+
+        service.revokeAllForUser(7L, "ROLE_CHANGED");
+
+        assertThat(token1.getRevokedAt()).isNotNull();
+        assertThat(token1.getRevokedReason()).isEqualTo("ROLE_CHANGED");
+        assertThat(token2.getRevokedAt()).isNotNull();
+        assertThat(token2.getRevokedReason()).isEqualTo("ROLE_CHANGED");
+    }
+
+    @Test
+    void revokeAllForUser_활성토큰이_없으면_아무일도_하지_않는다() {
+        when(repository.findByUsersIdAndRevokedAtIsNull(7L)).thenReturn(java.util.List.of());
+
+        service.revokeAllForUser(7L, "ROLE_CHANGED");   // 예외 없이 조용히 끝남
+
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void revokeAllForUser도_행을_삭제하지_않는다() {
+        RefreshToken token = tokenWith(7L, LocalDateTime.now().plusDays(1), null);
+        when(repository.findByUsersIdAndRevokedAtIsNull(7L)).thenReturn(java.util.List.of(token));
+
+        service.revokeAllForUser(7L, "ROLE_CHANGED");
+
+        verify(repository, never()).delete(any());
+        verify(repository, never()).deleteById(any());
+    }
 }
