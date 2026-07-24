@@ -42,4 +42,11 @@ public class UploadController {
         Long userId = currentUserProvider.requireUserId();
         return uploadService.getStatus(userId, id);
     }
+
+    @GetMapping("/recent")
+    public List<RecentUploadItem> recent(
+            @RequestParam(value = "limit", required = false, defaultValue = "20") int limit) {
+        Long userId = currentUserProvider.requireUserId();
+        return uploadService.getRecent(userId, limit);
+    }
 }

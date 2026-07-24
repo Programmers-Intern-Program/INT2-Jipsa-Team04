@@ -11,6 +11,9 @@ from jipsa_rag.infrastructure.document.parser import DocumentParser
 from jipsa_rag.infrastructure.document.parsers.pdf import (
     PdfDocumentParser,
 )
+from jipsa_rag.infrastructure.document.parsers.txt import (
+    TxtDocumentParser,
+)
 
 
 class DocumentParserFactory:
@@ -57,7 +60,7 @@ class DocumentParserFactory:
         # 이를 통해 단위 테스트에서 Factory에 등록되는 파서를
         # 완전히 통제할 수 있다.
         registered_parsers: tuple[DocumentParser, ...] = (
-            tuple(parsers) if parsers is not None else (PdfDocumentParser(),)
+            tuple(parsers) if parsers is not None else (PdfDocumentParser(), TxtDocumentParser())
         )
 
         # 문서 형식을 Key로 사용하여 대응하는 파서를 저장한다.

@@ -46,6 +46,7 @@ import { proposeOrganization, applyOrganization } from "../api/organize";
 import { ApiError } from "../api/client";
 import FileDetailPanel from "./FileDetailPanel";
 import { uploadFiles, getUploadStatus } from "../api/uploads";
+import { useUploads } from "../upload/UploadProvider";
 
 interface MyDocumentsViewProps {
   documents: Document[];
@@ -118,15 +119,15 @@ export default function MyDocumentsView({
   const [uploadContent, setUploadContent] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  type UploadQueueItem = {
-    id: string;
-    file: File;
-    status: "QUEUED" | "UPLOADING" | "PROCESSING" | "READY" | "FAILED" | "INVALID";
-    error?: string;
-  };
   const [isNewUploadOpen, setIsNewUploadOpen] = useState(false);
-  const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
-  const [isNewUploaderBusy, setIsNewUploaderBusy] = useState(false);
+  const { items: uploadQueue, isBusy: isNewUploaderBusy, enqueue, startAll, removeItem: removeUploadQueueItem, retryItem, refreshRecent } = useUploads();
+
+  useEffect(() => {
+    if (!isNewUploadOpen) return;
+    refreshRecent();
+    const timer = setInterval(refreshRecent, 5000);
+    return () => clearInterval(timer);
+  }, [isNewUploadOpen, refreshRecent]);
   const [newUploaderDragActive, setNewUploaderDragActive] = useState(false);
   const newUploaderInputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -554,33 +555,7 @@ export default function MyDocumentsView({
     txt: "text/plain",
   };
 
-  const NEW_UPLOADER_ALLOWED_EXTS = ["pdf", "docx", "xlsx", "txt"];
-  const NEW_UPLOADER_MAX_BYTES = 50 * 1024 * 1024;
-
-  const validateUploadCandidate = (file: File): string | null => {
-    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-    if (!NEW_UPLOADER_ALLOWED_EXTS.includes(ext)) return "지원하지 않는 형식";
-    if (file.size > NEW_UPLOADER_MAX_BYTES) return "50MB 초과";
-    return null;
-  };
-
-  const addFilesToUploadQueue = (files: File[]) => {
-    if (files.length === 0) return;
-    const items: UploadQueueItem[] = files.map((file) => {
-      const error = validateUploadCandidate(file);
-      return {
-        id: crypto.randomUUID(),
-        file,
-        status: error ? "INVALID" : "QUEUED",
-        error: error ?? undefined,
-      };
-    });
-    setUploadQueue((prev) => [...prev, ...items]);
-  };
-
-  const removeUploadQueueItem = (id: string) => {
-    setUploadQueue((prev) => prev.filter((item) => item.id !== id));
-  };
+  const addFilesToUploadQueue = (files: File[]) => enqueue(files, selectedFolder);
 
   const handleNewUploaderDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -594,42 +569,7 @@ export default function MyDocumentsView({
     e.target.value = "";
   };
 
-  const runNewUploaderUpload = async () => {
-    const pending = uploadQueue.filter((item) => item.status === "QUEUED");
-    if (pending.length === 0) return;
-    setIsNewUploaderBusy(true);
-    const setItem = (id: string, patch: Partial<UploadQueueItem>) =>
-        setUploadQueue((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
-
-    for (const item of pending) {
-      setItem(item.id, { status: "UPLOADING", error: undefined });
-      try {
-        const { fileIds } = await uploadFiles([item.file], selectedFolder);
-        const fileId = fileIds[0];
-        if (fileId == null) {
-          setItem(item.id, { status: "READY" });
-          continue;
-        }
-        setItem(item.id, { status: "PROCESSING" });
-        let status = "PROCESSING";
-        for (let i = 0; i < 20 && status !== "READY" && status !== "FAILED"; i++) {
-          await new Promise((r) => setTimeout(r, 1500));
-          status = (await getFileStatus(fileId)).status;
-        }
-        setItem(item.id, { status: status === "READY" ? "READY" : status === "FAILED" ? "FAILED" : "PROCESSING" });
-      } catch (err) {
-        console.warn("[uploads] 다중 업로드 실패:", err);
-        setItem(item.id, { status: "FAILED", error: "업로드 실패" });
-      }
-    }
-
-    setIsNewUploaderBusy(false);
-    try {
-      onUpdateDocuments(await listAllFiles());
-    } catch (err) {
-      console.warn("[uploads] 업로드 후 목록 재동기화 실패:", err);
-    }
-  };
+  const runNewUploaderUpload = () => startAll();
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2811,8 +2751,7 @@ export default function MyDocumentsView({
                     <h3 className="text-base font-bold">다중 파일 업로드 <span className="text-[10px] font-bold text-secondary align-middle">BETA</span></h3>
                   </div>
                   <button
-                      onClick={() => { if (!isNewUploaderBusy) { setIsNewUploadOpen(false); setUploadQueue([]); } }}
-                      disabled={isNewUploaderBusy}
+                      onClick={() => setIsNewUploadOpen(false)}
                       className="p-1 hover:bg-surface-container rounded-full text-outline hover:text-on-surface cursor-pointer disabled:opacity-40"
                   >
                     <X className="w-4 h-4" />
@@ -2831,12 +2770,12 @@ export default function MyDocumentsView({
                 >
                   <Upload className="w-9 h-9 mb-2 text-primary" />
                   <p className="font-bold text-sm text-on-surface">파일을 여기로 끌어다 놓거나 클릭해서 선택하세요</p>
-                  <p className="text-[11px] text-outline mt-1">여러 파일을 한 번에 선택할 수 있습니다 · PDF, DOCX, XLSX, TXT (최대 50MB)</p>
+                  <p className="text-[11px] text-outline mt-1">여러 파일을 한 번에 선택할 수 있습니다 · PDF, TXT (최대 20MB)</p>
                   <input
                       ref={newUploaderInputRef}
                       type="file"
                       multiple
-                      accept=".pdf,.docx,.xlsx,.txt"
+                      accept=".pdf,.txt"
                       onChange={handleNewUploaderPick}
                       className="hidden"
                   />
@@ -2848,14 +2787,21 @@ export default function MyDocumentsView({
                           <div key={item.id} className="p-2.5 flex items-center gap-3 text-xs">
                             <FileText className="w-4 h-4 text-outline shrink-0" />
                             <div className="min-w-0 flex-1">
-                              <p className="font-semibold text-on-surface truncate">{item.file.name}</p>
-                              <p className="text-[10px] text-outline">{formatBytes(item.file.size)}{item.error ? ` · ${item.error}` : ""}</p>
+                              <p className="font-semibold text-on-surface truncate">{item.name}</p>
+                              <p className="text-[10px] text-outline">{formatBytes(item.size)}{item.error ? ` · ${item.error}` : ""}</p>
+                              {item.status === "UPLOADING" && (
+                                  <div className="mt-1 h-1 w-full bg-surface-container rounded-full overflow-hidden">
+                                    <div className="h-full bg-primary transition-all" style={{ width: `${item.progress ?? 0}%` }}></div>
+                                  </div>
+                              )}
                             </div>
                             {item.status === "UPLOADING" || item.status === "PROCESSING" ? (
                                 <span className="flex items-center gap-1 text-primary font-bold shrink-0">
                           <span className="w-3 h-3 border-2 border-primary border-t-transparent rounded-full animate-spin"></span>
-                                  {item.status === "UPLOADING" ? "업로드 중" : "처리 중"}
+                                  {item.status === "UPLOADING" ? `업로드 중 ${item.progress ?? 0}%` : "처리 중"}
                         </span>
+                            ) : item.status === "UPLOADED" ? (
+                                <span className="flex items-center gap-1 text-emerald-600 font-bold shrink-0"><Check className="w-3.5 h-3.5" /> 업로드 완료 · 처리 대기</span>
                             ) : item.status === "READY" ? (
                                 <span className="flex items-center gap-1 text-emerald-600 font-bold shrink-0"><Check className="w-3.5 h-3.5" /> 완료</span>
                             ) : item.status === "FAILED" ? (
@@ -2870,6 +2816,11 @@ export default function MyDocumentsView({
                                   <X className="w-3.5 h-3.5" />
                                 </button>
                             )}
+                            {item.status === "FAILED" && item.file && (
+                                <button type="button" onClick={() => retryItem(item.id)} className="px-2 py-1 text-primary font-bold hover:underline shrink-0 cursor-pointer">
+                                  재시도
+                                </button>
+                            )}
                           </div>
                       ))}
                     </div>
@@ -2877,13 +2828,12 @@ export default function MyDocumentsView({
 
                 <div className="pt-3 border-t border-outline-variant/30 flex items-center justify-between gap-2.5">
                   <p className="text-[11px] text-outline font-semibold">
-                    {uploadQueue.filter((i) => i.status === "READY").length} / {uploadQueue.filter((i) => i.status !== "INVALID").length} 완료
+                    {uploadQueue.filter((i) => i.status === "UPLOADED" || i.status === "READY").length} / {uploadQueue.filter((i) => i.status !== "INVALID").length} 완료
                   </p>
                   <div className="flex gap-2.5">
                     <button
                         type="button"
-                        onClick={() => { if (!isNewUploaderBusy) { setIsNewUploadOpen(false); setUploadQueue([]); } }}
-                        disabled={isNewUploaderBusy}
+                        onClick={() => setIsNewUploadOpen(false)}
                         className="px-4 py-2 bg-surface-container hover:bg-surface-container-high rounded-xl text-xs font-bold text-on-surface cursor-pointer disabled:opacity-40"
                     >
                       닫기
