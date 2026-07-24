@@ -21,6 +21,8 @@ public interface FileRepository extends JpaRepository<File, Long> {
 
     List<File> findByUsersIdAndDeletedAtIsNullOrderByCreatedAtDesc(Long usersId, Pageable pageable);
 
+    long countByIdInAndUsersIdAndDeletedAtIsNull(List<Long> ids, Long usersId);
+
     Page<File> findByUsersIdAndDeletedAtIsNotNullOrderByDeletedAtDesc(Long userId, Pageable pageable);
 
     /** 폴더 소프트 삭제 시 함께 휴지통으로 보낼 활성 파일 조회용. */

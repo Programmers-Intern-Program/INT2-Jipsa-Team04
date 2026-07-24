@@ -11,6 +11,6 @@ public record RagAnswerRequest(
         @JsonProperty("query") String query,
         @JsonProperty("top_k") Integer topK,
         @JsonProperty("score_threshold") Double scoreThreshold,
-        @JsonProperty("file_idxs") List<Long> fileIdxs
+        @JsonProperty("reference_file_idxs") List<Long> referenceFileIdxs
 ) {
 }

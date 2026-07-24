@@ -497,6 +497,7 @@ CREATE TABLE `Conversation_Chat` (
     `Feedback_Rating` VARCHAR(10) NULL COMMENT '답변 피드백. UP 또는 DOWN',
     `Feedback_Comment` TEXT NULL COMMENT '피드백 코멘트',
     `Feedback_At` DATETIME(6) NULL COMMENT '피드백 등록/수정 일시',
+    `Answer_Status` VARCHAR(30) NULL COMMENT 'RAG 답변 상태. answered 또는 insufficient_evidence',
 
 
     PRIMARY KEY (`Conversation_Chat_IDX`),
@@ -527,6 +528,10 @@ CREATE TABLE `Message_Citation` (
     `Chunk_IDX` BIGINT NOT NULL COMMENT 'AWS 서버 검색용 Chunk 식별자(FK)',
     `File_IDX` BIGINT NOT NULL COMMENT '파일 식별자(FK)',
     `Page` INT UNSIGNED NULL COMMENT '페이지 번호',
+    `File_Name` VARCHAR(255) NULL COMMENT '답변 시점 파일 표시명 스냅샷',
+    `Section_Title` VARCHAR(500) NULL COMMENT '섹션 제목 스냅샷',
+    `Excerpt` TEXT NULL COMMENT 'RAG 발췌문 스냅샷',
+    `Score` DECIMAL(6,5) NULL COMMENT '관련도 점수 스냅샷',
     `Citation_Order` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT '답변 내 인용 순서',
     `Created_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성 일시',
 

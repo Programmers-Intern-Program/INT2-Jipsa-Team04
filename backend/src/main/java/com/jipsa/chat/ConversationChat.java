@@ -71,4 +71,7 @@ public class ConversationChat {
 
     @Column(name = "Feedback_At")
     private LocalDateTime feedbackAt;
+
+    @Column(name = "Answer_Status", length = 30)
+    private String answerStatus;
 }

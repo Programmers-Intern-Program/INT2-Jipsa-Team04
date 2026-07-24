@@ -32,6 +32,18 @@ public class MessageCitation {
     @Column(name = "Page")
     private Integer page;
 
+    @Column(name = "File_Name", length = 255)
+    private String fileName;
+
+    @Column(name = "Section_Title", length = 500)
+    private String sectionTitle;
+
+    @Column(name = "Excerpt", columnDefinition = "TEXT")
+    private String excerpt;
+
+    @Column(name = "Score")
+    private Double score;
+
     @Column(name = "Citation_Order", nullable = false)
     private Integer citationOrder;
 

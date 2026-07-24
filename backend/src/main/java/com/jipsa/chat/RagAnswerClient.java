@@ -3,6 +3,7 @@ package com.jipsa.chat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -35,16 +36,19 @@ public class RagAnswerClient {
         if (baseUrl == null || baseUrl.isBlank()) {
             throw new IllegalStateException("app.rag.base-url이 설정되지 않아 답변 생성을 진행할 수 없습니다.");
         }
-        RagAnswerResponse response = restClient.post()
-                .uri(baseUrl + "/answer")
+        RagApiResponse<RagAnswerResponse> envelope = restClient.post()
+                .uri(baseUrl + "/api/v1/rag/answers")
                 .header("X-Internal-Token", token)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(request)
                 .retrieve()
-                .body(RagAnswerResponse.class);
-        log.info("RAG answer for user {} → status {}",
-                request.userIdx(), response == null ? "null" : response.status());
-        return response;
+                .body(new ParameterizedTypeReference<RagApiResponse<RagAnswerResponse>>() {});
+        if (envelope == null || envelope.data() == null) {
+            throw new IllegalStateException("RAG 답변 응답이 비어 있습니다.");
+        }
+        RagAnswerResponse data = envelope.data();
+        log.info("RAG answer for user {} → status {}", request.userIdx(), data.status());
+        return data;
     }
 
     private static ClientHttpRequestFactory requestFactory(Duration readTimeout) {

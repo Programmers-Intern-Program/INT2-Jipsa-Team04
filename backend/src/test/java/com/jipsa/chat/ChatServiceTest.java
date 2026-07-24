@@ -19,6 +19,8 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -34,8 +36,16 @@ class ChatServiceTest {
     @Mock private FileRepository fileRepository;
     @Mock private RagAnswerClient ragAnswerClient;
     @Mock private ChatRateLimiter chatRateLimiter;
+    @Mock private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     @InjectMocks private ChatService chatService;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubTx() {
+        org.mockito.Mockito.lenient()
+                .when(transactionManager.getTransaction(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(new org.springframework.transaction.support.SimpleTransactionStatus());
+    }
 
     private Conversation ownedConversation() {
         Conversation conversation = new Conversation(7L, "대화");
@@ -48,6 +58,10 @@ class ChatServiceTest {
                 "파일.pdf", "pdf", 3, 0.82, page, null, null, "섹션 제목", "발췌문");
     }
 
+    private SendMessageRequest request(String question) {
+        return new SendMessageRequest(question, List.of(10L), null, null);
+    }
+
     private void stubSaveReturnsId() {
         when(conversationChatRepository.save(any())).thenAnswer(inv -> {
             ConversationChat chat = inv.getArgument(0);
@@ -56,9 +70,14 @@ class ChatServiceTest {
         });
     }
 
+    private void stubOwnedFiles() {
+        when(fileRepository.countByIdInAndUsersIdAndDeletedAtIsNull(anyList(), eq(7L))).thenReturn(1L);
+    }
+
     @Test
     void answeredPersistsMessageAndMapsCitations() {
         when(conversationRepository.findByIdAndUsersIdAndDelFalse(1L, 7L)).thenReturn(Optional.of(ownedConversation()));
+        stubOwnedFiles();
         stubSaveReturnsId();
         RagAnswerResponse.RagAnswerUsage usage = new RagAnswerResponse.RagAnswerUsage(100, 40);
         RagAnswerResponse response = new RagAnswerResponse("답변", "answered",
@@ -68,30 +87,32 @@ class ChatServiceTest {
         chunk.setId(100L);
         when(chunkRepository.findByChunkIdAndFileId("uuid-1", 10L)).thenReturn(Optional.of(chunk));
 
-        ChatMessageResponse result = chatService.sendMessage(7L, 1L,
-                new SendMessageRequest("질문", null, null, null));
+        ChatMessageResponse result = chatService.sendMessage(7L, 1L, request("질문"));
 
+        assertThat(result.question()).isEqualTo("질문");
         assertThat(result.answer()).isEqualTo("답변");
         assertThat(result.status()).isEqualTo("answered");
         assertThat(result.citations()).hasSize(1);
         assertThat(result.citations().get(0).fileId()).isEqualTo(10L);
-        assertThat(result.citations().get(0).page()).isEqualTo(3);
 
         ArgumentCaptor<MessageCitation> captor = ArgumentCaptor.forClass(MessageCitation.class);
         verify(messageCitationRepository).save(captor.capture());
         assertThat(captor.getValue().getChunkIdx()).isEqualTo(100L);
         assertThat(captor.getValue().getCitationOrder()).isEqualTo(1);
+        assertThat(captor.getValue().getFileName()).isEqualTo("파일.pdf");
+        assertThat(captor.getValue().getExcerpt()).isEqualTo("발췌문");
+        assertThat(captor.getValue().getScore()).isEqualTo(0.82);
     }
 
     @Test
     void insufficientEvidencePersistsAnswerWithoutCitations() {
         when(conversationRepository.findByIdAndUsersIdAndDelFalse(1L, 7L)).thenReturn(Optional.of(ownedConversation()));
+        stubOwnedFiles();
         stubSaveReturnsId();
         when(ragAnswerClient.answer(any())).thenReturn(
                 new RagAnswerResponse("근거를 찾지 못했습니다.", "insufficient_evidence", List.of(), null, null, null));
 
-        ChatMessageResponse result = chatService.sendMessage(7L, 1L,
-                new SendMessageRequest("질문", null, null, null));
+        ChatMessageResponse result = chatService.sendMessage(7L, 1L, request("질문"));
 
         assertThat(result.status()).isEqualTo("insufficient_evidence");
         assertThat(result.citations()).isEmpty();
@@ -101,13 +122,13 @@ class ChatServiceTest {
     @Test
     void unmappedChunkIsSkipped() {
         when(conversationRepository.findByIdAndUsersIdAndDelFalse(1L, 7L)).thenReturn(Optional.of(ownedConversation()));
+        stubOwnedFiles();
         stubSaveReturnsId();
         when(ragAnswerClient.answer(any())).thenReturn(new RagAnswerResponse("답변", "answered",
                 List.of(source("missing", 10L, 1)), "m", null, null));
         when(chunkRepository.findByChunkIdAndFileId("missing", 10L)).thenReturn(Optional.empty());
 
-        ChatMessageResponse result = chatService.sendMessage(7L, 1L,
-                new SendMessageRequest("질문", null, null, null));
+        ChatMessageResponse result = chatService.sendMessage(7L, 1L, request("질문"));
 
         assertThat(result.citations()).isEmpty();
         verify(messageCitationRepository, never()).save(any());
@@ -117,8 +138,7 @@ class ChatServiceTest {
     void notOwnedConversationThrows() {
         when(conversationRepository.findByIdAndUsersIdAndDelFalse(1L, 7L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> chatService.sendMessage(7L, 1L,
-                new SendMessageRequest("질문", null, null, null)))
+        assertThatThrownBy(() -> chatService.sendMessage(7L, 1L, request("질문")))
                 .isInstanceOf(ConversationNotFoundException.class);
     }
 
@@ -126,8 +146,26 @@ class ChatServiceTest {
     void blankQuestionThrows() {
         when(conversationRepository.findByIdAndUsersIdAndDelFalse(1L, 7L)).thenReturn(Optional.of(ownedConversation()));
 
+        assertThatThrownBy(() -> chatService.sendMessage(7L, 1L, request("   ")))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void emptyReferenceFilesThrows() {
+        when(conversationRepository.findByIdAndUsersIdAndDelFalse(1L, 7L)).thenReturn(Optional.of(ownedConversation()));
+
         assertThatThrownBy(() -> chatService.sendMessage(7L, 1L,
-                new SendMessageRequest("   ", null, null, null)))
+                new SendMessageRequest("질문", List.of(), null, null)))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void nonOwnedReferenceFileThrows() {
+        when(conversationRepository.findByIdAndUsersIdAndDelFalse(1L, 7L)).thenReturn(Optional.of(ownedConversation()));
+        when(fileRepository.countByIdInAndUsersIdAndDeletedAtIsNull(anyList(), eq(7L))).thenReturn(0L);
+
+        assertThatThrownBy(() -> chatService.sendMessage(7L, 1L,
+                new SendMessageRequest("질문", List.of(99L), null, null)))
                 .isInstanceOf(BadRequestException.class);
     }
 
@@ -137,9 +175,36 @@ class ChatServiceTest {
         doThrow(new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "too many"))
                 .when(chatRateLimiter).check(7L);
 
-        assertThatThrownBy(() -> chatService.sendMessage(7L, 1L,
-                new SendMessageRequest("질문", null, null, null)))
+        assertThatThrownBy(() -> chatService.sendMessage(7L, 1L, request("질문")))
                 .isInstanceOf(ResponseStatusException.class);
+    }
+
+    @Test
+    void listMessagesReturnsStoredCitationSnapshot() {
+        when(conversationRepository.findByIdAndUsersIdAndDelFalse(1L, 7L)).thenReturn(Optional.of(ownedConversation()));
+        ConversationChat message = new ConversationChat();
+        message.setId(50L);
+        message.setQuestion("질문");
+        message.setAnswer("답변");
+        message.setAnswerStatus("answered");
+        when(conversationChatRepository.findByConversationIdAndDelFalseOrderByCreatedAt(1L)).thenReturn(List.of(message));
+        MessageCitation citation = new MessageCitation();
+        citation.setFileId(10L);
+        citation.setFileName("파일.pdf");
+        citation.setPage(3);
+        citation.setSectionTitle("섹션");
+        citation.setExcerpt("발췌");
+        citation.setScore(0.82);
+        when(messageCitationRepository.findByConversationChatIdOrderByCitationOrder(50L)).thenReturn(List.of(citation));
+
+        List<ChatMessageResponse> result = chatService.listMessages(7L, 1L);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).question()).isEqualTo("질문");
+        assertThat(result.get(0).status()).isEqualTo("answered");
+        assertThat(result.get(0).citations().get(0).fileName()).isEqualTo("파일.pdf");
+        assertThat(result.get(0).citations().get(0).excerpt()).isEqualTo("발췌");
+        assertThat(result.get(0).citations().get(0).score()).isEqualTo(0.82);
     }
 
     @Test
