@@ -6,7 +6,10 @@ from typing import Final, Protocol
 from jipsa_rag.infrastructure.embedding.exceptions import EmbeddingError
 from jipsa_rag.infrastructure.generation.client import GenerationClient
 from jipsa_rag.infrastructure.generation.exceptions import GenerationError
-from jipsa_rag.infrastructure.generation.models import GenerationRequest, GenerationResult
+from jipsa_rag.infrastructure.generation.models import (
+    GenerationRequest,
+    GenerationResult,
+)
 from jipsa_rag.infrastructure.indexing.exceptions import IndexStorageError
 from jipsa_rag.schemas.chunk_search import (
     ChunkSearchRequest,
@@ -38,7 +41,7 @@ class ChunkSearcher(Protocol):
         self,
         request: ChunkSearchRequest,
     ) -> ChunkSearchResponse:
-        """사용자 문서 범위에서 관련 청크를 검색한다."""
+        """현재 질문의 사용자 및 참조문서 범위에서 관련 청크를 검색한다."""
 
         ...
 
@@ -83,12 +86,13 @@ class RagAnswerService:
 
     처리 흐름은 다음과 같다.
 
-    1. RAG 답변 요청을 청크 검색 요청으로 변환한다.
-    2. 사용자 범위에서 관련 청크를 검색한다.
-    3. 검색 결과가 없으면 Claude API를 호출하지 않는다.
-    4. 검색 청크를 안전한 근거 프롬프트로 구성한다.
-    5. 생성 클라이언트를 통해 답변을 생성한다.
-    6. 답변, 출처 및 토큰 사용량을 외부 응답으로 변환한다.
+    1. 전송 시점의 RAG 답변 요청을 독립적인 스냅샷으로 고정한다.
+    2. 답변 요청을 같은 참조문서 범위의 청크 검색 요청으로 변환한다.
+    3. 사용자와 선택된 활성 문서 범위에서 관련 청크를 검색한다.
+    4. 검색 결과가 없으면 Claude API를 호출하지 않는다.
+    5. 검색 청크를 안전한 근거 프롬프트로 구성한다.
+    6. 생성 클라이언트를 통해 답변을 생성한다.
+    7. 답변, 출처 및 토큰 사용량을 외부 응답으로 변환한다.
 
     질문, 청크 원문, 프롬프트 및 API Key는 로그 필드나 예외 메시지에
     포함하지 않는다.
@@ -122,22 +126,22 @@ class RagAnswerService:
         self,
         request: RagAnswerRequest,
     ) -> RagAnswerResponse:
-        """사용자 질문에 대해 검색 근거가 있는 경우에만 Claude 답변을 생성한다.
+        """전송 시점의 참조문서 범위에서만 근거 기반 답변을 생성한다.
 
         검색 결과가 비어 있으면 프롬프트 구성기와 생성 클라이언트를 호출하지
         않고 ``insufficient_evidence`` 응답을 반환한다.
 
-        로그에는 사용자 식별자, 검색 결과 수 및 출처 수처럼 운영에 필요한
-        최소 메타데이터만 기록한다. 질문, 청크, 프롬프트 및 생성 결과 원문은
-        기록하지 않는다.
+        로그에는 사용자 식별자, 참조문서 수, 검색 결과 수 및 출처 수처럼
+        운영에 필요한 최소 메타데이터만 기록한다. 질문, 청크, 프롬프트 및
+        생성 결과 원문은 기록하지 않는다.
 
         Args:
             request:
-                사용자 식별자, 질문, 검색 개수 및 선택적 최소 점수를 포함한
-                RAG 답변 요청이다.
+                사용자 식별자, 참조문서 식별자 목록, 질문, 검색 개수 및
+                선택적 최소 점수를 포함한 RAG 답변 요청이다.
 
         Returns:
-            문서 근거 기반 답변 또는 근거 부족 결과다.
+            선택된 문서 근거 기반 답변 또는 근거 부족 결과다.
 
         Raises:
             EmbeddingError:
@@ -147,27 +151,44 @@ class RagAnswerService:
             GenerationError:
                 Claude 생성 공급자 호출 또는 응답 변환이 실패한 경우 발생한다.
             RagAnswerServiceError:
-                프롬프트 구성, 응답 매핑 또는 예상하지 못한 내부 호출이
-                실패한 경우 발생한다.
+                검색 범위, 프롬프트 구성, 응답 매핑 또는 예상하지 못한
+                내부 호출이 실패한 경우 발생한다.
         """
 
-        search_request = ChunkSearchRequest(
-            user_idx=request.user_idx,
-            query=request.query,
-            top_k=request.top_k,
-            score_threshold=request.score_threshold,
+        # 각 answer 호출은 전달받은 요청을 독립적인 스냅샷으로 사용한다.
+        #
+        # 첫 await 전에 깊은 복사본을 생성하므로 질문 처리 중 호출자나 다른
+        # 내부 코드가 원본 모델의 참조문서 필드를 재할당하더라도 현재 질문의
+        # 검색 범위와 프롬프트에는 영향을 주지 않는다.
+        #
+        # 서비스 인스턴스에는 참조문서 목록을 저장하지 않으므로 같은 대화의
+        # 다음 질문은 다음 호출에서 전달된 새 목록을 독립적으로 사용한다.
+        request_snapshot = request.model_copy(
+            deep=True,
         )
 
-        # 질문 원문은 로그에 기록하지 않는다.
+        reference_file_idxs = tuple(request_snapshot.reference_file_idxs)
+        reference_file_idx_set = frozenset(reference_file_idxs)
+
+        search_request = ChunkSearchRequest(
+            user_idx=request_snapshot.user_idx,
+            reference_file_idxs=reference_file_idxs,
+            query=request_snapshot.query,
+            top_k=request_snapshot.top_k,
+            score_threshold=request_snapshot.score_threshold,
+        )
+
+        # 질문 원문과 참조문서 식별자 값 자체는 로그에 기록하지 않는다.
         #
-        # top_k는 민감한 사용자 입력이 아니라 검색 동작을 설명하는
-        # 안전한 운영 메타데이터다.
+        # top_k와 reference_file_count는 민감한 사용자 입력이 아니라
+        # 검색 동작을 설명하는 안전한 운영 메타데이터다.
         _LOGGER.info(
             "RAG answer chunk search started.",
             extra={
                 "event": "rag_answer_search_started",
-                "user_idx": request.user_idx,
-                "top_k": request.top_k,
+                "user_idx": request_snapshot.user_idx,
+                "reference_file_count": len(reference_file_idxs),
+                "top_k": request_snapshot.top_k,
             },
         )
 
@@ -175,29 +196,23 @@ class RagAnswerService:
             request=search_request,
         )
 
-        # ChunkSearchService가 사용자 범위를 검증하지만,
-        # 답변 서비스 경계에서도 검색 응답의 사용자 식별자를 재검증한다.
+        # ChunkSearchService가 같은 계약을 검증하지만 답변 서비스 경계에서도
+        # 사용자 및 참조문서 범위를 다시 확인한다.
         #
-        # 향후 다른 검색 구현체가 주입되더라도 다른 사용자의 출처가
-        # 답변 프롬프트에 포함되는 것을 방지한다.
-        if search_response.user_idx != request.user_idx:
-            _LOGGER.error(
-                "RAG answer search user scope contract failed.",
-                extra={
-                    "event": "rag_answer_search_scope_failed",
-                    "user_idx": request.user_idx,
-                },
-            )
-
-            raise RagAnswerServiceError(
-                operation="search_user_scope_contract_violation",
-            )
+        # 향후 다른 검색 구현체가 주입되더라도 선택하지 않은 문서의 청크가
+        # 답변 프롬프트와 출처에 포함되는 것을 방지한다.
+        self._validate_search_response_scope(
+            response=search_response,
+            expected_user_idx=request_snapshot.user_idx,
+            expected_reference_file_idxs=reference_file_idx_set,
+        )
 
         _LOGGER.info(
             "RAG answer chunk search completed.",
             extra={
                 "event": "rag_answer_search_completed",
-                "user_idx": request.user_idx,
+                "user_idx": request_snapshot.user_idx,
+                "reference_file_count": len(reference_file_idxs),
                 "result_count": search_response.result_count,
             },
         )
@@ -212,7 +227,8 @@ class RagAnswerService:
                 "RAG answer skipped generation because evidence was unavailable.",
                 extra={
                     "event": "rag_answer_insufficient_evidence",
-                    "user_idx": request.user_idx,
+                    "user_idx": request_snapshot.user_idx,
+                    "reference_file_count": len(reference_file_idxs),
                     "result_count": 0,
                 },
             )
@@ -223,19 +239,19 @@ class RagAnswerService:
             )
 
         prompt_result = self._build_prompt(
-            request=request,
+            request=request_snapshot,
             chunks=search_response.results,
         )
 
         generation_result = await self._generate_answer(
             request=prompt_result.generation_request,
-            user_idx=request.user_idx,
+            user_idx=request_snapshot.user_idx,
         )
 
         response = self._build_answer_response(
             generation_result=generation_result,
             prompt_result=prompt_result,
-            user_idx=request.user_idx,
+            user_idx=request_snapshot.user_idx,
         )
 
         # 생성된 답변, 질문, 청크 발췌문 및 모델 프롬프트는 기록하지 않는다.
@@ -246,7 +262,8 @@ class RagAnswerService:
             "RAG answer generation completed.",
             extra={
                 "event": "rag_answer_generation_completed",
-                "user_idx": request.user_idx,
+                "user_idx": request_snapshot.user_idx,
+                "reference_file_count": len(reference_file_idxs),
                 "source_count": len(response.sources),
             },
         )
@@ -276,12 +293,17 @@ class RagAnswerService:
 
         try:
             response = await self._chunk_searcher.search(request)
-        except (EmbeddingError, IndexStorageError) as error:
+
+        except (
+            EmbeddingError,
+            IndexStorageError,
+        ) as error:
             # 예외 메시지나 traceback을 이 위치에서 로그로 출력하지 않는다.
             #
             # 예외 객체는 except 블록 밖에서 원인 체인을 제거한 뒤 다시
             # 발생시켜 사용자 질문이 하위 요청 객체를 통해 노출되지 않게 한다.
             expected_error = error
+
         except Exception:
             # 예상하지 못한 예외는 원본 객체를 보관하지 않는다.
             #
@@ -319,6 +341,42 @@ class RagAnswerService:
 
         return response
 
+    def _validate_search_response_scope(
+        self,
+        *,
+        response: ChunkSearchResponse,
+        expected_user_idx: int,
+        expected_reference_file_idxs: frozenset[int],
+    ) -> None:
+        """검색 응답이 현재 질문의 사용자 및 참조문서 범위를 지키는지 검증한다."""
+
+        if response.user_idx != expected_user_idx:
+            _LOGGER.error(
+                "RAG answer search user scope contract failed.",
+                extra={
+                    "event": "rag_answer_search_scope_failed",
+                    "user_idx": expected_user_idx,
+                },
+            )
+
+            raise RagAnswerServiceError(
+                operation="search_user_scope_contract_violation",
+            )
+
+        if any(chunk.file_idx not in expected_reference_file_idxs for chunk in response.results):
+            _LOGGER.error(
+                "RAG answer search reference file scope contract failed.",
+                extra={
+                    "event": "rag_answer_reference_file_scope_failed",
+                    "user_idx": expected_user_idx,
+                    "reference_file_count": len(expected_reference_file_idxs),
+                },
+            )
+
+            raise RagAnswerServiceError(
+                operation=("search_reference_file_scope_contract_violation"),
+            )
+
     def _build_prompt(
         self,
         *,
@@ -340,6 +398,7 @@ class RagAnswerService:
                 request=request,
                 chunks=chunks,
             )
+
         except Exception:
             # 원본 예외를 변수에 저장하지 않고 즉시 폐기한다.
             #
@@ -388,12 +447,14 @@ class RagAnswerService:
             result = await self._generation_client.generate(
                 request=request,
             )
+
         except GenerationError as error:
             # 질문과 청크가 포함된 GenerationRequest를 로그에 기록하지 않는다.
             #
             # GenerationError 자체는 공급자 독립 예외 계약이므로 타입을
             # 유지하되 원인 SDK 예외 참조만 제거한다.
             provider_error = error
+
         except Exception:
             # 외부 생성 클라이언트가 계약에 없는 예외를 반환하면 원본
             # 메시지를 전달하지 않고 일반 서비스 오류로 변환한다.
@@ -451,11 +512,12 @@ class RagAnswerService:
                 sources=prompt_result.sources,
                 model=generation_result.model,
                 usage=RagAnswerUsage(
-                    input_tokens=generation_result.usage.input_tokens,
-                    output_tokens=generation_result.usage.output_tokens,
+                    input_tokens=(generation_result.usage.input_tokens),
+                    output_tokens=(generation_result.usage.output_tokens),
                 ),
                 stop_reason=generation_result.stop_reason,
             )
+
         except Exception:
             # 생성 답변과 출처가 포함될 수 있는 원본 검증 예외를
             # 서비스 경계 밖으로 전달하지 않는다.

@@ -13,6 +13,9 @@ from jipsa_rag.api.v1.endpoints.health import router as health_router
 from jipsa_rag.api.v1.endpoints.network_diagnostics import (
     router as network_diagnostics_router,
 )
+from jipsa_rag.api.v1.endpoints.rag_answer import (
+    router as rag_answer_router,
+)
 
 # main.py에 등록할 API v1 통합 라우터이다.
 router = APIRouter()
@@ -21,7 +24,9 @@ router = APIRouter()
 #
 # 로컬 프로세스, 운영 모니터링 또는 컨테이너 상태 검사는
 # 서비스 간 파일 인제스트 인증과 별개의 책임이다.
-router.include_router(health_router)
+router.include_router(
+    health_router,
+)
 
 # 네트워크 진단 응답에는 RAG 외부 주소, outbound 공인 IP와 같은
 # 네트워크 구성 정보가 포함된다.
@@ -30,6 +35,18 @@ router.include_router(health_router)
 # 내부 인증 토큰을 검증한 호출자에게만 응답한다.
 router.include_router(
     network_diagnostics_router,
+    dependencies=[
+        Depends(verify_rag_ingest_token),
+    ],
+)
+
+# 선택 참조문서 기반 답변은 사용자 문서의 검색 결과와 발췌문을
+# 외부 응답에 포함하므로 반드시 내부 인증을 통과해야 한다.
+#
+# 라우터 통합 지점에 인증 dependency를 적용하면 향후 /rag 하위 경로가
+# 추가되어도 엔드포인트별 인증 누락으로 우회되는 상황을 방지할 수 있다.
+router.include_router(
+    rag_answer_router,
     dependencies=[
         Depends(verify_rag_ingest_token),
     ],

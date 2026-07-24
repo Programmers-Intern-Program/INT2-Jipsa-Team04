@@ -6,6 +6,10 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from jipsa_rag.schemas.file_processing import SupportedFileType
+from jipsa_rag.schemas.reference_files import (
+    MAX_REFERENCE_FILE_COUNT,
+    ReferenceFileIdxs,
+)
 
 
 class RagAnswerStatus(StrEnum):
@@ -16,7 +20,7 @@ class RagAnswerStatus(StrEnum):
 
 
 class RagAnswerRequest(BaseModel):
-    """사용자 문서에서 근거를 검색하고 답변을 생성하기 위한 요청."""
+    """선택한 사용자 문서에서 근거를 검색하고 답변을 생성하기 위한 요청."""
 
     # 정의하지 않은 필드를 거부하여 애플리케이션 서버와 RAG 서버 사이의
     # 답변 생성 계약이 의도하지 않게 확장되는 것을 조기에 탐지한다.
@@ -36,6 +40,15 @@ class RagAnswerRequest(BaseModel):
             "관련 청크 검색 시 사용자 문서 범위를 제한하는 데 사용한다."
         ),
         examples=[45],
+    )
+
+    reference_file_idxs: ReferenceFileIdxs = Field(
+        description=(
+            "질문 전송 시점에 답변 근거 범위로 확정한 AWS 서버 DB File.File_IDX 목록이다. "
+            f"1개 이상 {MAX_REFERENCE_FILE_COUNT}개 이하의 서로 다른 양의 정수만 허용한다. "
+            "검증 후 불변 tuple로 저장하여 답변 처리 중 문서 선택 범위가 변경되지 않게 한다."
+        ),
+        examples=[[123, 456]],
     )
 
     query: str = Field(

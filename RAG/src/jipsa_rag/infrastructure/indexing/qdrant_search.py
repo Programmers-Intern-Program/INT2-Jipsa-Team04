@@ -1,4 +1,4 @@
-"""사용자 범위와 활성 상태를 강제하여 Qdrant 청크를 검색한다."""
+"""사용자, 활성 상태와 참조문서 범위를 강제하여 Qdrant 청크를 검색한다."""
 
 import math
 from collections.abc import Mapping
@@ -21,11 +21,12 @@ from jipsa_rag.infrastructure.indexing.exceptions import (
     VectorDatabaseUnavailableError,
 )
 
-# 검색 결과 payload에서 반드시 존재해야 하는 사용자 및 활성 상태 필드다.
+# 검색 결과 payload에서 반드시 존재해야 하는 사용자, 파일 및 활성 상태 필드다.
 #
 # API 요청은 user_idx 단수형을 사용하지만 기존 Qdrant payload 계약은
 # AWS Users 테이블 외부 참조라는 의미로 users_idx 복수형을 사용한다.
 _USERS_IDX_PAYLOAD_KEY: Final[str] = "users_idx"
+_FILE_IDX_PAYLOAD_KEY: Final[str] = "file_idx"
 _IS_ACTIVE_PAYLOAD_KEY: Final[str] = "is_active"
 
 # Qdrant query_points 요청에 허용할 최대 검색 결과 수다.
@@ -168,24 +169,31 @@ class ChunkSearchHit:
         )
 
 
-def build_user_active_chunk_filter(
+def build_user_active_reference_chunk_filter(
     *,
     user_idx: int,
+    reference_file_idxs: tuple[int, ...],
 ) -> models.Filter:
-    """요청 사용자와 활성 청크 조건을 모두 만족하는 Qdrant Filter를 생성한다.
+    """사용자, 활성 상태 및 참조문서 조건을 AND로 결합한다.
 
-    두 조건을 must 절에 넣어 논리 AND로 결합한다.
+    세 조건을 하나의 ``must`` 절에 넣어 모든 조건을 동시에 만족하는
+    청크만 검색되도록 한다.
 
     - users_idx == 요청 user_idx
     - is_active == true
+    - file_idx IN 요청 reference_file_idxs
 
-    검색 호출자가 다른 추가 필터를 전달하더라도 이 두 조건을 제거하거나
-    완화하지 못하도록 Repository 내부에서 항상 직접 생성한다.
+    검색 호출자가 임의의 필터를 전달하여 사용자 또는 참조문서 범위를
+    완화할 수 없도록 Repository 내부에서 필터를 직접 생성한다.
     """
 
     _validate_positive_integer(
         user_idx,
         field_name="user_idx",
+    )
+
+    _validate_reference_file_idxs(
+        reference_file_idxs,
     )
 
     return models.Filter(
@@ -202,12 +210,22 @@ def build_user_active_chunk_filter(
                     value=True,
                 ),
             ),
+            models.FieldCondition(
+                key=_FILE_IDX_PAYLOAD_KEY,
+                # MatchAny는 Qdrant의 IN 조건에 해당한다.
+                #
+                # 외부 요청의 JSON 배열은 스키마 계층에서 불변 tuple로
+                # 변환되므로 Qdrant 모델에 전달할 때만 새 list를 생성한다.
+                match=models.MatchAny(
+                    any=list(reference_file_idxs),
+                ),
+            ),
         ]
     )
 
 
 class QdrantChunkSearchRepository:
-    """질의 벡터와 사용자 범위 Filter로 활성 청크를 검색한다."""
+    """질의 벡터와 요청별 검색 범위로 활성 청크를 검색한다."""
 
     def __init__(
         self,
@@ -243,15 +261,20 @@ class QdrantChunkSearchRepository:
         self,
         *,
         user_idx: int,
+        reference_file_idxs: tuple[int, ...],
         query_embedding: QueryEmbedding,
         limit: int,
         score_threshold: float | None = None,
     ) -> tuple[ChunkSearchHit, ...]:
-        """요청 사용자의 활성 청크만 관련도 순으로 조회한다."""
+        """요청 사용자의 선택된 활성 문서 청크만 관련도 순으로 조회한다."""
 
         _validate_positive_integer(
             user_idx,
             field_name="user_idx",
+        )
+
+        _validate_reference_file_idxs(
+            reference_file_idxs,
         )
 
         _validate_search_limit(
@@ -266,10 +289,18 @@ class QdrantChunkSearchRepository:
             query_embedding,
         )
 
-        # 사용자 식별자와 활성 상태 필터는 요청자 입력으로 교체할 수 있는
+        # 현재 검색 호출의 참조문서 범위를 불변 집합으로 고정한다.
+        #
+        # 필터 생성과 검색 결과 재검증이 같은 스냅샷을 사용하므로,
+        # 다른 질문의 참조문서 목록이나 이후 선택 변경이 현재 검색에
+        # 섞이지 않는다.
+        expected_reference_file_idxs = frozenset(reference_file_idxs)
+
+        # 사용자 식별자, 활성 상태 및 참조문서 범위는 요청자가 완화할 수 있는
         # 선택적 조건이 아니라 검색 보안 경계이므로 Repository가 직접 생성한다.
-        query_filter = build_user_active_chunk_filter(
+        query_filter = build_user_active_reference_chunk_filter(
             user_idx=user_idx,
+            reference_file_idxs=reference_file_idxs,
         )
 
         try:
@@ -298,6 +329,7 @@ class QdrantChunkSearchRepository:
             _to_chunk_search_hit(
                 point=point,
                 expected_user_idx=user_idx,
+                expected_reference_file_idxs=expected_reference_file_idxs,
                 expected_embedding_model=query_embedding.embedding_model,
             )
             for point in response.points
@@ -329,6 +361,7 @@ def _to_chunk_search_hit(
     *,
     point: models.ScoredPoint,
     expected_user_idx: int,
+    expected_reference_file_idxs: frozenset[int],
     expected_embedding_model: str,
 ) -> ChunkSearchHit:
     """Qdrant ScoredPoint를 검증된 ChunkSearchHit으로 변환한다."""
@@ -352,6 +385,12 @@ def _to_chunk_search_hit(
         minimum=1,
     )
 
+    file_idx = _required_int(
+        payload,
+        _FILE_IDX_PAYLOAD_KEY,
+        minimum=1,
+    )
+
     is_active = _required_bool(
         payload,
         _IS_ACTIVE_PAYLOAD_KEY,
@@ -369,9 +408,16 @@ def _to_chunk_search_hit(
 
     # Qdrant Filter가 적용되었더라도 검색 결과를 외부 계층으로 넘기기 전에
     # 사용자와 활성 상태를 다시 확인하여 잘못된 payload나 클라이언트 대역이
-    # 다른 사용자의 청크를 반환하는 상황을 방어한다.
+    # 다른 사용자의 청크 또는 비활성 청크를 반환하는 상황을 방어한다.
     if users_idx != expected_user_idx or not is_active:
         raise InvalidVectorSearchResultError("search_scope_contract_violation")
+
+    # Qdrant MatchAny 필터가 적용되었더라도 file_idx를 다시 검증한다.
+    #
+    # 이를 통해 잘못된 payload, Qdrant 클라이언트 대역 또는 향후 저장소 구현
+    # 변경이 선택하지 않은 문서의 청크를 반환하는 상황을 차단한다.
+    if file_idx not in expected_reference_file_idxs:
+        raise InvalidVectorSearchResultError("search_reference_file_scope_contract_violation")
 
     if embedding_model != expected_embedding_model:
         raise InvalidVectorSearchResultError("search_embedding_model_mismatch")
@@ -391,11 +437,7 @@ def _to_chunk_search_hit(
                 "rag_document_idx",
                 minimum=1,
             ),
-            file_idx=_required_int(
-                payload,
-                "file_idx",
-                minimum=1,
-            ),
+            file_idx=file_idx,
             folder_idx=_optional_int(
                 payload,
                 "folder_idx",
@@ -625,6 +667,33 @@ def _validate_optional_text_value(
 
     if value is not None and not value.strip():
         raise ValueError(f"{field_name} must not be empty when provided.")
+
+
+def _validate_reference_file_idxs(
+    reference_file_idxs: tuple[int, ...],
+) -> None:
+    """참조문서 범위가 비어 있지 않은 고유한 양의 정수 tuple인지 검증한다.
+
+    요청 스키마가 동일한 계약을 먼저 검증하지만 Repository를 직접 호출하는
+    내부 코드와 테스트 대역도 빈 범위를 전체 문서 검색으로 해석하지 못하도록
+    인프라 경계에서 다시 검증한다.
+    """
+
+    if not isinstance(reference_file_idxs, tuple) or not reference_file_idxs:
+        raise ValueError("reference_file_idxs must be a non-empty tuple.")
+
+    seen_file_idxs: set[int] = set()
+
+    for file_idx in reference_file_idxs:
+        _validate_positive_integer(
+            file_idx,
+            field_name="reference_file_idx",
+        )
+
+        if file_idx in seen_file_idxs:
+            raise ValueError("reference_file_idxs must contain unique values.")
+
+        seen_file_idxs.add(file_idx)
 
 
 def _validate_search_limit(

@@ -1,4 +1,4 @@
-"""청크 검색 서비스의 유스케이스 조정과 방어 검증을 테스트한다."""
+"""청크 검색 서비스의 요청별 범위 전달과 방어 검증을 테스트한다."""
 
 import pytest
 
@@ -12,6 +12,10 @@ from jipsa_rag.schemas.file_processing import SupportedFileType
 from jipsa_rag.services.chunk_search import ChunkSearchService
 
 TEST_USER_IDX = 45
+TEST_REFERENCE_FILE_IDXS = (
+    123,
+    456,
+)
 TEST_EMBEDDING_MODEL = "test/embedding-model"
 TEST_EMBEDDING_DIM = 3
 
@@ -60,6 +64,7 @@ class StubChunkSearchRepository:
         self,
         *,
         user_idx: int,
+        reference_file_idxs: tuple[int, ...],
         query_embedding: QueryEmbedding,
         limit: int,
         score_threshold: float | None = None,
@@ -69,6 +74,7 @@ class StubChunkSearchRepository:
         self.calls.append(
             {
                 "user_idx": user_idx,
+                "reference_file_idxs": reference_file_idxs,
                 "query_embedding": query_embedding,
                 "limit": limit,
                 "score_threshold": score_threshold,
@@ -82,6 +88,7 @@ def _create_hit(
     *,
     chunk_id: str = "11111111-1111-1111-1111-111111111111",
     users_idx: int = TEST_USER_IDX,
+    file_idx: int = 123,
     score: float = 0.92,
     chunk_index: int = 0,
 ) -> ChunkSearchHit:
@@ -92,7 +99,7 @@ def _create_hit(
         score=score,
         users_idx=users_idx,
         rag_document_idx=100,
-        file_idx=123,
+        file_idx=file_idx,
         folder_idx=9,
         file_name="프로젝트 가이드.pdf",
         # 실제 Qdrant payload는 DocumentType.value를 저장하므로 대문자다.
@@ -110,6 +117,23 @@ def _create_hit(
     )
 
 
+def _create_request(
+    *,
+    reference_file_idxs: tuple[int, ...] = TEST_REFERENCE_FILE_IDXS,
+    top_k: int = 5,
+    score_threshold: float | None = None,
+) -> ChunkSearchRequest:
+    """서비스 테스트에서 공통으로 사용할 유효한 검색 요청을 생성한다."""
+
+    return ChunkSearchRequest(
+        user_idx=TEST_USER_IDX,
+        reference_file_idxs=reference_file_idxs,
+        query="검색 질의",
+        top_k=top_k,
+        score_threshold=score_threshold,
+    )
+
+
 @pytest.mark.asyncio
 async def test_search_passes_constraints_and_maps_response() -> None:
     """검색 제약을 저장소에 전달하고 외부 응답으로 변환해야 한다."""
@@ -124,6 +148,7 @@ async def test_search_passes_constraints_and_maps_response() -> None:
 
     request = ChunkSearchRequest(
         user_idx=TEST_USER_IDX,
+        reference_file_idxs=TEST_REFERENCE_FILE_IDXS,
         query="프로젝트 배포 절차를 알려줘",
         top_k=3,
         score_threshold=0.7,
@@ -137,12 +162,18 @@ async def test_search_passes_constraints_and_maps_response() -> None:
     assert len(repository.calls) == 1
 
     repository_call = repository.calls[0]
+
     assert repository_call["user_idx"] == TEST_USER_IDX
+    assert repository_call["reference_file_idxs"] == TEST_REFERENCE_FILE_IDXS
     assert repository_call["limit"] == 3
     assert repository_call["score_threshold"] == 0.7
 
     query_embedding = repository_call["query_embedding"]
-    assert isinstance(query_embedding, QueryEmbedding)
+
+    assert isinstance(
+        query_embedding,
+        QueryEmbedding,
+    )
     assert query_embedding.embedding_model == TEST_EMBEDDING_MODEL
     assert query_embedding.vector == (
         1.0,
@@ -154,6 +185,7 @@ async def test_search_passes_constraints_and_maps_response() -> None:
     assert result.result_count == 1
     assert result.results[0].chunk_id == hit.chunk_id
     assert result.results[0].score == hit.score
+    assert result.results[0].file_idx == hit.file_idx
     assert result.results[0].file_type is SupportedFileType.PDF
 
 
@@ -177,13 +209,36 @@ async def test_search_rejects_result_from_another_user() -> None:
         InvalidVectorSearchResultError,
     ) as exception_info:
         await service.search(
-            ChunkSearchRequest(
-                user_idx=TEST_USER_IDX,
-                query="검색 질의",
-            )
+            _create_request(),
         )
 
     assert exception_info.value.operation == "search_user_scope_contract_violation"
+
+
+@pytest.mark.asyncio
+async def test_search_rejects_result_from_unselected_file() -> None:
+    """선택하지 않은 문서의 청크를 반환하면 응답 생성을 중단해야 한다."""
+
+    repository = StubChunkSearchRepository(
+        (
+            _create_hit(
+                file_idx=999,
+            ),
+        )
+    )
+    service = ChunkSearchService(
+        query_embedder=StubQueryEmbedder(),
+        repository=repository,
+    )
+
+    with pytest.raises(
+        InvalidVectorSearchResultError,
+    ) as exception_info:
+        await service.search(
+            _create_request(),
+        )
+
+    assert exception_info.value.operation == "search_reference_file_scope_contract_violation"
 
 
 @pytest.mark.asyncio
@@ -206,11 +261,9 @@ async def test_search_rejects_result_below_score_threshold() -> None:
         InvalidVectorSearchResultError,
     ) as exception_info:
         await service.search(
-            ChunkSearchRequest(
-                user_idx=TEST_USER_IDX,
-                query="검색 질의",
+            _create_request(
                 score_threshold=0.7,
-            )
+            ),
         )
 
     assert exception_info.value.operation == "search_score_threshold_contract_violation"
@@ -223,12 +276,12 @@ async def test_search_rejects_results_not_sorted_descending() -> None:
     repository = StubChunkSearchRepository(
         (
             _create_hit(
-                chunk_id="11111111-1111-1111-1111-111111111111",
+                chunk_id=("11111111-1111-1111-1111-111111111111"),
                 score=0.70,
                 chunk_index=0,
             ),
             _create_hit(
-                chunk_id="22222222-2222-2222-2222-222222222222",
+                chunk_id=("22222222-2222-2222-2222-222222222222"),
                 score=0.80,
                 chunk_index=1,
             ),
@@ -243,11 +296,9 @@ async def test_search_rejects_results_not_sorted_descending() -> None:
         InvalidVectorSearchResultError,
     ) as exception_info:
         await service.search(
-            ChunkSearchRequest(
-                user_idx=TEST_USER_IDX,
-                query="검색 질의",
+            _create_request(
                 top_k=2,
-            )
+            ),
         )
 
     assert exception_info.value.operation == "search_score_order_contract_violation"
@@ -260,12 +311,12 @@ async def test_search_rejects_more_results_than_top_k() -> None:
     repository = StubChunkSearchRepository(
         (
             _create_hit(
-                chunk_id="11111111-1111-1111-1111-111111111111",
+                chunk_id=("11111111-1111-1111-1111-111111111111"),
                 score=0.90,
                 chunk_index=0,
             ),
             _create_hit(
-                chunk_id="22222222-2222-2222-2222-222222222222",
+                chunk_id=("22222222-2222-2222-2222-222222222222"),
                 score=0.80,
                 chunk_index=1,
             ),
@@ -280,11 +331,9 @@ async def test_search_rejects_more_results_than_top_k() -> None:
         InvalidVectorSearchResultError,
     ) as exception_info:
         await service.search(
-            ChunkSearchRequest(
-                user_idx=TEST_USER_IDX,
-                query="검색 질의",
+            _create_request(
                 top_k=1,
-            )
+            ),
         )
 
     assert exception_info.value.operation == "search_result_limit_contract_violation"

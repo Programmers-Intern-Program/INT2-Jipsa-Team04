@@ -5,10 +5,14 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from jipsa_rag.schemas.file_processing import SupportedFileType
+from jipsa_rag.schemas.reference_files import (
+    MAX_REFERENCE_FILE_COUNT,
+    ReferenceFileIdxs,
+)
 
 
 class ChunkSearchRequest(BaseModel):
-    """사용자 문서 범위에서 관련 청크를 검색하기 위한 요청."""
+    """사용자가 선택한 문서 범위에서 관련 청크를 검색하기 위한 요청."""
 
     # 정의하지 않은 필드를 거부하여 애플리케이션 서버와 RAG 서버 사이의
     # 검색 계약이 의도하지 않게 확장되는 것을 조기에 탐지한다.
@@ -27,6 +31,15 @@ class ChunkSearchRequest(BaseModel):
             "Qdrant의 users_idx payload 필터로 변환하여 사용자 간 검색 결과를 격리한다."
         ),
         examples=[45],
+    )
+
+    reference_file_idxs: ReferenceFileIdxs = Field(
+        description=(
+            "이번 검색 범위로 확정한 AWS 서버 DB File.File_IDX 목록이다. "
+            f"1개 이상 {MAX_REFERENCE_FILE_COUNT}개 이하의 서로 다른 양의 정수만 허용한다. "
+            "검증 후 불변 tuple로 저장하여 검색 처리 중 문서 선택 범위가 변경되지 않게 한다."
+        ),
+        examples=[[123, 456]],
     )
 
     query: str = Field(

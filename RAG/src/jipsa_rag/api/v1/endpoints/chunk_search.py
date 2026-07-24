@@ -6,24 +6,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
+from jipsa_rag.api.v1.error_mapping import (
+    convert_embedding_error,
+    convert_vector_search_error,
+)
 from jipsa_rag.core.config import Settings, get_settings
-from jipsa_rag.core.error_codes import ErrorCode
-from jipsa_rag.core.exceptions import AppException
-from jipsa_rag.infrastructure.embedding.exceptions import (
-    EmbeddingError,
-    EmbeddingServiceRejectedError,
-    EmbeddingServiceTimeoutError,
-    EmbeddingServiceUnavailableError,
-    InvalidEmbeddingResponseError,
-)
+from jipsa_rag.infrastructure.embedding.exceptions import EmbeddingError
 from jipsa_rag.infrastructure.embedding.query import TeiQueryEmbedder
-from jipsa_rag.infrastructure.indexing.exceptions import (
-    InvalidVectorSearchResultError,
-    VectorCollectionConfigurationError,
-    VectorDatabaseError,
-    VectorDatabaseRejectedError,
-    VectorDatabaseUnavailableError,
-)
+from jipsa_rag.infrastructure.indexing.exceptions import VectorDatabaseError
 from jipsa_rag.infrastructure.indexing.qdrant_search import (
     QdrantChunkSearchRepository,
 )
@@ -74,9 +64,10 @@ async def get_chunk_search_repository(
 ) -> AsyncIterator[QdrantChunkSearchRepository]:
     """요청 범위 Qdrant 검색 저장소를 생성하고 연결을 안전하게 종료한다.
 
-    색인용 Qdrant 저장소와 검색용 저장소는 책임이 다르므로 객체를 공유하지
-    않는다. 검색 요청마다 생성한 클라이언트는 응답 완료 또는 예외 발생과
-    관계없이 finally 블록에서 종료하여 연결 누수를 방지한다.
+    색인용 Qdrant 저장소와 검색용 저장소는 책임이 다르므로
+    객체를 공유하지 않는다. 검색 요청마다 생성한 클라이언트는
+    응답 완료 또는 예외 발생과 관계없이 finally 블록에서 종료하여
+    연결 누수를 방지한다.
     """
 
     repository = QdrantChunkSearchRepository(settings)
@@ -99,7 +90,7 @@ def get_chunk_search_service(
     query_embedder: QueryEmbedderDependency,
     repository: ChunkSearchRepositoryDependency,
 ) -> ChunkSearchService:
-    """질의 임베딩 생성기와 Qdrant 저장소가 연결된 검색 서비스를 반환한다."""
+    """질의 임베딩과 Qdrant 검색을 연결한 서비스를 반환한다."""
 
     return ChunkSearchService(
         query_embedder=query_embedder,
@@ -113,100 +104,6 @@ ChunkSearchServiceDependency = Annotated[
 ]
 
 
-def _convert_embedding_error(
-    error: EmbeddingError,
-    *,
-    user_idx: int,
-) -> AppException:
-    """질의 임베딩 오류를 외부 공개 가능한 공통 API 오류로 변환한다.
-
-    사용자 질의 원문, TEI 응답 본문과 임베딩 벡터는 로그 컨텍스트나
-    외부 응답에 포함하지 않는다. 진단에는 오류 유형과 안전한 상태 코드만
-    사용한다.
-    """
-
-    log_context: dict[str, str | int] = {
-        "user_idx": user_idx,
-        "embedding_error_type": type(error).__name__,
-        "embedding_operation": "embed_search_query",
-    }
-
-    if isinstance(error, EmbeddingServiceTimeoutError):
-        error_code = ErrorCode.EMBEDDING_SERVICE_TIMEOUT
-
-    elif isinstance(error, EmbeddingServiceUnavailableError):
-        if error.status_code is not None:
-            log_context["embedding_status_code"] = error.status_code
-
-        error_code = ErrorCode.EMBEDDING_SERVICE_UNAVAILABLE
-
-    elif isinstance(error, EmbeddingServiceRejectedError):
-        log_context["embedding_status_code"] = error.status_code
-        error_code = ErrorCode.EMBEDDING_REQUEST_REJECTED
-
-    elif isinstance(error, InvalidEmbeddingResponseError):
-        # reason은 벡터 개수, 차원 또는 값 타입과 같이
-        # TeiQueryEmbedder가 생성한 안전한 검증 정보만 포함한다.
-        log_context["embedding_response_reason"] = error.reason
-        log_context["embedding_batch_start_index"] = error.batch_start_index
-        error_code = ErrorCode.INVALID_EMBEDDING_RESPONSE
-
-    else:
-        error_code = ErrorCode.EMBEDDING_GENERATION_FAILED
-
-    return AppException(
-        error_code,
-        log_context=log_context,
-    )
-
-
-def _convert_vector_search_error(
-    error: VectorDatabaseError,
-    *,
-    user_idx: int,
-) -> AppException:
-    """Qdrant 검색 오류를 재시도 가능성과 계약 위반 유형으로 분류한다.
-
-    Qdrant 응답 본문, payload, 청크 원문과 질의 벡터는 외부 응답 또는
-    구조화 로그에 복사하지 않는다. 저장소 예외가 보관한 작업명과 HTTP
-    상태 코드만 안전한 진단 정보로 사용한다.
-    """
-
-    log_context: dict[str, str | int] = {
-        "user_idx": user_idx,
-        "vector_search_error_type": type(error).__name__,
-        "vector_operation": error.operation,
-    }
-
-    if error.status_code is not None:
-        log_context["vector_status_code"] = error.status_code
-
-    if isinstance(error, VectorDatabaseUnavailableError):
-        error_code = ErrorCode.VECTOR_DATABASE_UNAVAILABLE
-
-    elif isinstance(error, InvalidVectorSearchResultError):
-        # 성공 상태로 반환된 검색 결과의 payload 또는 서비스 계약이
-        # 유효하지 않은 경우 일반 요청 거부와 구분되는 오류 코드를 사용한다.
-        error_code = ErrorCode.INVALID_VECTOR_SEARCH_RESULT
-
-    elif isinstance(
-        error,
-        (
-            VectorDatabaseRejectedError,
-            VectorCollectionConfigurationError,
-        ),
-    ):
-        error_code = ErrorCode.VECTOR_SEARCH_FAILED
-
-    else:
-        error_code = ErrorCode.VECTOR_SEARCH_FAILED
-
-    return AppException(
-        error_code,
-        log_context=log_context,
-    )
-
-
 @router.post(
     "/search",
     status_code=HTTPStatus.OK,
@@ -214,8 +111,9 @@ def _convert_vector_search_error(
     summary="관련 청크 검색",
     description=(
         "애플리케이션 서버가 전달한 사용자 질의를 TEI에서 임베딩한 뒤, "
-        "Qdrant에서 동일 user_idx에 속하고 is_active=true인 청크만 "
-        "검색한다. top_k는 최대 반환 개수를 제한하고 score_threshold는 "
+        "Qdrant에서 동일 user_idx, is_active=true, "
+        "file_idx IN reference_file_idxs 조건을 모두 만족하는 청크만 검색한다. "
+        "top_k는 최대 반환 개수를 제한하고 score_threshold는 "
         "Cosine 관련도 최소 점수로 적용한다."
     ),
     responses={
@@ -225,7 +123,9 @@ def _convert_vector_search_error(
         },
         HTTPStatus.UNPROCESSABLE_ENTITY: {
             "model": ApiResponse[ValidationErrorData | None],
-            "description": ("user_idx, query, top_k 또는 score_threshold 요청값 검증 실패"),
+            "description": (
+                "user_idx, reference_file_idxs, query, top_k 또는 score_threshold 요청값 검증 실패"
+            ),
         },
         HTTPStatus.BAD_GATEWAY: {
             "model": ApiResponse[None],
@@ -251,19 +151,19 @@ async def search_chunks(
     request: ChunkSearchRequest,
     chunk_search_service: ChunkSearchServiceDependency,
 ) -> ApiResponse[ChunkSearchResponse]:
-    """내부 인증된 요청에 대해 사용자 범위 관련 청크를 반환한다."""
+    """내부 인증된 사용자 및 참조문서 범위의 청크를 반환한다."""
 
     try:
         response_data = await chunk_search_service.search(request)
 
     except EmbeddingError as error:
-        raise _convert_embedding_error(
+        raise convert_embedding_error(
             error,
             user_idx=request.user_idx,
         ) from error
 
     except VectorDatabaseError as error:
-        raise _convert_vector_search_error(
+        raise convert_vector_search_error(
             error,
             user_idx=request.user_idx,
         ) from error
