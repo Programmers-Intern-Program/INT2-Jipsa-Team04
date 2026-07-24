@@ -13,6 +13,7 @@ class DocumentType(StrEnum):
     DOCX = "DOCX"
     XLSX = "XLSX"
     PPTX = "PPTX"
+    TXT = "TXT"
 
 
 type SourceMetadataScalar = str | int | float | bool | None

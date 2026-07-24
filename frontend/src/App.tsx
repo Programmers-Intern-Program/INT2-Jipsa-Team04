@@ -38,6 +38,7 @@ import {
   verifyOAuthState,
 } from "./utils/oauth";
 import { listAllFiles } from "./api/files";
+import { useUploads } from "./upload/UploadProvider";
 import { fetchWithRetry } from "./utils/retry";
 
 const TOKEN_KEY = "aidrive_token";
@@ -105,6 +106,7 @@ export default function App() {
   );
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [documents, setDocuments] = useState<Document[]>([]);
+  const { uploadedSignal } = useUploads();
   const [chatSessions, setChatSessions] = useState<ChatSession[]>(() => [
     createChatSession(getInitialSelectedDocIds([]))
   ]);
@@ -233,6 +235,15 @@ export default function App() {
         console.error("[files] GET /api/v1/files 재시도 후에도 실패:", err);
       });
   }, [user]);
+
+  useEffect(() => {
+    if (uploadedSignal === 0) return;
+    listAllFiles()
+        .then(setDocuments)
+        .catch((err) => {
+          console.error("[uploads] 업로드 후 목록 재동기화 실패:", err);
+        });
+  }, [uploadedSignal]);
 
   // 로그아웃: 가능하면 refresh token 폐기 API를 호출하고(실패해도 무시),
   // 항상 localStorage(토큰·리프레시·사용자)를 정리한 뒤 랜딩으로 돌아간다.

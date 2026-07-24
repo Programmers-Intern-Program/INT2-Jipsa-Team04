@@ -23,6 +23,7 @@ class SupportedFileType(StrEnum):
     # DOCX, XLSX, PPTX 또는 이미지 파서가 추가되면
     # 해당 값을 이 Enum과 DocumentParserFactory에 함께 등록한다.
     PDF = "pdf"
+    TXT = "txt"
 
 
 class FileProcessingRequest(BaseModel):
@@ -185,6 +186,9 @@ class FileProcessingRequest(BaseModel):
 
         if self.file_type is SupportedFileType.PDF and not self.file_name.lower().endswith(".pdf"):
             raise ValueError("PDF file type requires a .pdf file extension.")
+
+        if self.file_type is SupportedFileType.TXT and not self.file_name.lower().endswith(".txt"):
+            raise ValueError("TXT file type requires a .txt file extension.")
 
         return self
 
