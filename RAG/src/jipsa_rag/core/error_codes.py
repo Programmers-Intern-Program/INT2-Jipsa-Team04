@@ -215,10 +215,66 @@ class ErrorCode(Enum):
         message="The vector database returned an invalid search result.",
     )
 
+    # Claude 생성 공급자가 설정된 제한 시간 안에 응답하지 않은 경우 사용한다.
+    #
+    # 검색 단계는 완료되었더라도 답변 생성이 끝나지 않았으므로
+    # 사용자에게 성공 응답이나 부분 답변을 반환하지 않는다.
+    GENERATION_SERVICE_TIMEOUT = ErrorDefinition(
+        status_code=HTTPStatus.GATEWAY_TIMEOUT,
+        code="GENERATION_SERVICE_TIMEOUT",
+        message="The generation service request timed out.",
+    )
+
+    # Claude API Key 인증 실패, 요청 제한, 공급자 과부하 또는 5xx 장애처럼
+    # 사용자가 질문 본문을 수정해서 해결할 수 없는 생성 서비스 문제다.
+    #
+    # API Key 원문과 공급자 응답 본문은 외부 메시지에 포함하지 않는다.
+    GENERATION_SERVICE_UNAVAILABLE = ErrorDefinition(
+        status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+        code="GENERATION_SERVICE_UNAVAILABLE",
+        message="The generation service is temporarily unavailable.",
+    )
+
+    # Claude가 요청을 영구적인 오류로 거부했지만 인증·요청 제한·시간 초과로
+    # 더 구체적으로 분류되지 않은 경우 사용한다.
+    GENERATION_REQUEST_FAILED = ErrorDefinition(
+        status_code=HTTPStatus.BAD_GATEWAY,
+        code="GENERATION_REQUEST_FAILED",
+        message="The generation service request could not be completed.",
+    )
+
+    # Claude SDK가 성공 응답을 받았지만 텍스트, 모델, 토큰 사용량 또는
+    # 종료 사유를 내부 GenerationResult 계약으로 변환하지 못한 경우다.
+    INVALID_GENERATION_RESPONSE = ErrorDefinition(
+        status_code=HTTPStatus.BAD_GATEWAY,
+        code="INVALID_GENERATION_RESPONSE",
+        message="The generation service returned an invalid response.",
+    )
+
+    # 위 범주에 포함되지 않는 내부 생성 처리 오류를 나타낸다.
+    GENERATION_FAILED = ErrorDefinition(
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        code="GENERATION_FAILED",
+        message="The answer could not be generated.",
+    )
+
     FILE_TOO_LARGE = ErrorDefinition(
         status_code=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
         code="FILE_TOO_LARGE",
         message="The file exceeds the maximum allowed size.",
+    )
+
+    # RAG 답변은 사용자가 선택한 하나 이상의 참조문서만 검색 범위로 사용한다.
+    #
+    # 필드가 누락되거나 빈 배열이 전달된 요청을 일반 검증 오류와 구분하면
+    # 애플리케이션 서버와 프런트엔드가 문서 선택 UI를 즉시 복구할 수 있다.
+    #
+    # 이 오류는 참조문서가 없는 요청을 사용자의 전체 활성 문서 검색으로
+    # 해석하지 않도록 하는 검색 범위 보안 경계이기도 하다.
+    REFERENCE_DOCUMENT_REQUIRED = ErrorDefinition(
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        code="REFERENCE_DOCUMENT_REQUIRED",
+        message="At least one reference document must be selected.",
     )
 
     REQUEST_VALIDATION_FAILED = ErrorDefinition(

@@ -40,9 +40,7 @@ class StaticQueryEmbedder:
         """비어 있지 않은 질의에 대해 고정된 3차원 벡터를 반환한다."""
 
         if not query.strip():
-            raise ValueError(
-                "query must not be empty."
-            )
+            raise ValueError("query must not be empty.")
 
         return QueryEmbedding(
             embedding_model=TEST_EMBEDDING_MODEL,
@@ -120,34 +118,18 @@ async def test_search_integrates_all_search_constraints() -> None:
     - 최종 반환 개수가 top_k 이하일 것
     """
 
-    collection_name = (
-        f"test_chunk_search_{uuid4().hex}"
-    )
-    client = AsyncQdrantClient(
-        location=":memory:"
-    )
+    collection_name = f"test_chunk_search_{uuid4().hex}"
+    client = AsyncQdrantClient(location=":memory:")
     settings = _create_settings(
         collection_name=collection_name,
     )
 
-    exact_chunk_id = (
-        "11111111-1111-1111-1111-111111111111"
-    )
-    near_chunk_id = (
-        "22222222-2222-2222-2222-222222222222"
-    )
-    below_threshold_chunk_id = (
-        "33333333-3333-3333-3333-333333333333"
-    )
-    inactive_chunk_id = (
-        "44444444-4444-4444-4444-444444444444"
-    )
-    other_user_chunk_id = (
-        "55555555-5555-5555-5555-555555555555"
-    )
-    unselected_file_chunk_id = (
-        "66666666-6666-6666-6666-666666666666"
-    )
+    exact_chunk_id = "11111111-1111-1111-1111-111111111111"
+    near_chunk_id = "22222222-2222-2222-2222-222222222222"
+    below_threshold_chunk_id = "33333333-3333-3333-3333-333333333333"
+    inactive_chunk_id = "44444444-4444-4444-4444-444444444444"
+    other_user_chunk_id = "55555555-5555-5555-5555-555555555555"
+    unselected_file_chunk_id = "66666666-6666-6666-6666-666666666666"
 
     try:
         await client.create_collection(
@@ -261,9 +243,7 @@ async def test_search_integrates_all_search_constraints() -> None:
         result = await service.search(
             ChunkSearchRequest(
                 user_idx=TEST_USER_IDX,
-                reference_file_idxs=(
-                    TEST_REFERENCE_FILE_IDXS
-                ),
+                reference_file_idxs=(TEST_REFERENCE_FILE_IDXS),
                 query="프로젝트 배포 절차",
                 top_k=2,
                 score_threshold=0.75,
@@ -273,59 +253,28 @@ async def test_search_integrates_all_search_constraints() -> None:
         assert result.user_idx == TEST_USER_IDX
         assert result.result_count == 2
 
-        assert tuple(
-            chunk.chunk_id
-            for chunk in result.results
-        ) == (
+        assert tuple(chunk.chunk_id for chunk in result.results) == (
             exact_chunk_id,
             near_chunk_id,
         )
 
-        assert {
-            chunk.file_idx
-            for chunk in result.results
-        } == {
+        assert {chunk.file_idx for chunk in result.results} == {
             123,
             456,
         }
 
-        assert all(
-            chunk.score >= 0.75
-            for chunk in result.results
-        )
+        assert all(chunk.score >= 0.75 for chunk in result.results)
 
-        assert (
-            result.results[0].score
-            >= result.results[1].score
-        )
+        assert result.results[0].score >= result.results[1].score
 
-        assert all(
-            chunk.file_type
-            is SupportedFileType.PDF
-            for chunk in result.results
-        )
+        assert all(chunk.file_type is SupportedFileType.PDF for chunk in result.results)
 
-        returned_chunk_ids = {
-            chunk.chunk_id
-            for chunk in result.results
-        }
+        returned_chunk_ids = {chunk.chunk_id for chunk in result.results}
 
-        assert (
-            below_threshold_chunk_id
-            not in returned_chunk_ids
-        )
-        assert (
-            inactive_chunk_id
-            not in returned_chunk_ids
-        )
-        assert (
-            other_user_chunk_id
-            not in returned_chunk_ids
-        )
-        assert (
-            unselected_file_chunk_id
-            not in returned_chunk_ids
-        )
+        assert below_threshold_chunk_id not in returned_chunk_ids
+        assert inactive_chunk_id not in returned_chunk_ids
+        assert other_user_chunk_id not in returned_chunk_ids
+        assert unselected_file_chunk_id not in returned_chunk_ids
 
     finally:
         await client.close()

@@ -348,19 +348,13 @@ class QdrantChunkSearchRepository:
         """질의 벡터가 현재 Qdrant Collection 계약과 일치하는지 검증한다."""
 
         if query_embedding.embedding_model != self._settings.embedding_model:
-            raise VectorCollectionConfigurationError(
-                "query_embedding_model_mismatch"
-            )
+            raise VectorCollectionConfigurationError("query_embedding_model_mismatch")
 
         if query_embedding.embedding_dim != self._settings.embedding_dim:
-            raise VectorCollectionConfigurationError(
-                "query_embedding_dim_mismatch"
-            )
+            raise VectorCollectionConfigurationError("query_embedding_dim_mismatch")
 
         if len(query_embedding.vector) != self._settings.embedding_dim:
-            raise VectorCollectionConfigurationError(
-                "query_vector_dim_mismatch"
-            )
+            raise VectorCollectionConfigurationError("query_vector_dim_mismatch")
 
 
 def _to_chunk_search_hit(
@@ -378,9 +372,7 @@ def _to_chunk_search_hit(
         raw_payload,
         Mapping,
     ):
-        raise InvalidVectorSearchResultError(
-            "invalid_search_result_payload"
-        )
+        raise InvalidVectorSearchResultError("invalid_search_result_payload")
 
     payload = cast(
         Mapping[str, object],
@@ -418,30 +410,22 @@ def _to_chunk_search_hit(
     # 사용자와 활성 상태를 다시 확인하여 잘못된 payload나 클라이언트 대역이
     # 다른 사용자의 청크 또는 비활성 청크를 반환하는 상황을 방어한다.
     if users_idx != expected_user_idx or not is_active:
-        raise InvalidVectorSearchResultError(
-            "search_scope_contract_violation"
-        )
+        raise InvalidVectorSearchResultError("search_scope_contract_violation")
 
     # Qdrant MatchAny 필터가 적용되었더라도 file_idx를 다시 검증한다.
     #
     # 이를 통해 잘못된 payload, Qdrant 클라이언트 대역 또는 향후 저장소 구현
     # 변경이 선택하지 않은 문서의 청크를 반환하는 상황을 차단한다.
     if file_idx not in expected_reference_file_idxs:
-        raise InvalidVectorSearchResultError(
-            "search_reference_file_scope_contract_violation"
-        )
+        raise InvalidVectorSearchResultError("search_reference_file_scope_contract_violation")
 
     if embedding_model != expected_embedding_model:
-        raise InvalidVectorSearchResultError(
-            "search_embedding_model_mismatch"
-        )
+        raise InvalidVectorSearchResultError("search_embedding_model_mismatch")
 
     # 색인 계층은 Chunk_ID를 Qdrant Point ID로 그대로 사용한다.
     # payload와 Point ID가 다르면 Local RAG DB와 VectorDB 연결 계약이 깨진 상태다.
     if str(point.id) != chunk_id:
-        raise InvalidVectorSearchResultError(
-            "search_chunk_id_mismatch"
-        )
+        raise InvalidVectorSearchResultError("search_chunk_id_mismatch")
 
     try:
         return ChunkSearchHit(
@@ -517,9 +501,7 @@ def _to_chunk_search_hit(
         ValueError,
     ) as error:
         # 잘못된 payload 값이나 점수는 외부 응답에 그대로 노출하지 않는다.
-        raise InvalidVectorSearchResultError(
-            "invalid_search_result_value"
-        ) from error
+        raise InvalidVectorSearchResultError("invalid_search_result_value") from error
 
 
 def _required_int(
@@ -532,14 +514,8 @@ def _required_int(
 
     value = payload.get(key)
 
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, int)
-        or value < minimum
-    ):
-        raise InvalidVectorSearchResultError(
-            "invalid_search_result_payload"
-        )
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise InvalidVectorSearchResultError("invalid_search_result_payload")
 
     return value
 
@@ -557,14 +533,8 @@ def _optional_int(
     if value is None:
         return None
 
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, int)
-        or value < minimum
-    ):
-        raise InvalidVectorSearchResultError(
-            "invalid_search_result_payload"
-        )
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise InvalidVectorSearchResultError("invalid_search_result_payload")
 
     return value
 
@@ -581,9 +551,7 @@ def _required_bool(
         value,
         bool,
     ):
-        raise InvalidVectorSearchResultError(
-            "invalid_search_result_payload"
-        )
+        raise InvalidVectorSearchResultError("invalid_search_result_payload")
 
     return value
 
@@ -602,16 +570,12 @@ def _required_text(
         value,
         str,
     ):
-        raise InvalidVectorSearchResultError(
-            "invalid_search_result_payload"
-        )
+        raise InvalidVectorSearchResultError("invalid_search_result_payload")
 
     normalized_value = value.strip()
 
     if not normalized_value:
-        raise InvalidVectorSearchResultError(
-            "invalid_search_result_payload"
-        )
+        raise InvalidVectorSearchResultError("invalid_search_result_payload")
 
     if preserve_original:
         return value
@@ -634,16 +598,12 @@ def _optional_text(
         value,
         str,
     ):
-        raise InvalidVectorSearchResultError(
-            "invalid_search_result_payload"
-        )
+        raise InvalidVectorSearchResultError("invalid_search_result_payload")
 
     normalized_value = value.strip()
 
     if not normalized_value:
-        raise InvalidVectorSearchResultError(
-            "invalid_search_result_payload"
-        )
+        raise InvalidVectorSearchResultError("invalid_search_result_payload")
 
     return normalized_value
 
@@ -655,14 +615,8 @@ def _validate_positive_integer(
 ) -> None:
     """bool을 제외한 양의 정수인지 검증한다."""
 
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, int)
-        or value <= 0
-    ):
-        raise ValueError(
-            f"{field_name} must be a positive integer."
-        )
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{field_name} must be a positive integer.")
 
 
 def _validate_non_negative_integer(
@@ -672,14 +626,8 @@ def _validate_non_negative_integer(
 ) -> None:
     """bool을 제외한 0 이상의 정수인지 검증한다."""
 
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, int)
-        or value < 0
-    ):
-        raise ValueError(
-            f"{field_name} must be a non-negative integer."
-        )
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field_name} must be a non-negative integer.")
 
 
 def _validate_optional_integer(
@@ -693,14 +641,9 @@ def _validate_optional_integer(
     if value is None:
         return
 
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, int)
-        or value < minimum
-    ):
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise ValueError(
-            f"{field_name} must be an integer greater than or "
-            f"equal to {minimum}, or null."
+            f"{field_name} must be an integer greater than or equal to {minimum}, or null."
         )
 
 
@@ -712,9 +655,7 @@ def _validate_required_text_value(
     """필수 문자열에 공백 이외의 문자가 존재하는지 검증한다."""
 
     if not value.strip():
-        raise ValueError(
-            f"{field_name} must not be empty."
-        )
+        raise ValueError(f"{field_name} must not be empty.")
 
 
 def _validate_optional_text_value(
@@ -725,9 +666,7 @@ def _validate_optional_text_value(
     """선택적 문자열이 null이거나 비어 있지 않은 문자열인지 검증한다."""
 
     if value is not None and not value.strip():
-        raise ValueError(
-            f"{field_name} must not be empty when provided."
-        )
+        raise ValueError(f"{field_name} must not be empty when provided.")
 
 
 def _validate_reference_file_idxs(
@@ -740,13 +679,8 @@ def _validate_reference_file_idxs(
     인프라 경계에서 다시 검증한다.
     """
 
-    if (
-        not isinstance(reference_file_idxs, tuple)
-        or not reference_file_idxs
-    ):
-        raise ValueError(
-            "reference_file_idxs must be a non-empty tuple."
-        )
+    if not isinstance(reference_file_idxs, tuple) or not reference_file_idxs:
+        raise ValueError("reference_file_idxs must be a non-empty tuple.")
 
     seen_file_idxs: set[int] = set()
 
@@ -757,9 +691,7 @@ def _validate_reference_file_idxs(
         )
 
         if file_idx in seen_file_idxs:
-            raise ValueError(
-                "reference_file_idxs must contain unique values."
-            )
+            raise ValueError("reference_file_idxs must contain unique values.")
 
         seen_file_idxs.add(file_idx)
 
@@ -769,14 +701,8 @@ def _validate_search_limit(
 ) -> None:
     """Qdrant 검색 결과 수 제한이 허용 범위인지 검증한다."""
 
-    if (
-        isinstance(limit, bool)
-        or not isinstance(limit, int)
-        or not 1 <= limit <= _MAX_SEARCH_LIMIT
-    ):
-        raise ValueError(
-            f"limit must be between 1 and {_MAX_SEARCH_LIMIT}."
-        )
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= _MAX_SEARCH_LIMIT:
+        raise ValueError(f"limit must be between 1 and {_MAX_SEARCH_LIMIT}.")
 
 
 def _validate_score_threshold(
@@ -794,21 +720,15 @@ def _validate_score_threshold(
             float,
         ),
     ):
-        raise ValueError(
-            "score_threshold must be numeric or null."
-        )
+        raise ValueError("score_threshold must be numeric or null.")
 
     normalized_threshold = float(score_threshold)
 
     if not math.isfinite(normalized_threshold):
-        raise ValueError(
-            "score_threshold must be finite."
-        )
+        raise ValueError("score_threshold must be finite.")
 
     if not -1.0 <= normalized_threshold <= 1.0:
-        raise ValueError(
-            "score_threshold must be between -1.0 and 1.0."
-        )
+        raise ValueError("score_threshold must be between -1.0 and 1.0.")
 
 
 def _convert_unexpected_response(
@@ -823,10 +743,7 @@ def _convert_unexpected_response(
     if status_code in {
         408,
         429,
-    } or (
-        status_code is not None
-        and status_code >= 500
-    ):
+    } or (status_code is not None and status_code >= 500):
         return VectorDatabaseUnavailableError(
             operation,
             status_code=status_code,

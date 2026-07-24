@@ -64,9 +64,7 @@ class _StubChunkSearcher:
     ) -> ChunkSearchResponse:
         """검색 요청을 기록하고 실제 임베딩 또는 Qdrant 호출 없이 응답한다."""
 
-        self.calls.append(
-            request
-        )
+        self.calls.append(request)
 
         return self._response
 
@@ -85,17 +83,13 @@ class _RequestScopedChunkSearcher:
     ) -> ChunkSearchResponse:
         """현재 호출의 참조문서 범위만 사용하여 결정적인 응답을 생성한다."""
 
-        self.calls.append(
-            request
-        )
+        self.calls.append(request)
 
         file_idx = request.reference_file_idxs[0]
 
         return _create_search_response(
             _create_chunk(
-                chunk_id=(
-                    f"{file_idx:08d}-1111-1111-1111-111111111111"
-                ),
+                chunk_id=(f"{file_idx:08d}-1111-1111-1111-111111111111"),
                 file_idx=file_idx,
                 file_name=f"참조문서-{file_idx}.pdf",
             )
@@ -163,9 +157,7 @@ class _StubGenerationClient:
     ) -> GenerationResult:
         """생성 요청을 기록하고 네트워크 호출 없이 결과를 반환한다."""
 
-        self.calls.append(
-            request
-        )
+        self.calls.append(request)
 
         return self._result
 
@@ -188,9 +180,7 @@ class _UnexpectedPromptBuilder:
 
         self.call_count += 1
 
-        raise AssertionError(
-            "Prompt builder must not be called without valid search results."
-        )
+        raise AssertionError("Prompt builder must not be called without valid search results.")
 
 
 class _UnexpectedGenerationClient:
@@ -210,9 +200,7 @@ class _UnexpectedGenerationClient:
 
         self.call_count += 1
 
-        raise AssertionError(
-            "Generation client must not be called without valid search results."
-        )
+        raise AssertionError("Generation client must not be called without valid search results.")
 
 
 class _SensitiveFailingPromptBuilder:
@@ -230,11 +218,7 @@ class _SensitiveFailingPromptBuilder:
     ) -> RagPromptBuildResult:
         """질문, 청크 및 테스트 API Key를 포함한 오류를 발생시킨다."""
 
-        raise ValueError(
-            f"{request.query}|"
-            f"{chunks[0].content}|"
-            f"{_TEST_API_KEY}"
-        )
+        raise ValueError(f"{request.query}|{chunks[0].content}|{_TEST_API_KEY}")
 
 
 class _SensitiveFailingGenerationClient:
@@ -247,9 +231,7 @@ class _SensitiveFailingGenerationClient:
     ) -> GenerationResult:
         """프롬프트와 API Key가 포함된 원인 예외를 생성 오류에 연결한다."""
 
-        sensitive_cause = RuntimeError(
-            f"{request.user_prompt}|{_TEST_API_KEY}"
-        )
+        sensitive_cause = RuntimeError(f"{request.user_prompt}|{_TEST_API_KEY}")
 
         error = GenerationAuthenticationError(
             "Generation provider authentication failed.",
@@ -287,9 +269,7 @@ def _create_chunk(
     chunk_id: str = "11111111-1111-1111-1111-111111111111",
     file_idx: int = 123,
     file_name: str = "프로젝트 가이드.pdf",
-    content: str = (
-        "로컬 RAG 서버는 PowerShell 시작 스크립트로 실행합니다."
-    ),
+    content: str = ("로컬 RAG 서버는 PowerShell 시작 스크립트로 실행합니다."),
 ) -> ChunkSearchResult:
     """서비스 테스트에 사용할 유효한 PDF 청크를 생성한다."""
 
@@ -330,10 +310,7 @@ def _create_generation_result() -> GenerationResult:
     """실제 Claude 호출 대신 사용할 결정적인 생성 결과를 생성한다."""
 
     return GenerationResult(
-        text=(
-            "로컬 RAG 서버는 PowerShell 시작 스크립트로 "
-            "실행합니다. [SOURCE-1]"
-        ),
+        text=("로컬 RAG 서버는 PowerShell 시작 스크립트로 실행합니다. [SOURCE-1]"),
         model="claude-sonnet-5",
         usage=GenerationUsage(
             input_tokens=120,
@@ -353,10 +330,7 @@ def _render_log_records(
     청크 및 API Key가 어느 로그 필드에도 없는지 확인한다.
     """
 
-    return "\n".join(
-        repr(record.__dict__)
-        for record in records
-    )
+    return "\n".join(repr(record.__dict__) for record in records)
 
 
 @pytest.mark.asyncio
@@ -365,13 +339,9 @@ async def test_answer_connects_search_prompt_and_generation() -> None:
 
     chunk = _create_chunk()
 
-    searcher = _StubChunkSearcher(
-        _create_search_response(chunk)
-    )
+    searcher = _StubChunkSearcher(_create_search_response(chunk))
     prompt_builder = _RecordingPromptBuilder()
-    generation_client = _StubGenerationClient(
-        _create_generation_result()
-    )
+    generation_client = _StubGenerationClient(_create_generation_result())
 
     service = RagAnswerService(
         chunk_searcher=searcher,
@@ -381,9 +351,7 @@ async def test_answer_connects_search_prompt_and_generation() -> None:
 
     request = _create_request()
 
-    response = await service.answer(
-        request
-    )
+    response = await service.answer(request)
 
     # RAG 답변 검색 조건이 기존 청크 검색 요청으로 손실 없이
     # 변환되었는지 확인한다.
@@ -392,16 +360,10 @@ async def test_answer_connects_search_prompt_and_generation() -> None:
     search_request = searcher.calls[0]
 
     assert search_request.user_idx == request.user_idx
-    assert (
-        search_request.reference_file_idxs
-        == request.reference_file_idxs
-    )
+    assert search_request.reference_file_idxs == request.reference_file_idxs
     assert search_request.query == request.query
     assert search_request.top_k == request.top_k
-    assert (
-        search_request.score_threshold
-        == request.score_threshold
-    )
+    assert search_request.score_threshold == request.score_threshold
 
     # 검색된 청크가 프롬프트 구성기로 한 번 전달되었는지 확인한다.
     assert prompt_builder.calls == [
@@ -419,21 +381,12 @@ async def test_answer_connects_search_prompt_and_generation() -> None:
 
     # 프롬프트 구성 결과에 질문과 검색 청크가 포함되어 실제 RAG
     # 생성 흐름이 연결되었는지 확인한다.
-    assert (
-        request.query
-        in generation_request.user_prompt
-    )
-    assert (
-        chunk.content
-        in generation_request.user_prompt
-    )
+    assert request.query in generation_request.user_prompt
+    assert chunk.content in generation_request.user_prompt
     assert generation_request.system_prompt is not None
 
     assert response.status is RagAnswerStatus.ANSWERED
-    assert (
-        response.answer
-        == _create_generation_result().text
-    )
+    assert response.answer == _create_generation_result().text
     assert response.model == "claude-sonnet-5"
     assert response.stop_reason == "end_turn"
 
@@ -454,9 +407,7 @@ async def test_answer_uses_each_questions_reference_files_independently() -> Non
 
     searcher = _RequestScopedChunkSearcher()
     prompt_builder = _RecordingPromptBuilder()
-    generation_client = _StubGenerationClient(
-        _create_generation_result()
-    )
+    generation_client = _StubGenerationClient(_create_generation_result())
 
     service = RagAnswerService(
         chunk_searcher=searcher,
@@ -473,17 +424,10 @@ async def test_answer_uses_each_questions_reference_files_independently() -> Non
         query="두 번째 문서에 대해 알려줘",
     )
 
-    first_response = await service.answer(
-        first_request
-    )
-    second_response = await service.answer(
-        second_request
-    )
+    first_response = await service.answer(first_request)
+    second_response = await service.answer(second_request)
 
-    assert tuple(
-        call.reference_file_idxs
-        for call in searcher.calls
-    ) == (
+    assert tuple(call.reference_file_idxs for call in searcher.calls) == (
         (123,),
         (456,),
     )
@@ -492,14 +436,8 @@ async def test_answer_uses_each_questions_reference_files_independently() -> Non
     assert first_response.sources[0].file_idx == 123
     assert second_response.sources[0].file_idx == 456
 
-    assert (
-        prompt_builder.calls[0][0].reference_file_idxs
-        == (123,)
-    )
-    assert (
-        prompt_builder.calls[1][0].reference_file_idxs
-        == (456,)
-    )
+    assert prompt_builder.calls[0][0].reference_file_idxs == (123,)
+    assert prompt_builder.calls[1][0].reference_file_idxs == (456,)
 
 
 @pytest.mark.asyncio
@@ -522,19 +460,14 @@ async def test_answer_rejects_search_result_from_unselected_file() -> None:
         generation_client=generation_client,
     )
 
-    with pytest.raises(
-        RagAnswerServiceError
-    ) as exception_info:
+    with pytest.raises(RagAnswerServiceError) as exception_info:
         await service.answer(
             _create_request(
                 reference_file_idxs=(123,),
             )
         )
 
-    assert (
-        exception_info.value.operation
-        == "search_reference_file_scope_contract_violation"
-    )
+    assert exception_info.value.operation == "search_reference_file_scope_contract_violation"
     assert prompt_builder.call_count == 0
     assert generation_client.call_count == 0
 
@@ -543,9 +476,7 @@ async def test_answer_rejects_search_result_from_unselected_file() -> None:
 async def test_answer_returns_insufficient_evidence_without_generation() -> None:
     """검색 결과가 없으면 프롬프트 구성과 Claude 생성을 생략해야 한다."""
 
-    searcher = _StubChunkSearcher(
-        _create_search_response()
-    )
+    searcher = _StubChunkSearcher(_create_search_response())
     prompt_builder = _UnexpectedPromptBuilder()
     generation_client = _UnexpectedGenerationClient()
 
@@ -555,17 +486,10 @@ async def test_answer_returns_insufficient_evidence_without_generation() -> None
         generation_client=generation_client,
     )
 
-    response = await service.answer(
-        _create_request()
-    )
+    response = await service.answer(_create_request())
 
-    assert (
-        response.status
-        is RagAnswerStatus.INSUFFICIENT_EVIDENCE
-    )
-    assert response.answer == (
-        "제공된 문서 근거만으로는 답변할 수 없습니다."
-    )
+    assert response.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
+    assert response.answer == ("제공된 문서 근거만으로는 답변할 수 없습니다.")
 
     # 근거 부족 응답에는 출처 또는 Claude 생성 메타데이터가
     # 포함되면 안 된다.
@@ -590,13 +514,9 @@ async def test_answer_logs_only_safe_metadata(
     )
 
     service = RagAnswerService(
-        chunk_searcher=_StubChunkSearcher(
-            _create_search_response(chunk)
-        ),
+        chunk_searcher=_StubChunkSearcher(_create_search_response(chunk)),
         prompt_builder=_RecordingPromptBuilder(),
-        generation_client=_StubGenerationClient(
-            _create_generation_result()
-        ),
+        generation_client=_StubGenerationClient(_create_generation_result()),
     )
 
     caplog.set_level(
@@ -610,9 +530,7 @@ async def test_answer_logs_only_safe_metadata(
         )
     )
 
-    rendered_logs = _render_log_records(
-        caplog.records
-    )
+    rendered_logs = _render_log_records(caplog.records)
 
     assert _TEST_QUESTION not in rendered_logs
     assert _TEST_CHUNK not in rendered_logs
@@ -642,9 +560,7 @@ async def test_answer_sanitizes_prompt_builder_exception(
     generation_client = _UnexpectedGenerationClient()
 
     service = RagAnswerService(
-        chunk_searcher=_StubChunkSearcher(
-            _create_search_response(chunk)
-        ),
+        chunk_searcher=_StubChunkSearcher(_create_search_response(chunk)),
         prompt_builder=_SensitiveFailingPromptBuilder(),
         generation_client=generation_client,
     )
@@ -654,9 +570,7 @@ async def test_answer_sanitizes_prompt_builder_exception(
         logger="jipsa_rag.services.rag_answer",
     )
 
-    with pytest.raises(
-        RagAnswerServiceError
-    ) as exception_info:
+    with pytest.raises(RagAnswerServiceError) as exception_info:
         await service.answer(
             _create_request(
                 query=_TEST_QUESTION,
@@ -679,9 +593,7 @@ async def test_answer_sanitizes_prompt_builder_exception(
     # 프롬프트 구성에 실패했으므로 생성 호출은 발생하지 않는다.
     assert generation_client.call_count == 0
 
-    rendered_logs = _render_log_records(
-        caplog.records
-    )
+    rendered_logs = _render_log_records(caplog.records)
 
     assert _TEST_QUESTION not in rendered_logs
     assert _TEST_CHUNK not in rendered_logs
@@ -700,9 +612,7 @@ async def test_answer_removes_sensitive_generation_exception_chain(
     )
 
     service = RagAnswerService(
-        chunk_searcher=_StubChunkSearcher(
-            _create_search_response(chunk)
-        ),
+        chunk_searcher=_StubChunkSearcher(_create_search_response(chunk)),
         prompt_builder=_RecordingPromptBuilder(),
         generation_client=_SensitiveFailingGenerationClient(),
     )
@@ -712,9 +622,7 @@ async def test_answer_removes_sensitive_generation_exception_chain(
         logger="jipsa_rag.services.rag_answer",
     )
 
-    with pytest.raises(
-        GenerationAuthenticationError
-    ) as exception_info:
+    with pytest.raises(GenerationAuthenticationError) as exception_info:
         await service.answer(
             _create_request(
                 query=_TEST_QUESTION,
@@ -734,9 +642,7 @@ async def test_answer_removes_sensitive_generation_exception_chain(
     assert _TEST_CHUNK not in str(error)
     assert _TEST_API_KEY not in str(error)
 
-    rendered_logs = _render_log_records(
-        caplog.records
-    )
+    rendered_logs = _render_log_records(caplog.records)
 
     assert _TEST_QUESTION not in rendered_logs
     assert _TEST_CHUNK not in rendered_logs

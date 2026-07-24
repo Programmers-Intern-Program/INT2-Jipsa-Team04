@@ -44,9 +44,7 @@ class FakeAsyncQdrantClient:
         """호출 기록, 응답과 오류 상태를 초기화한다."""
 
         self.query_points_calls: list[dict[str, object]] = []
-        self.query_points_result = FakeQueryResponse(
-            points=[]
-        )
+        self.query_points_result = FakeQueryResponse(points=[])
         self.query_points_error: Exception | None = None
         self.close_called = False
 
@@ -132,9 +130,7 @@ def _create_scored_point(
             "users_idx": users_idx,
             "folder_idx": 9,
             "chunk_index": 0,
-            "content": (
-                "프로젝트 배포 절차는 로컬 RAG 실행 후 진행합니다."
-            ),
+            "content": ("프로젝트 배포 절차는 로컬 RAG 실행 후 진행합니다."),
             "token_count": 64,
             "file_name": "프로젝트 가이드.pdf",
             "file_type": "PDF",
@@ -221,9 +217,7 @@ async def test_search_applies_user_active_reference_filter_top_k_and_threshold()
         models.Filter,
         call["query_filter"],
     )
-    conditions = _extract_filter_conditions(
-        query_filter
-    )
+    conditions = _extract_filter_conditions(query_filter)
 
     # 세 검색 범위 조건이 같은 must 배열에 들어가야 Qdrant에서
     # 논리 AND로 결합된다.
@@ -255,19 +249,14 @@ async def test_search_applies_user_active_reference_filter_top_k_and_threshold()
         reference_file_condition.match,
         models.MatchAny,
     )
-    assert (
-        reference_file_condition.match.any
-        == list(TEST_REFERENCE_FILE_IDXS)
-    )
+    assert reference_file_condition.match.any == list(TEST_REFERENCE_FILE_IDXS)
 
     assert len(result) == 1
     assert result[0].chunk_id == TEST_CHUNK_ID
     assert result[0].users_idx == TEST_USER_IDX
     assert result[0].file_idx == 123
     assert result[0].score == 0.91
-    assert result[0].content == (
-        "프로젝트 배포 절차는 로컬 RAG 실행 후 진행합니다."
-    )
+    assert result[0].content == ("프로젝트 배포 절차는 로컬 RAG 실행 후 진행합니다.")
 
 
 @pytest.mark.asyncio
@@ -301,10 +290,7 @@ async def test_search_rejects_cross_user_payload_even_after_filtering() -> None:
             limit=3,
         )
 
-    assert (
-        exception_info.value.operation
-        == "search_scope_contract_violation"
-    )
+    assert exception_info.value.operation == "search_scope_contract_violation"
 
 
 @pytest.mark.asyncio
@@ -338,10 +324,7 @@ async def test_search_rejects_unselected_file_payload_even_after_filtering() -> 
             limit=3,
         )
 
-    assert (
-        exception_info.value.operation
-        == "search_reference_file_scope_contract_violation"
-    )
+    assert exception_info.value.operation == "search_reference_file_scope_contract_violation"
 
 
 @pytest.mark.asyncio

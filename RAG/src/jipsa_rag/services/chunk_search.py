@@ -78,12 +78,8 @@ class ChunkSearchService:
         )
 
         user_idx = request_snapshot.user_idx
-        reference_file_idxs = tuple(
-            request_snapshot.reference_file_idxs
-        )
-        reference_file_idx_set = frozenset(
-            reference_file_idxs
-        )
+        reference_file_idxs = tuple(request_snapshot.reference_file_idxs)
+        reference_file_idx_set = frozenset(reference_file_idxs)
         query = request_snapshot.query
         top_k = request_snapshot.top_k
         score_threshold = request_snapshot.score_threshold
@@ -116,10 +112,7 @@ class ChunkSearchService:
         )
 
         try:
-            results = tuple(
-                _to_chunk_search_result(hit)
-                for hit in hits
-            )
+            results = tuple(_to_chunk_search_result(hit) for hit in hits)
 
             return ChunkSearchResponse(
                 user_idx=user_idx,
@@ -133,9 +126,7 @@ class ChunkSearchService:
             #
             # 검색 청크 원문이 예외 체인이나 전역 로그에 노출되지 않도록
             # 원인 예외를 연결하지 않고 안전한 저장소 계약 오류로 변환한다.
-            raise InvalidVectorSearchResultError(
-                "invalid_search_response_schema"
-            ) from None
+            raise InvalidVectorSearchResultError("invalid_search_response_schema") from None
 
 
 def _validate_search_hits(
@@ -149,50 +140,30 @@ def _validate_search_hits(
     """Repository 결과가 현재 질문의 검색 범위 계약을 위반하지 않는지 검증한다."""
 
     if len(hits) > top_k:
-        raise InvalidVectorSearchResultError(
-            "search_result_limit_contract_violation"
-        )
+        raise InvalidVectorSearchResultError("search_result_limit_contract_violation")
 
     seen_chunk_ids: set[str] = set()
     previous_score: float | None = None
 
     for hit in hits:
         if hit.users_idx != user_idx:
-            raise InvalidVectorSearchResultError(
-                "search_user_scope_contract_violation"
-            )
+            raise InvalidVectorSearchResultError("search_user_scope_contract_violation")
 
         if hit.file_idx not in reference_file_idxs:
-            raise InvalidVectorSearchResultError(
-                "search_reference_file_scope_contract_violation"
-            )
+            raise InvalidVectorSearchResultError("search_reference_file_scope_contract_violation")
 
-        if (
-            score_threshold is not None
-            and hit.score < score_threshold
-        ):
-            raise InvalidVectorSearchResultError(
-                "search_score_threshold_contract_violation"
-            )
+        if score_threshold is not None and hit.score < score_threshold:
+            raise InvalidVectorSearchResultError("search_score_threshold_contract_violation")
 
         # Qdrant는 관련도 점수 내림차순으로 결과를 반환한다.
         # 앞선 점수보다 더 높은 점수가 뒤에서 나타나면 정렬 계약 위반이다.
-        if (
-            previous_score is not None
-            and hit.score > previous_score
-        ):
-            raise InvalidVectorSearchResultError(
-                "search_score_order_contract_violation"
-            )
+        if previous_score is not None and hit.score > previous_score:
+            raise InvalidVectorSearchResultError("search_score_order_contract_violation")
 
         if hit.chunk_id in seen_chunk_ids:
-            raise InvalidVectorSearchResultError(
-                "duplicate_search_chunk_id"
-            )
+            raise InvalidVectorSearchResultError("duplicate_search_chunk_id")
 
-        seen_chunk_ids.add(
-            hit.chunk_id
-        )
+        seen_chunk_ids.add(hit.chunk_id)
         previous_score = hit.score
 
 

@@ -31,9 +31,7 @@ _LOGGER = logging.getLogger(__name__)
 # 프롬프트 구성기의 시스템 규칙에서도 같은 문구를 사용하고 있으므로,
 # 사용자는 검색 단계에서 근거가 없을 때와 Claude가 문서 근거만으로
 # 답변할 수 없다고 판단한 경우에 일관된 안내를 받는다.
-_INSUFFICIENT_EVIDENCE_ANSWER: Final[str] = (
-    "제공된 문서 근거만으로는 답변할 수 없습니다."
-)
+_INSUFFICIENT_EVIDENCE_ANSWER: Final[str] = "제공된 문서 근거만으로는 답변할 수 없습니다."
 
 
 class ChunkSearcher(Protocol):
@@ -80,9 +78,7 @@ class RagAnswerServiceError(RuntimeError):
 
         self.operation = operation
 
-        super().__init__(
-            f"RAG answer service operation failed: {operation}"
-        )
+        super().__init__(f"RAG answer service operation failed: {operation}")
 
 
 class RagAnswerService:
@@ -171,12 +167,8 @@ class RagAnswerService:
             deep=True,
         )
 
-        reference_file_idxs = tuple(
-            request_snapshot.reference_file_idxs
-        )
-        reference_file_idx_set = frozenset(
-            reference_file_idxs
-        )
+        reference_file_idxs = tuple(request_snapshot.reference_file_idxs)
+        reference_file_idx_set = frozenset(reference_file_idxs)
 
         search_request = ChunkSearchRequest(
             user_idx=request_snapshot.user_idx,
@@ -195,9 +187,7 @@ class RagAnswerService:
             extra={
                 "event": "rag_answer_search_started",
                 "user_idx": request_snapshot.user_idx,
-                "reference_file_count": len(
-                    reference_file_idxs
-                ),
+                "reference_file_count": len(reference_file_idxs),
                 "top_k": request_snapshot.top_k,
             },
         )
@@ -222,9 +212,7 @@ class RagAnswerService:
             extra={
                 "event": "rag_answer_search_completed",
                 "user_idx": request_snapshot.user_idx,
-                "reference_file_count": len(
-                    reference_file_idxs
-                ),
+                "reference_file_count": len(reference_file_idxs),
                 "result_count": search_response.result_count,
             },
         )
@@ -240,9 +228,7 @@ class RagAnswerService:
                 extra={
                     "event": "rag_answer_insufficient_evidence",
                     "user_idx": request_snapshot.user_idx,
-                    "reference_file_count": len(
-                        reference_file_idxs
-                    ),
+                    "reference_file_count": len(reference_file_idxs),
                     "result_count": 0,
                 },
             )
@@ -277,9 +263,7 @@ class RagAnswerService:
             extra={
                 "event": "rag_answer_generation_completed",
                 "user_idx": request_snapshot.user_idx,
-                "reference_file_count": len(
-                    reference_file_idxs
-                ),
+                "reference_file_count": len(reference_file_idxs),
                 "source_count": len(response.sources),
             },
         )
@@ -308,9 +292,7 @@ class RagAnswerService:
         unexpected_error = False
 
         try:
-            response = await self._chunk_searcher.search(
-                request
-            )
+            response = await self._chunk_searcher.search(request)
 
         except (
             EmbeddingError,
@@ -330,9 +312,7 @@ class RagAnswerService:
             unexpected_error = True
 
         if expected_error is not None:
-            _remove_exception_chain(
-                expected_error
-            )
+            _remove_exception_chain(expected_error)
 
             _LOGGER.warning(
                 "RAG answer chunk search failed.",
@@ -383,26 +363,18 @@ class RagAnswerService:
                 operation="search_user_scope_contract_violation",
             )
 
-        if any(
-            chunk.file_idx
-            not in expected_reference_file_idxs
-            for chunk in response.results
-        ):
+        if any(chunk.file_idx not in expected_reference_file_idxs for chunk in response.results):
             _LOGGER.error(
                 "RAG answer search reference file scope contract failed.",
                 extra={
                     "event": "rag_answer_reference_file_scope_failed",
                     "user_idx": expected_user_idx,
-                    "reference_file_count": len(
-                        expected_reference_file_idxs
-                    ),
+                    "reference_file_count": len(expected_reference_file_idxs),
                 },
             )
 
             raise RagAnswerServiceError(
-                operation=(
-                    "search_reference_file_scope_contract_violation"
-                ),
+                operation=("search_reference_file_scope_contract_violation"),
             )
 
     def _build_prompt(
@@ -489,9 +461,7 @@ class RagAnswerService:
             unexpected_error = True
 
         if provider_error is not None:
-            _remove_exception_chain(
-                provider_error
-            )
+            _remove_exception_chain(provider_error)
 
             _LOGGER.warning(
                 "RAG answer generation provider request failed.",
@@ -542,12 +512,8 @@ class RagAnswerService:
                 sources=prompt_result.sources,
                 model=generation_result.model,
                 usage=RagAnswerUsage(
-                    input_tokens=(
-                        generation_result.usage.input_tokens
-                    ),
-                    output_tokens=(
-                        generation_result.usage.output_tokens
-                    ),
+                    input_tokens=(generation_result.usage.input_tokens),
+                    output_tokens=(generation_result.usage.output_tokens),
                 ),
                 stop_reason=generation_result.stop_reason,
             )
@@ -563,9 +529,7 @@ class RagAnswerService:
                 extra={
                     "event": "rag_answer_response_mapping_failed",
                     "user_idx": user_idx,
-                    "source_count": len(
-                        prompt_result.sources
-                    ),
+                    "source_count": len(prompt_result.sources),
                 },
             )
 

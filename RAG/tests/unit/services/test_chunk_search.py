@@ -35,9 +35,7 @@ class StubQueryEmbedder:
     ) -> QueryEmbedding:
         """질의를 기록한 뒤 결정적인 3차원 벡터를 반환한다."""
 
-        self.received_queries.append(
-            query
-        )
+        self.received_queries.append(query)
 
         return QueryEmbedding(
             embedding_model=TEST_EMBEDDING_MODEL,
@@ -107,9 +105,7 @@ def _create_hit(
         # 실제 Qdrant payload는 DocumentType.value를 저장하므로 대문자다.
         file_type="PDF",
         chunk_index=chunk_index,
-        content=(
-            "로컬 RAG 서버는 PowerShell 시작 스크립트로 실행합니다."
-        ),
+        content=("로컬 RAG 서버는 PowerShell 시작 스크립트로 실행합니다."),
         token_count=128,
         page=2,
         slide_no=None,
@@ -144,9 +140,7 @@ async def test_search_passes_constraints_and_maps_response() -> None:
 
     hit = _create_hit()
     query_embedder = StubQueryEmbedder()
-    repository = StubChunkSearchRepository(
-        (hit,)
-    )
+    repository = StubChunkSearchRepository((hit,))
     service = ChunkSearchService(
         query_embedder=query_embedder,
         repository=repository,
@@ -160,9 +154,7 @@ async def test_search_passes_constraints_and_maps_response() -> None:
         score_threshold=0.7,
     )
 
-    result = await service.search(
-        request
-    )
+    result = await service.search(request)
 
     assert query_embedder.received_queries == [
         "프로젝트 배포 절차를 알려줘",
@@ -172,25 +164,17 @@ async def test_search_passes_constraints_and_maps_response() -> None:
     repository_call = repository.calls[0]
 
     assert repository_call["user_idx"] == TEST_USER_IDX
-    assert (
-        repository_call["reference_file_idxs"]
-        == TEST_REFERENCE_FILE_IDXS
-    )
+    assert repository_call["reference_file_idxs"] == TEST_REFERENCE_FILE_IDXS
     assert repository_call["limit"] == 3
     assert repository_call["score_threshold"] == 0.7
 
-    query_embedding = repository_call[
-        "query_embedding"
-    ]
+    query_embedding = repository_call["query_embedding"]
 
     assert isinstance(
         query_embedding,
         QueryEmbedding,
     )
-    assert (
-        query_embedding.embedding_model
-        == TEST_EMBEDDING_MODEL
-    )
+    assert query_embedding.embedding_model == TEST_EMBEDDING_MODEL
     assert query_embedding.vector == (
         1.0,
         0.0,
@@ -202,10 +186,7 @@ async def test_search_passes_constraints_and_maps_response() -> None:
     assert result.results[0].chunk_id == hit.chunk_id
     assert result.results[0].score == hit.score
     assert result.results[0].file_idx == hit.file_idx
-    assert (
-        result.results[0].file_type
-        is SupportedFileType.PDF
-    )
+    assert result.results[0].file_type is SupportedFileType.PDF
 
 
 @pytest.mark.asyncio
@@ -231,10 +212,7 @@ async def test_search_rejects_result_from_another_user() -> None:
             _create_request(),
         )
 
-    assert (
-        exception_info.value.operation
-        == "search_user_scope_contract_violation"
-    )
+    assert exception_info.value.operation == "search_user_scope_contract_violation"
 
 
 @pytest.mark.asyncio
@@ -260,10 +238,7 @@ async def test_search_rejects_result_from_unselected_file() -> None:
             _create_request(),
         )
 
-    assert (
-        exception_info.value.operation
-        == "search_reference_file_scope_contract_violation"
-    )
+    assert exception_info.value.operation == "search_reference_file_scope_contract_violation"
 
 
 @pytest.mark.asyncio
@@ -291,10 +266,7 @@ async def test_search_rejects_result_below_score_threshold() -> None:
             ),
         )
 
-    assert (
-        exception_info.value.operation
-        == "search_score_threshold_contract_violation"
-    )
+    assert exception_info.value.operation == "search_score_threshold_contract_violation"
 
 
 @pytest.mark.asyncio
@@ -304,16 +276,12 @@ async def test_search_rejects_results_not_sorted_descending() -> None:
     repository = StubChunkSearchRepository(
         (
             _create_hit(
-                chunk_id=(
-                    "11111111-1111-1111-1111-111111111111"
-                ),
+                chunk_id=("11111111-1111-1111-1111-111111111111"),
                 score=0.70,
                 chunk_index=0,
             ),
             _create_hit(
-                chunk_id=(
-                    "22222222-2222-2222-2222-222222222222"
-                ),
+                chunk_id=("22222222-2222-2222-2222-222222222222"),
                 score=0.80,
                 chunk_index=1,
             ),
@@ -333,10 +301,7 @@ async def test_search_rejects_results_not_sorted_descending() -> None:
             ),
         )
 
-    assert (
-        exception_info.value.operation
-        == "search_score_order_contract_violation"
-    )
+    assert exception_info.value.operation == "search_score_order_contract_violation"
 
 
 @pytest.mark.asyncio
@@ -346,16 +311,12 @@ async def test_search_rejects_more_results_than_top_k() -> None:
     repository = StubChunkSearchRepository(
         (
             _create_hit(
-                chunk_id=(
-                    "11111111-1111-1111-1111-111111111111"
-                ),
+                chunk_id=("11111111-1111-1111-1111-111111111111"),
                 score=0.90,
                 chunk_index=0,
             ),
             _create_hit(
-                chunk_id=(
-                    "22222222-2222-2222-2222-222222222222"
-                ),
+                chunk_id=("22222222-2222-2222-2222-222222222222"),
                 score=0.80,
                 chunk_index=1,
             ),
@@ -375,7 +336,4 @@ async def test_search_rejects_more_results_than_top_k() -> None:
             ),
         )
 
-    assert (
-        exception_info.value.operation
-        == "search_result_limit_contract_violation"
-    )
+    assert exception_info.value.operation == "search_result_limit_contract_violation"

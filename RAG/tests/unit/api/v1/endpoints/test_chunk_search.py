@@ -141,6 +141,9 @@ def _valid_request_body() -> dict[str, object]:
 
     JSON 직렬화 이전의 요청 본문이므로 tuple 대신 실제 외부 API 계약과
     동일한 배열 형태의 list를 사용한다.
+
+    Returns:
+        인증된 청크 검색 API 호출에 사용할 유효한 JSON 요청 본문이다.
     """
 
     return {
@@ -150,6 +153,85 @@ def _valid_request_body() -> dict[str, object]:
         "top_k": 3,
         "score_threshold": 0.7,
     }
+
+
+def _assert_request_validation_error(
+    response_body: object,
+    *,
+    expected_field_prefix: str,
+) -> None:
+    """공통 요청 검증 오류 응답의 Envelope와 상세 오류 구조를 검증한다.
+
+    요청 검증 오류는 단순히 ``data=null``을 반환하지 않는다. AWS Backend가
+    어떤 필드에서 검증이 실패했는지 구분할 수 있도록 ``data.errors``에
+    다음 정보를 포함한다.
+
+    - field: 검증에 실패한 요청 필드 위치
+    - message: 외부에 공개할 수 있는 Pydantic 검증 메시지
+    - error_type: 클라이언트 분기 또는 진단에 사용할 오류 유형
+
+    Pydantic 버전이 변경되면 영문 오류 메시지의 세부 표현은 달라질 수 있다.
+    따라서 테스트에서는 전체 영문 문장을 고정하지 않고, 응답 Envelope와
+    필수 상세 필드 및 오류 위치가 유지되는지를 검증한다.
+
+    Args:
+        response_body:
+            TestClient 응답의 ``response.json()`` 결과다.
+        expected_field_prefix:
+            하나 이상의 오류 항목이 시작해야 하는 요청 필드 경로다.
+            배열 원소 오류는 ``body.reference_file_idxs.0``처럼 더 상세한
+            경로를 사용할 수 있으므로 완전 일치 대신 prefix로 검증한다.
+    """
+
+    # TestClient의 response.json()은 정적 타입상 Any일 수 있으므로
+    # 먼저 런타임 객체 형태를 검증한 뒤 필드에 접근한다.
+    assert isinstance(response_body, dict)
+
+    assert response_body["success"] is False
+    assert response_body["code"] == "REQUEST_VALIDATION_FAILED"
+    assert response_body["message"] == "Request validation failed."
+
+    validation_data = response_body["data"]
+
+    # 현재 공통 요청 검증 계약에서는 data가 null이 아니라
+    # 구조화된 검증 오류 목록을 포함해야 한다.
+    assert isinstance(validation_data, dict)
+
+    errors = validation_data.get("errors")
+
+    assert isinstance(errors, list)
+    assert errors
+
+    expected_field_found = False
+
+    for error in errors:
+        assert isinstance(error, dict)
+
+        # 내부 예외 객체, 입력값 원문 또는 정의되지 않은 필드가
+        # 검증 오류 응답에 추가되지 않도록 공개 필드를 제한한다.
+        assert set(error) == {
+            "field",
+            "message",
+            "error_type",
+        }
+
+        field = error["field"]
+        message = error["message"]
+        error_type = error["error_type"]
+
+        assert isinstance(field, str)
+        assert field
+        assert isinstance(message, str)
+        assert message
+        assert isinstance(error_type, str)
+        assert error_type
+
+        if field.startswith(expected_field_prefix):
+            expected_field_found = True
+
+    # 요청한 필드와 무관한 검증 오류만 반환되면 API와 스키마 연결이
+    # 잘못된 것이므로 최소 하나는 예상 필드 경로와 일치해야 한다.
+    assert expected_field_found
 
 
 def test_search_chunks_returns_authenticated_search_result(
@@ -273,10 +355,13 @@ def test_search_chunks_rejects_missing_reference_file_idxs(
     )
 
     assert response.status_code == 422
-    assert response.json()["success"] is False
-    assert response.json()["code"] == "REQUEST_VALIDATION_FAILED"
-    assert response.json()["message"] == "Request validation failed."
-    assert response.json()["data"] is None
+
+    # REQUEST_VALIDATION_FAILED 응답은 data=null이 아니라
+    # 실패 필드와 오류 유형을 data.errors에 포함하는 공통 계약을 사용한다.
+    _assert_request_validation_error(
+        response.json(),
+        expected_field_prefix="body.reference_file_idxs",
+    )
 
     # 요청 스키마 검증에서 실패했으므로 실제 검색 서비스는
     # 한 번도 호출되지 않아야 한다.
@@ -331,10 +416,16 @@ def test_search_chunks_rejects_invalid_request_constraints(
     )
 
     assert response.status_code == 422
-    assert response.json()["success"] is False
-    assert response.json()["code"] == "REQUEST_VALIDATION_FAILED"
-    assert response.json()["message"] == "Request validation failed."
-    assert response.json()["data"] is None
+
+    # Pydantic이 배열 원소와 배열 전체 제약을 함께 검사하면 하나의 입력에
+    # 둘 이상의 오류가 반환될 수 있다. 따라서 오류 개수를 고정하지 않고
+    # 해당 요청 필드에 대한 오류가 하나 이상 존재하는지를 검증한다.
+    _assert_request_validation_error(
+        response.json(),
+        expected_field_prefix=f"body.{field_name}",
+    )
+
+    # 검증에 실패한 요청은 실제 임베딩 또는 Qdrant 검색으로 전달되지 않는다.
     assert stub_chunk_search_service.requests == []
 
 
