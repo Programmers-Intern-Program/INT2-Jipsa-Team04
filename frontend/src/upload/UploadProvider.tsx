@@ -88,7 +88,11 @@ export function UploadProvider({ children }: { children: ReactNode }) {
             const hasQueued = () => itemsRef.current.some((it) => it.status === "QUEUED");
             const startNext = () => {
                 const target = itemsRef.current.find((it) => it.status === "QUEUED");
-                if (!target || !target.file) return;
+                if (!target) return;
+                if (!target.file) {
+                    patch(target.id, { status: "FAILED", error: "파일을 다시 선택해 주세요" });
+                    return;
+                }
                 const id = target.id;
                 const file = target.file;
                 const folderId = target.folderId;

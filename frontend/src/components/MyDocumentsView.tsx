@@ -2816,7 +2816,7 @@ export default function MyDocumentsView({
                                   <X className="w-3.5 h-3.5" />
                                 </button>
                             )}
-                            {item.status === "FAILED" && (
+                            {item.status === "FAILED" && item.file && (
                                 <button type="button" onClick={() => retryItem(item.id)} className="px-2 py-1 text-primary font-bold hover:underline shrink-0 cursor-pointer">
                                   재시도
                                 </button>
