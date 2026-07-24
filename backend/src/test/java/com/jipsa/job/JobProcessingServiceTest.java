@@ -2,6 +2,7 @@ package com.jipsa.job;
 
 import com.jipsa.file.File;
 import com.jipsa.file.FileRepository;
+import com.jipsa.file.FileMetadataRepository;
 import com.jipsa.file.FileStatus;
 import com.jipsa.internal.IngestManifestService;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,6 +27,8 @@ class JobProcessingServiceTest {
     @Mock
     private FileRepository fileRepository;
     @Mock
+    private FileMetadataRepository fileMetadataRepository;
+    @Mock
     private IngestManifestService ingestManifestService;
     @Mock
     private RagIngestClient ragIngestClient;
@@ -34,7 +37,7 @@ class JobProcessingServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new JobProcessingService(jobRepository, fileRepository,
+        service = new JobProcessingService(jobRepository, fileRepository, fileMetadataRepository,
                 ingestManifestService, ragIngestClient, 1000L);
     }
 

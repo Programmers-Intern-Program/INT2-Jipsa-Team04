@@ -15,11 +15,14 @@ public class InternalFileController {
 
     private final IngestManifestService ingestManifestService;
     private final IngestCallbackService ingestCallbackService;
+    private final MetadataCallbackService metadataCallbackService;
 
     public InternalFileController(IngestManifestService ingestManifestService,
-                                  IngestCallbackService ingestCallbackService) {
+                                  IngestCallbackService ingestCallbackService,
+                                  MetadataCallbackService metadataCallbackService) {
         this.ingestManifestService = ingestManifestService;
         this.ingestCallbackService = ingestCallbackService;
+        this.metadataCallbackService = metadataCallbackService;
     }
 
     @GetMapping("/{fileIdx}/manifest")
@@ -31,6 +34,13 @@ public class InternalFileController {
     public ResponseEntity<Void> ingestComplete(@PathVariable Long fileIdx,
                                                @Valid @RequestBody IngestCompleteRequest request) {
         ingestCallbackService.complete(fileIdx, request);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{fileIdx}/metadata")
+    public ResponseEntity<Void> metadata(@PathVariable Long fileIdx,
+                                         @Valid @RequestBody IngestMetadataRequest request) {
+        metadataCallbackService.apply(fileIdx, request);
         return ResponseEntity.noContent().build();
     }
 }

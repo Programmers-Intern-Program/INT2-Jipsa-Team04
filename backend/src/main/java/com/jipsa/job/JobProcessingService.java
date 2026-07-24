@@ -3,6 +3,8 @@ package com.jipsa.job;
 import com.jipsa.file.File;
 import com.jipsa.file.FileRepository;
 import com.jipsa.file.FileStatus;
+import com.jipsa.file.FileMetadata;
+import com.jipsa.file.FileMetadataRepository;
 import com.jipsa.internal.IngestManifestService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,17 +22,20 @@ public class JobProcessingService {
 
     private final JobRepository jobRepository;
     private final FileRepository fileRepository;
+    private final FileMetadataRepository fileMetadataRepository;
     private final IngestManifestService ingestManifestService;
     private final RagIngestClient ragIngestClient;
     private final long retryBackoffMs;
 
     public JobProcessingService(JobRepository jobRepository,
                                 FileRepository fileRepository,
+                                FileMetadataRepository fileMetadataRepository,
                                 IngestManifestService ingestManifestService,
                                 RagIngestClient ragIngestClient,
                                 @Value("${app.ingest.retry-backoff-ms:5000}") long retryBackoffMs) {
         this.jobRepository = jobRepository;
         this.fileRepository = fileRepository;
+        this.fileMetadataRepository = fileMetadataRepository;
         this.ingestManifestService = ingestManifestService;
         this.ragIngestClient = ragIngestClient;
         this.retryBackoffMs = retryBackoffMs;
@@ -59,6 +64,7 @@ public class JobProcessingService {
                 file.setStatus(FileStatus.PROCESSING);
                 file.setErrorMessage(null);
                 file.setProcessingStage(null);
+                markMetadataProcessing(file);
                 ragIngestClient.push(ingestManifestService.build(file));
             }
             job.setJobStatus(JobStatus.SUCCESS);
@@ -68,6 +74,17 @@ public class JobProcessingService {
         } catch (RuntimeException e) {
             handleFailure(job, file, e);
         }
+    }
+
+    private void markMetadataProcessing(File file) {
+        FileMetadata metadata = fileMetadataRepository.findById(file.getId()).orElseGet(() -> {
+            FileMetadata created = new FileMetadata();
+            created.setFileId(file.getId());
+            created.setFileType(file.getFileType());
+            return created;
+        });
+        metadata.setExtractionStatus("PROCESSING");
+        fileMetadataRepository.save(metadata);
     }
 
     private void handleFailure(Job job, File file, RuntimeException e) {
