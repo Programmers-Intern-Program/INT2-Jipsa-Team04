@@ -15,6 +15,16 @@ from jipsa_rag.schemas.rag_answer import (
 # 테스트 전반에서 동일하게 사용하는 사용자 식별자다.
 TEST_USER_IDX = 45
 
+# 질문 전송 시점에 사용자가 선택한 참조문서의
+# AWS 서버 DB File.File_IDX 식별자 목록이다.
+#
+# 요청 스키마는 외부 JSON 배열을 검증한 뒤 불변 tuple로 보존하므로,
+# 테스트에서도 실제 검증 완료 후의 내부 표현과 동일한 tuple을 사용한다.
+TEST_REFERENCE_FILE_IDXS = (
+    123,
+    456,
+)
+
 # Qdrant Point ID이자 Local RAG DB RAG_Chunk.Chunk_ID로 사용할
 # 유효한 UUID 형식의 테스트 청크 식별자다.
 TEST_CHUNK_ID = "11111111-1111-1111-1111-111111111111"
@@ -84,16 +94,22 @@ def _create_usage() -> RagAnswerUsage:
 
 
 def test_rag_answer_request_normalizes_query_and_preserves_constraints() -> None:
-    """질문의 앞뒤 공백을 제거하고 검색 제약을 보존해야 한다."""
+    """질문의 공백을 제거하고 참조문서 및 검색 제약을 보존해야 한다."""
 
     request = RagAnswerRequest(
         user_idx=TEST_USER_IDX,
+        reference_file_idxs=TEST_REFERENCE_FILE_IDXS,
         query="  프로젝트의 로컬 실행 방법을 알려줘  ",
         top_k=5,
         score_threshold=0.6,
     )
 
     assert request.user_idx == TEST_USER_IDX
+
+    # 질문 전송 시점에 확정된 참조문서 범위가
+    # 순서와 값의 변경 없이 불변 tuple로 보존되어야 한다.
+    assert request.reference_file_idxs == TEST_REFERENCE_FILE_IDXS
+
     assert request.query == "프로젝트의 로컬 실행 방법을 알려줘"
     assert request.top_k == 5
     assert request.score_threshold == 0.6
@@ -124,6 +140,9 @@ def test_rag_answer_request_rejects_invalid_values(
     with pytest.raises(ValidationError):
         RagAnswerRequest(
             user_idx=TEST_USER_IDX,
+            # 이 테스트는 질문과 검색 조건만 검증해야 하므로,
+            # 참조문서에는 항상 유효한 식별자 목록을 전달한다.
+            reference_file_idxs=TEST_REFERENCE_FILE_IDXS,
             query=query,
             top_k=top_k,
             score_threshold=score_threshold,

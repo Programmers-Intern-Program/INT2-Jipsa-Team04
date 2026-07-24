@@ -133,8 +133,8 @@ class RagAnswerService:
 
         Args:
             request:
-                사용자 식별자, 질문, 검색 개수 및 선택적 최소 점수를 포함한
-                RAG 답변 요청이다.
+                사용자 식별자, 질문, 참조문서 식별자, 검색 개수 및 선택적
+                최소 점수를 포함한 RAG 답변 요청이다.
 
         Returns:
             문서 근거 기반 답변 또는 근거 부족 결과다.
@@ -153,21 +153,23 @@ class RagAnswerService:
 
         search_request = ChunkSearchRequest(
             user_idx=request.user_idx,
+            reference_file_idxs=request.reference_file_idxs,
             query=request.query,
             top_k=request.top_k,
             score_threshold=request.score_threshold,
         )
 
-        # 질문 원문은 로그에 기록하지 않는다.
+        # 질문 원문과 참조문서 식별자 원문은 로그에 기록하지 않는다.
         #
-        # top_k는 민감한 사용자 입력이 아니라 검색 동작을 설명하는
-        # 안전한 운영 메타데이터다.
+        # top_k와 참조문서 개수는 문서 내용이나 식별자를 포함하지 않는
+        # 안전한 운영 메타데이터이므로 검색 동작 추적에만 사용한다.
         _LOGGER.info(
             "RAG answer chunk search started.",
             extra={
                 "event": "rag_answer_search_started",
                 "user_idx": request.user_idx,
                 "top_k": request.top_k,
+                "reference_file_count": len(request.reference_file_idxs),
             },
         )
 

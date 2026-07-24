@@ -12,6 +12,13 @@ from jipsa_rag.schemas.file_processing import SupportedFileType
 from jipsa_rag.services.chunk_search import ChunkSearchService
 
 TEST_USER_IDX = 45
+
+# 서비스 테스트에서 검색 대상으로 선택한 참조문서 식별자다.
+#
+# 현재 테스트 청크의 file_idx가 123이므로 동일한 파일을
+# 요청 범위에 포함하여 유효한 검색 요청을 구성한다.
+TEST_REFERENCE_FILE_IDXS = (123,)
+
 TEST_EMBEDDING_MODEL = "test/embedding-model"
 TEST_EMBEDDING_DIM = 3
 
@@ -124,6 +131,7 @@ async def test_search_passes_constraints_and_maps_response() -> None:
 
     request = ChunkSearchRequest(
         user_idx=TEST_USER_IDX,
+        reference_file_idxs=TEST_REFERENCE_FILE_IDXS,
         query="프로젝트 배포 절차를 알려줘",
         top_k=3,
         score_threshold=0.7,
@@ -179,6 +187,7 @@ async def test_search_rejects_result_from_another_user() -> None:
         await service.search(
             ChunkSearchRequest(
                 user_idx=TEST_USER_IDX,
+                reference_file_idxs=TEST_REFERENCE_FILE_IDXS,
                 query="검색 질의",
             )
         )
@@ -208,6 +217,7 @@ async def test_search_rejects_result_below_score_threshold() -> None:
         await service.search(
             ChunkSearchRequest(
                 user_idx=TEST_USER_IDX,
+                reference_file_idxs=TEST_REFERENCE_FILE_IDXS,
                 query="검색 질의",
                 score_threshold=0.7,
             )
@@ -245,6 +255,7 @@ async def test_search_rejects_results_not_sorted_descending() -> None:
         await service.search(
             ChunkSearchRequest(
                 user_idx=TEST_USER_IDX,
+                reference_file_idxs=TEST_REFERENCE_FILE_IDXS,
                 query="검색 질의",
                 top_k=2,
             )
@@ -282,6 +293,7 @@ async def test_search_rejects_more_results_than_top_k() -> None:
         await service.search(
             ChunkSearchRequest(
                 user_idx=TEST_USER_IDX,
+                reference_file_idxs=TEST_REFERENCE_FILE_IDXS,
                 query="검색 질의",
                 top_k=1,
             )

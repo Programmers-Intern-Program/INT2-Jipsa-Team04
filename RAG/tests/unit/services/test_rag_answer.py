@@ -22,6 +22,15 @@ from jipsa_rag.services.rag_answer import RagAnswerService, RagAnswerServiceErro
 
 _TEST_USER_IDX = 45
 
+# 질문을 전송한 시점에 선택된 참조문서 식별자 목록이다.
+#
+# 답변 서비스가 이 값을 새 ``ChunkSearchRequest``에 그대로 전달하는지
+# 검증하기 위해 두 개의 서로 다른 파일 식별자를 사용한다.
+_TEST_REFERENCE_FILE_IDXS = (
+    123,
+    456,
+)
+
 # 로그 및 예외 노출 검증에서 사용할 고유한 민감 정보다.
 #
 # 일반적인 단어를 사용하면 다른 로그 메시지와 우연히 일치할 수 있으므로,
@@ -210,10 +219,15 @@ def _create_request(
     *,
     query: str = "프로젝트의 로컬 실행 방법을 알려줘",
 ) -> RagAnswerRequest:
-    """서비스 테스트에 사용할 유효한 RAG 답변 요청을 생성한다."""
+    """서비스 테스트에 사용할 유효한 RAG 답변 요청을 생성한다.
+
+    질문 전송 시점의 참조문서 범위를 포함하여 실제 답변 요청과 동일한
+    필수 필드 계약을 만족하도록 생성한다.
+    """
 
     return RagAnswerRequest(
         user_idx=_TEST_USER_IDX,
+        reference_file_idxs=_TEST_REFERENCE_FILE_IDXS,
         query=query,
         top_k=3,
         score_threshold=0.7,
@@ -315,6 +329,11 @@ async def test_answer_connects_search_prompt_and_generation() -> None:
     search_request = searcher.calls[0]
 
     assert search_request.user_idx == request.user_idx
+
+    # 질문 전송 시점에 확정된 참조문서 식별자 tuple이
+    # 청크 검색 요청으로 손실 없이 전달되어야 한다.
+    assert search_request.reference_file_idxs == request.reference_file_idxs
+
     assert search_request.query == request.query
     assert search_request.top_k == request.top_k
     assert search_request.score_threshold == request.score_threshold
@@ -420,9 +439,14 @@ async def test_answer_logs_only_safe_metadata(
     assert _TEST_CHUNK not in rendered_logs
     assert _TEST_API_KEY not in rendered_logs
 
+    # 개별 참조문서 식별자 목록 자체는 로그에 기록하지 않고,
+    # 선택된 문서 개수만 안전한 운영 메타데이터로 기록해야 한다.
+    assert repr(_TEST_REFERENCE_FILE_IDXS) not in rendered_logs
+
     # 원문 대신 안전한 이벤트 및 수량 메타데이터는 남아야 한다.
     assert "rag_answer_search_completed" in rendered_logs
     assert "rag_answer_generation_completed" in rendered_logs
+    assert "'reference_file_count': 2" in rendered_logs
     assert "'result_count': 1" in rendered_logs
     assert "'source_count': 1" in rendered_logs
 

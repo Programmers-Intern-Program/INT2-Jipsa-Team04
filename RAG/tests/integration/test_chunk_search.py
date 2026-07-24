@@ -16,6 +16,14 @@ from jipsa_rag.services.chunk_search import ChunkSearchService
 
 TEST_USER_IDX = 45
 TEST_OTHER_USER_IDX = 999
+
+# 현재 통합 테스트에서 Qdrant에 저장하는 Point의 file_idx가
+# 모두 123이므로 해당 파일을 참조문서 검색 범위로 선택한다.
+#
+# 이번 단계에서는 요청 스키마의 필수 참조문서 계약만 반영하고,
+# 실제 file_idx Qdrant 필터 검증은 후속 TODO에서 별도로 추가한다.
+TEST_REFERENCE_FILE_IDXS = (123,)
+
 TEST_EMBEDDING_MODEL = "test/embedding-model"
 TEST_EMBEDDING_DIM = 3
 
@@ -103,13 +111,16 @@ def _create_point(
 
 @pytest.mark.asyncio
 async def test_search_integrates_all_search_constraints() -> None:
-    """실제 Qdrant에서 네 검색 조건이 동시에 적용되어야 한다.
+    """실제 Qdrant에서 기존 네 검색 조건이 동시에 적용되어야 한다.
 
     검증 조건:
     - user_idx가 요청 사용자와 동일할 것
     - is_active가 true일 것
     - Cosine 점수가 score_threshold 이상일 것
     - 최종 반환 개수가 top_k 이하일 것
+
+    참조문서 목록은 필수 요청값으로 전달하지만 file_idx 필터 자체는
+    후속 구현 단계의 별도 통합 테스트에서 검증한다.
     """
 
     collection_name = f"test_chunk_search_{uuid4().hex}"
@@ -205,6 +216,7 @@ async def test_search_integrates_all_search_constraints() -> None:
             # 외부에서 주입한 클라이언트는 Repository가 종료하지 않는다.
             client=client,
         )
+
         service = ChunkSearchService(
             query_embedder=StaticQueryEmbedder(),
             repository=repository,
@@ -213,6 +225,7 @@ async def test_search_integrates_all_search_constraints() -> None:
         result = await service.search(
             ChunkSearchRequest(
                 user_idx=TEST_USER_IDX,
+                reference_file_idxs=TEST_REFERENCE_FILE_IDXS,
                 query="프로젝트 배포 절차",
                 top_k=2,
                 score_threshold=0.75,

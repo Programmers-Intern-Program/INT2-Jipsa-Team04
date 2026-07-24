@@ -29,9 +29,17 @@ from jipsa_rag.schemas.chunk_search import (
     ChunkSearchResult,
 )
 from jipsa_rag.schemas.file_processing import SupportedFileType
+from jipsa_rag.schemas.reference_files import MAX_REFERENCE_FILE_COUNT
 from jipsa_rag.services.chunk_search import ChunkSearchService
 
 TEST_USER_IDX = 45
+
+# API의 기본 성공 요청에서 사용할 참조문서 식별자다.
+#
+# Stub 검색 결과의 file_idx가 123이므로 선택 문서 범위에도
+# 동일한 파일 식별자를 포함한다.
+TEST_REFERENCE_FILE_IDXS = (123,)
+
 TEST_CHUNK_ID = "11111111-1111-1111-1111-111111111111"
 
 
@@ -129,10 +137,15 @@ def without_default_internal_token(
 
 
 def _valid_request_body() -> dict[str, object]:
-    """청크 검색 API의 기본 유효 요청 본문을 반환한다."""
+    """청크 검색 API의 기본 유효 요청 본문을 반환한다.
+
+    JSON 직렬화 이전의 요청 본문이므로 tuple 대신 실제 외부 API 계약과
+    동일한 배열 형태의 list를 사용한다.
+    """
 
     return {
         "user_idx": TEST_USER_IDX,
+        "reference_file_idxs": list(TEST_REFERENCE_FILE_IDXS),
         "query": "프로젝트의 배포 절차를 알려줘",
         "top_k": 3,
         "score_threshold": 0.7,
@@ -183,8 +196,15 @@ def test_search_chunks_returns_authenticated_search_result(
     }
 
     assert len(stub_chunk_search_service.requests) == 1
+
     request = stub_chunk_search_service.requests[0]
+
     assert request.user_idx == TEST_USER_IDX
+
+    # 외부 JSON 배열이 검증된 뒤 불변 tuple로 변환되고,
+    # 서비스 계층까지 값과 순서가 보존되어야 한다.
+    assert request.reference_file_idxs == TEST_REFERENCE_FILE_IDXS
+
     assert request.query == "프로젝트의 배포 절차를 알려줘"
     assert request.top_k == 3
     assert request.score_threshold == 0.7
@@ -234,22 +254,73 @@ def test_search_chunks_rejects_invalid_token_before_service_call(
     assert stub_chunk_search_service.requests == []
 
 
+def test_search_chunks_rejects_missing_reference_file_idxs(
+    client: TestClient,
+    stub_chunk_search_service: StubChunkSearchService,
+) -> None:
+    """참조문서 필드가 없는 요청을 서비스 호출 전에 거부해야 한다.
+
+    참조문서 미선택 요청을 사용자의 전체 문서 검색으로 암묵적으로
+    처리해서는 안 되므로 필드가 생략된 요청도 422로 실패해야 한다.
+    """
+
+    request_body = _valid_request_body()
+    request_body.pop("reference_file_idxs")
+
+    response = client.post(
+        "/api/v1/chunks/search",
+        json=request_body,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["success"] is False
+    assert response.json()["code"] == "REQUEST_VALIDATION_FAILED"
+    assert response.json()["message"] == "Request validation failed."
+    assert response.json()["data"] is None
+
+    # 요청 스키마 검증에서 실패했으므로 실제 검색 서비스는
+    # 한 번도 호출되지 않아야 한다.
+    assert stub_chunk_search_service.requests == []
+
+
 @pytest.mark.parametrize(
     ("field_name", "invalid_value"),
     [
+        # 참조문서가 하나도 선택되지 않은 요청은 허용하지 않는다.
+        ("reference_file_idxs", []),
+        # 동일한 파일 식별자를 중복 선택한 요청은 허용하지 않는다.
+        ("reference_file_idxs", [123, 123]),
+        # File.File_IDX는 0보다 큰 정수여야 한다.
+        ("reference_file_idxs", [0]),
+        ("reference_file_idxs", [-1]),
+        # bool은 Python에서 int의 하위 타입이지만 외부 식별자로 허용하지 않는다.
+        ("reference_file_idxs", [True]),
+        # 실수 또는 문자열을 정수 식별자로 암묵 변환하지 않는다.
+        ("reference_file_idxs", [123.0]),
+        ("reference_file_idxs", ["123"]),
+        # 최대 선택 개수를 한 개 초과한 요청을 거부한다.
+        (
+            "reference_file_idxs",
+            list(
+                range(
+                    1,
+                    MAX_REFERENCE_FILE_COUNT + 2,
+                )
+            ),
+        ),
         ("top_k", 0),
         ("top_k", 21),
         ("score_threshold", -1.01),
         ("score_threshold", 1.01),
     ],
 )
-def test_search_chunks_rejects_invalid_search_constraints(
+def test_search_chunks_rejects_invalid_request_constraints(
     client: TestClient,
     stub_chunk_search_service: StubChunkSearchService,
     field_name: str,
-    invalid_value: int | float,
+    invalid_value: object,
 ) -> None:
-    """top_k와 최소 유사도 범위를 벗어난 요청을 거부해야 한다."""
+    """참조문서와 검색 조건이 요청 계약을 벗어나면 거부해야 한다."""
 
     request_body = _valid_request_body()
     request_body[field_name] = invalid_value
@@ -263,6 +334,7 @@ def test_search_chunks_rejects_invalid_search_constraints(
     assert response.json()["success"] is False
     assert response.json()["code"] == "REQUEST_VALIDATION_FAILED"
     assert response.json()["message"] == "Request validation failed."
+    assert response.json()["data"] is None
     assert stub_chunk_search_service.requests == []
 
 

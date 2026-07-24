@@ -11,6 +11,13 @@ from jipsa_rag.schemas.rag_answer import RagAnswerRequest
 from jipsa_rag.services.prompt_builder import RagPromptBuilder
 
 TEST_USER_IDX = 45
+
+# 프롬프트 구성 테스트에서 사용할 참조문서 식별자다.
+#
+# 이 파일의 청크 기본값이 file_idx=123을 사용하므로,
+# 선택된 참조문서 범위도 해당 파일을 포함하도록 설정한다.
+TEST_REFERENCE_FILE_IDXS = (123,)
+
 TEST_CHUNK_ID = "11111111-1111-1111-1111-111111111111"
 
 # PowerShell 파이프라인이나 터미널의 문자 인코딩에 영향을 받지 않도록
@@ -22,10 +29,15 @@ def _create_request(
     *,
     query: str = "프로젝트의 로컬 실행 방법을 알려줘",
 ) -> RagAnswerRequest:
-    """프롬프트 구성 테스트에 사용할 유효한 RAG 답변 요청을 생성한다."""
+    """프롬프트 구성 테스트에 사용할 유효한 RAG 답변 요청을 생성한다.
+
+    참조문서 식별자 필드는 필수 계약이므로 모든 프롬프트 테스트가
+    문서 선택 범위를 명시한 정상 요청을 사용하게 한다.
+    """
 
     return RagAnswerRequest(
         user_idx=TEST_USER_IDX,
+        reference_file_idxs=TEST_REFERENCE_FILE_IDXS,
         query=query,
         top_k=5,
         score_threshold=0.6,
@@ -158,7 +170,6 @@ def test_prompt_and_excerpt_limits_are_applied_independently() -> None:
     """프롬프트 본문과 외부 출처 발췌문 제한을 독립적으로 적용해야 한다.
 
     프롬프트 본문은 10자로 제한하고 외부 공개 발췌문은 20자로 제한한다.
-
     두 값이 동일하게 잘리면 외부 발췌문이 이미 제한된 프롬프트 본문을
     기준으로 생성되고 있다는 의미이므로 테스트가 실패해야 한다.
     """
