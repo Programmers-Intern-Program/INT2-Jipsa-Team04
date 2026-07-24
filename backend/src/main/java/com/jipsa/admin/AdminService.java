@@ -1,5 +1,7 @@
 package com.jipsa.admin;
 
+import com.jipsa.auth.RefreshTokenService;
+import com.jipsa.auth.UserRoleCache;
 import com.jipsa.user.Users;
 import com.jipsa.user.UsersRepository;
 import org.springframework.data.domain.Page;
@@ -31,10 +33,15 @@ public class AdminService {
 
     private final UsersRepository usersRepository;
     private final UserSanctionRepository userSanctionRepository;
+    private final UserRoleCache userRoleCache;
+    private final RefreshTokenService refreshTokenService;
 
-    public AdminService(UsersRepository usersRepository, UserSanctionRepository userSanctionRepository) {
+    public AdminService(UsersRepository usersRepository, UserSanctionRepository userSanctionRepository,
+                         UserRoleCache userRoleCache, RefreshTokenService refreshTokenService) {
         this.usersRepository = usersRepository;
         this.userSanctionRepository = userSanctionRepository;
+        this.userRoleCache = userRoleCache;
+        this.refreshTokenService = refreshTokenService;
     }
 
     /** GET /api/v1/admin/users — 전체 사용자 목록(가입일/상태/문서수, 최근로그인은 별도 이슈 전까지 null). */
@@ -139,7 +146,17 @@ public class AdminService {
         return new SanctionListResponse(items);
     }
 
-    /** PATCH /api/v1/admin/users/{id}/role — 관리자 권한 부여/해제. */
+    /**
+     * PATCH /api/v1/admin/users/{id}/role — 관리자 권한 부여/해제.
+     *
+     * <p>DB의 role을 바꾼 뒤 {@link UserRoleCache}도 같은 값으로 갱신한다 — 그래야 대상 사용자의
+     * 다음 요청에서 {@code JwtAuthenticationFilter}가 DB를 다시 조회하지 않고도 바로 새 role로
+     * 인가를 판단하고, 필요하면 새 Access Token을 응답 헤더로 내려준다(재로그인 불필요).
+     *
+     * <p>대상 사용자의 활성 Refresh Token도 방어적으로 전부 폐기한다. 위 재검증 로직만으로 이미
+     * 권한 변경은 안전하게 반영되므로 필수는 아니지만, 그 로직에 문제가 생기는 경우를 대비한
+     * 이중 안전장치다({@link RefreshTokenService#revokeAllForUser}).
+     */
     @Transactional
     public void updateRole(Long actingAdminId, Long targetUserId, UpdateRoleRequest request) {
         requireNotSelf(actingAdminId, targetUserId);
@@ -150,6 +167,8 @@ public class AdminService {
             throw new IllegalArgumentException("role은 ADMIN 또는 USERS만 가능합니다: " + role);
         }
         target.setRole(role);
+        userRoleCache.put(targetUserId, role);
+        refreshTokenService.revokeAllForUser(targetUserId, RefreshTokenService.REVOKED_REASON_ROLE_CHANGED);
     }
 
     /** 자기 자신을 대상으로 한 정지/해제/삭제/권한변경 차단. */

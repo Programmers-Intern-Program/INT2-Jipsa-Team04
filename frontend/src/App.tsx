@@ -29,6 +29,7 @@ import type { Document, AISettings, ChatMessage, ChatSession, SessionUser, MeRes
 import { getUserSettings, updateUserSettings } from "./api/userSettings";
 import { loginWithGoogle, logout as logoutApi } from "./api/auth";
 import { getMe } from "./api/me";
+import { TOKEN_ROLE_CHANGED_EVENT } from "./api/client";
 import {
   OAUTH_CALLBACK_PATH,
   clearOAuthState,
@@ -184,6 +185,26 @@ export default function App() {
       restoreSession();
     }
     // isCallback도 아니고 토큰도 없으면 authLoading 초기값이 이미 false다.
+  }, []);
+
+  // 관리자가 내 role을 바꾸면 apiFetch가 새 토큰을 조용히 저장하면서 이 이벤트를 발화한다
+  // (api/client.ts 참고). 토큰만 바뀌고 이 user 상태는 그대로 두면, 관리자 메뉴 노출 여부 등
+  // role 기반 화면이 새로고침 전까지 안 바뀌는 문제가 있어 getMe()를 다시 불러 동기화한다.
+  useEffect(() => {
+    function handleTokenRoleChanged() {
+      getMe()
+        .then((me) => {
+          const sessionUser = toSessionUser(me);
+          localStorage.setItem(USER_KEY, JSON.stringify(sessionUser));
+          setUser(sessionUser);
+        })
+        .catch((err) => {
+          console.warn("[auth] role 변경 감지 후 사용자 정보 갱신 실패:", err);
+        });
+    }
+
+    window.addEventListener(TOKEN_ROLE_CHANGED_EVENT, handleTokenRoleChanged);
+    return () => window.removeEventListener(TOKEN_ROLE_CHANGED_EVENT, handleTokenRoleChanged);
   }, []);
 
   // 실제 설정 조회 시도 — user가 아직 null일 때(마운트 시점, OAuth 콜백으로 로그인 처리

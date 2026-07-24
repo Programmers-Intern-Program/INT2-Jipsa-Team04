@@ -5,6 +5,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.Optional;
 
@@ -14,6 +15,13 @@ public interface UsersRepository extends JpaRepository<Users, Long> {
 
     /** GET /api/v1/users/me — 삭제되지 않은(Del=false) 사용자만 조회한다. */
     Optional<Users> findByIdAndDelFalse(Long id);
+
+    /**
+     * {@code UserRoleCache} 미스 시에만 쓰는 가벼운 조회 — role 컬럼 하나만 가져와
+     * {@code JwtAuthenticationFilter}가 매 요청마다 전체 엔티티를 끌어오지 않게 한다.
+     */
+    @Query("select u.role from Users u where u.id = :id")
+    Optional<String> findRoleById(@Param("id") Long id);
 
     /**
      * GET /api/v1/admin/users — 사용자 목록 + 문서 수를 JOIN/GROUP BY 하나로 집계해서 가져온다

@@ -1,5 +1,7 @@
 package com.jipsa.admin;
 
+import com.jipsa.auth.RefreshTokenService;
+import com.jipsa.auth.UserRoleCache;
 import com.jipsa.user.Users;
 import com.jipsa.user.UsersRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -42,12 +45,16 @@ class AdminServiceTest {
     private UsersRepository usersRepository;
     @Mock
     private UserSanctionRepository userSanctionRepository;
+    @Mock
+    private UserRoleCache userRoleCache;
+    @Mock
+    private RefreshTokenService refreshTokenService;
 
     private AdminService adminService;
 
     @BeforeEach
     void setUp() {
-        adminService = new AdminService(usersRepository, userSanctionRepository);
+        adminService = new AdminService(usersRepository, userSanctionRepository, userRoleCache, refreshTokenService);
     }
 
     private Users userWithRole(Long id, String role) {
@@ -224,6 +231,8 @@ class AdminServiceTest {
 
         assertThatThrownBy(() -> adminService.updateRole(ADMIN_ID, TARGET_ID, new UpdateRoleRequest("USER")))
                 .isInstanceOf(IllegalArgumentException.class);
+
+        verifyNoInteractions(userRoleCache, refreshTokenService);   // 검증 실패 시 캐시/토큰엔 손대지 않는다
     }
 
     @Test
@@ -234,6 +243,19 @@ class AdminServiceTest {
         adminService.updateRole(ADMIN_ID, TARGET_ID, new UpdateRoleRequest("ADMIN"));
 
         assertThat(target.getRole()).isEqualTo("ADMIN");
+    }
+
+    @Test
+    void updateRole_정상요청이면_캐시를갱신하고_대상자의_refresh_token을_전부폐기한다() {
+        // 재로그인 없이 반영: 필터가 다음 요청부터 바로 새 role을 보게 캐시를 갱신하고,
+        // 재검증 로직이 뚫리는 경우를 대비해 기존 refresh token도 방어적으로 폐기한다.
+        Users target = userWithRole(TARGET_ID, "USERS");
+        when(usersRepository.findById(TARGET_ID)).thenReturn(Optional.of(target));
+
+        adminService.updateRole(ADMIN_ID, TARGET_ID, new UpdateRoleRequest("ADMIN"));
+
+        verify(userRoleCache).put(TARGET_ID, "ADMIN");
+        verify(refreshTokenService).revokeAllForUser(TARGET_ID, RefreshTokenService.REVOKED_REASON_ROLE_CHANGED);
     }
 
     @Test

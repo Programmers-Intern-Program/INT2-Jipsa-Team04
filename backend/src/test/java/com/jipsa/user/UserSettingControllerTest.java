@@ -1,6 +1,8 @@
 package com.jipsa.user;
 
 import com.jipsa.auth.JwtService;
+import com.jipsa.auth.RefreshTokenService;
+import com.jipsa.auth.UserRoleCache;
 import com.jipsa.common.CurrentUserProvider;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,6 +47,15 @@ class UserSettingControllerTest {
     // addFilters=false라 실제 인증엔 안 쓰이지만, 컨텍스트를 띄우려면 빈 자체는 있어야 해서 mock으로 채운다.
     @MockitoBean
     private JwtService jwtService;
+
+    @MockitoBean
+    private UserRoleCache userRoleCache;
+
+    @MockitoBean
+    private UsersRepository usersRepository;
+
+    @MockitoBean
+    private RefreshTokenService refreshTokenService;
 
     @Test
     void get_본인_설정을_반환한다() throws Exception {
