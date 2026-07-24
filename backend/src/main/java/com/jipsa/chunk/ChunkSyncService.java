@@ -9,25 +9,32 @@ import java.util.Map;
 @Service
 public class ChunkSyncService {
 
+    public enum SyncOutcome {
+        STORED,
+        STALE,
+        NO_DATA
+    }
+
     private final ChunkRepository chunkRepository;
 
     public ChunkSyncService(ChunkRepository chunkRepository) {
         this.chunkRepository = chunkRepository;
     }
 
-    public void sync(Long fileId, Integer indexVersion, List<IngestCompleteRequest.ChunkPayload> chunks) {
+    public SyncOutcome sync(Long fileId, Integer indexVersion, List<IngestCompleteRequest.ChunkPayload> chunks) {
         if (indexVersion == null || chunks == null || chunks.isEmpty()) {
-            return;
+            return SyncOutcome.NO_DATA;
         }
         Integer existingVersion = chunkRepository.findMaxIndexVersionByFileId(fileId);
         if (existingVersion != null && indexVersion < existingVersion) {
-            return;
+            return SyncOutcome.STALE;
         }
         chunkRepository.deleteByFileId(fileId);
         List<Chunk> entities = chunks.stream()
                 .map(payload -> toEntity(fileId, indexVersion, payload))
                 .toList();
         chunkRepository.saveAll(entities);
+        return SyncOutcome.STORED;
     }
 
     private Chunk toEntity(Long fileId, Integer indexVersion, IngestCompleteRequest.ChunkPayload payload) {

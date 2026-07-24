@@ -31,16 +31,22 @@ public class IngestCallbackService {
             if (inconsistency != null) {
                 file.setStatus(FileStatus.FAILED);
                 file.setErrorMessage(inconsistency);
-            } else {
-                file.setStatus(FileStatus.READY);
-                file.setErrorMessage(null);
-                chunkSyncService.sync(fileIdx, request.indexVersion(), request.chunks());
+                file.setProcessingStage(null);
+                return;
             }
+            ChunkSyncService.SyncOutcome outcome =
+                    chunkSyncService.sync(fileIdx, request.indexVersion(), request.chunks());
+            if (outcome != ChunkSyncService.SyncOutcome.STORED) {
+                return;
+            }
+            file.setStatus(FileStatus.READY);
+            file.setErrorMessage(null);
+            file.setProcessingStage(null);
         } else {
             file.setStatus(FileStatus.FAILED);
             file.setErrorMessage(request.errorMessage());
+            file.setProcessingStage(null);
         }
-        file.setProcessingStage(null);
     }
 
     private String validateSuccessPayload(IngestCompleteRequest request) {
