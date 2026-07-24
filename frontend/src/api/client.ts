@@ -8,6 +8,9 @@
 const TOKEN_STORAGE_KEY = "aidrive_token";
 const REFRESH_TOKEN_STORAGE_KEY = "aidrive_refresh_token";
 const USER_STORAGE_KEY = "aidrive_user";
+// 관리자가 이 사용자의 role을 바꾸면 JwtAuthenticationFilter가 다음 요청 응답에 이 헤더로
+// 새 Access Token을 실어 보낸다(재로그인 없이 반영). 있으면 조용히 저장 토큰을 교체한다.
+const NEW_ACCESS_TOKEN_HEADER = "X-New-Access-Token";
 
 export class ApiError extends Error {
   status: number;
@@ -53,6 +56,14 @@ export function getCurrentUserId(): number | null {
     return Number.isFinite(id) ? id : null;
   } catch {
     return null;
+  }
+}
+
+/** 응답에 새 Access Token 헤더가 실려 있으면 저장소의 토큰을 조용히 교체한다. */
+function applyRefreshedTokenHeader(response: Response): void {
+  const newToken = response.headers.get(NEW_ACCESS_TOKEN_HEADER);
+  if (newToken) {
+    localStorage.setItem(TOKEN_STORAGE_KEY, newToken);
   }
 }
 
@@ -162,6 +173,7 @@ export async function apiFetch<T>(
   const isAuthEndpoint = path.startsWith("/auth/");
 
   let response = await doFetch(path, method, body);
+  applyRefreshedTokenHeader(response);
 
   if (response.status === 401 && !isAuthEndpoint && getRefreshToken()) {
     try {
@@ -172,6 +184,7 @@ export async function apiFetch<T>(
       throw await toApiError(response);
     }
     response = await doFetch(path, method, body);   // 재시도는 최대 1회
+    applyRefreshedTokenHeader(response);
   }
 
   if (!response.ok) {
