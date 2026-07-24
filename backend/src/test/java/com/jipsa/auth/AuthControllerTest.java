@@ -40,9 +40,16 @@ class AuthControllerTest {
     private AuthService authService;
 
     // @WebMvcTest 슬라이스에 Filter 타입 빈(JwtAuthenticationFilter)이 포함되고 그 생성자가
-    // JwtService를 요구한다. addFilters = false라 실제로 쓰이진 않지만 컨텍스트를 띄우려면 빈은 필요하다.
+    // JwtService/UserRoleCache/UsersRepository를 요구한다. addFilters = false라 실제로 쓰이진
+    // 않지만 컨텍스트를 띄우려면 빈은 필요하다.
     @MockitoBean
     private com.jipsa.auth.JwtService jwtService;
+
+    @MockitoBean
+    private UserRoleCache userRoleCache;
+
+    @MockitoBean
+    private com.jipsa.user.UsersRepository usersRepository;
 
     @Test
     void 정상_로그인시_200과_accessToken_refreshToken_isNewUser를_반환한다() throws Exception {

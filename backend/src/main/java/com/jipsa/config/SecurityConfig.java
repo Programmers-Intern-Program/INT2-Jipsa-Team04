@@ -71,6 +71,9 @@ public class SecurityConfig {
         config.setAllowedOrigins(List.of("http://localhost:5173", "https://jipsa.uk"));
         config.setAllowedMethods(List.of("GET", "POST", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+        // role 변경 감지 시 JwtAuthenticationFilter가 실어 보내는 새 Access Token 헤더 —
+        // 커스텀 응답 헤더는 노출(expose)하지 않으면 브라우저 JS에서 못 읽는다.
+        config.setExposedHeaders(List.of(JwtAuthenticationFilter.NEW_ACCESS_TOKEN_HEADER));
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);

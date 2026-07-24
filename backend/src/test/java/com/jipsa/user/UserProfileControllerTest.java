@@ -1,6 +1,7 @@
 package com.jipsa.user;
 
 import com.jipsa.auth.JwtService;
+import com.jipsa.auth.UserRoleCache;
 import com.jipsa.common.CurrentUserProvider;
 import com.jipsa.common.NotFoundException;
 import org.junit.jupiter.api.Test;
@@ -37,9 +38,16 @@ class UserProfileControllerTest {
     private CurrentUserProvider currentUserProvider;
 
     // @WebMvcTest가 Filter 타입 빈(JwtAuthenticationFilter)을 슬라이스에 포함시키므로 그 의존성인
-    // JwtService도 mock으로 채워줘야 컨텍스트가 뜬다(addFilters=false라 실제 인증엔 안 쓰인다).
+    // JwtService/UserRoleCache/UsersRepository도 mock으로 채워줘야 컨텍스트가 뜬다(addFilters=false라
+    // 실제 인증엔 안 쓰인다).
     @MockitoBean
     private JwtService jwtService;
+
+    @MockitoBean
+    private UserRoleCache userRoleCache;
+
+    @MockitoBean
+    private UsersRepository usersRepository;
 
     @Test
     void me_본인_프로필을_공통포맷으로_반환한다() throws Exception {

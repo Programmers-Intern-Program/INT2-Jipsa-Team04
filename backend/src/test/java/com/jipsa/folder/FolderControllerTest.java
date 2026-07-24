@@ -1,7 +1,9 @@
 package com.jipsa.folder;
 
 import com.jipsa.auth.JwtService;
+import com.jipsa.auth.UserRoleCache;
 import com.jipsa.common.CurrentUserProvider;
+import com.jipsa.user.UsersRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -52,10 +54,16 @@ class FolderControllerTest {
     private CurrentUserProvider currentUserProvider;
 
     // @WebMvcTest는 Filter 타입 빈도 슬라이스에 포함시키기 때문에 JwtAuthenticationFilter가
-    // 같이 뜨고, 그 생성자가 JwtService를 요구한다. addFilters = false라 실제로 인증에
-    // 쓰이진 않지만, 컨텍스트를 띄우려면 빈 자체는 있어야 해서 mock으로 채워준다.
+    // 같이 뜨고, 그 생성자가 JwtService/UserRoleCache/UsersRepository를 요구한다. addFilters =
+    // false라 실제로 인증에 쓰이진 않지만, 컨텍스트를 띄우려면 빈 자체는 있어야 해서 mock으로 채워준다.
     @MockitoBean
     private JwtService jwtService;
+
+    @MockitoBean
+    private UserRoleCache userRoleCache;
+
+    @MockitoBean
+    private UsersRepository usersRepository;
 
     @Test
     void list_본인_폴더_평면목록을_반환한다() throws Exception {
