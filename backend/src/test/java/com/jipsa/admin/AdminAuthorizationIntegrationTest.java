@@ -2,6 +2,7 @@ package com.jipsa.admin;
 
 import com.jipsa.auth.JwtAuthenticationFilter;
 import com.jipsa.auth.JwtService;
+import com.jipsa.auth.RefreshTokenService;
 import com.jipsa.auth.UserRoleCache;
 import com.jipsa.common.CurrentUserProvider;
 import com.jipsa.config.SecurityConfig;
@@ -60,6 +61,9 @@ class AdminAuthorizationIntegrationTest {
     @MockitoBean
     private UserRoleCache userRoleCache;
 
+    @MockitoBean
+    private RefreshTokenService refreshTokenService;
+
     @org.junit.jupiter.api.BeforeEach
     void stubActiveUser() {
         com.jipsa.user.Users activeUser = new com.jipsa.user.Users();
@@ -112,11 +116,13 @@ class AdminAuthorizationIntegrationTest {
         given(adminAccessGuard.isCurrentlyAdmin()).willReturn(true);
         given(adminService.listUsers(ADMIN_ID, null, null))
                 .willReturn(new AdminUserListResponse(List.of(), 0L));
+        given(refreshTokenService.issue(ADMIN_ID)).willReturn("new-raw-refresh-token");
 
         org.springframework.test.web.servlet.MvcResult result = mockMvc.perform(get("/api/v1/admin/users")
                         .header("Authorization", "Bearer " + tokenFor("USERS")))
                 .andExpect(status().isOk())
                 .andExpect(header().exists(JwtAuthenticationFilter.NEW_ACCESS_TOKEN_HEADER))
+                .andExpect(header().string(JwtAuthenticationFilter.NEW_REFRESH_TOKEN_HEADER, "new-raw-refresh-token"))
                 .andReturn();
 
         // 헤더에 뭔가 값이 있다는 것만으로는 "교체"가 증명되지 않는다 — 그 값을 실제로 디코드해서

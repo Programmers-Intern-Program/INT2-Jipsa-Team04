@@ -1,6 +1,7 @@
 package com.jipsa.user;
 
 import com.jipsa.auth.JwtService;
+import com.jipsa.auth.RefreshTokenService;
 import com.jipsa.auth.UserRoleCache;
 import com.jipsa.common.CurrentUserProvider;
 import org.junit.jupiter.api.Test;
@@ -52,6 +53,9 @@ class UserSettingControllerTest {
 
     @MockitoBean
     private UsersRepository usersRepository;
+
+    @MockitoBean
+    private RefreshTokenService refreshTokenService;
 
     @Test
     void get_본인_설정을_반환한다() throws Exception {

@@ -1,6 +1,7 @@
 package com.jipsa.admin;
 
 import com.jipsa.auth.JwtService;
+import com.jipsa.auth.RefreshTokenService;
 import com.jipsa.auth.UserRoleCache;
 import com.jipsa.common.CurrentUserProvider;
 import com.jipsa.user.UsersRepository;
@@ -59,6 +60,9 @@ class AdminControllerTest {
 
     @MockitoBean
     private UsersRepository usersRepository;
+
+    @MockitoBean
+    private RefreshTokenService refreshTokenService;
 
     @MockitoBean
     private AdminAccessGuard adminAccessGuard;

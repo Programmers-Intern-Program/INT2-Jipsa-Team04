@@ -51,6 +51,9 @@ class AuthControllerTest {
     @MockitoBean
     private com.jipsa.user.UsersRepository usersRepository;
 
+    @MockitoBean
+    private RefreshTokenService refreshTokenService;
+
     @Test
     void 정상_로그인시_200과_accessToken_refreshToken_isNewUser를_반환한다() throws Exception {
         given(authService.loginWithGoogle("valid-code", "verifier-abc"))

@@ -1,6 +1,7 @@
 package com.jipsa.folder;
 
 import com.jipsa.auth.JwtService;
+import com.jipsa.auth.RefreshTokenService;
 import com.jipsa.auth.UserRoleCache;
 import com.jipsa.common.CurrentUserProvider;
 import com.jipsa.user.UsersRepository;
@@ -64,6 +65,9 @@ class FolderControllerTest {
 
     @MockitoBean
     private UsersRepository usersRepository;
+
+    @MockitoBean
+    private RefreshTokenService refreshTokenService;
 
     @Test
     void list_본인_폴더_평면목록을_반환한다() throws Exception {

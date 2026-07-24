@@ -1,6 +1,7 @@
 package com.jipsa.organize;
 
 import com.jipsa.auth.JwtService;
+import com.jipsa.auth.RefreshTokenService;
 import com.jipsa.auth.UserRoleCache;
 import com.jipsa.common.BadRequestException;
 import com.jipsa.common.CurrentUserProvider;
@@ -60,6 +61,9 @@ class OrganizeControllerTest {
 
     @MockitoBean
     private UsersRepository usersRepository;
+
+    @MockitoBean
+    private RefreshTokenService refreshTokenService;
 
     @Test
     void currentTree_현재_폴더_트리를_반환한다() throws Exception {

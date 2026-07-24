@@ -18,6 +18,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -42,6 +43,9 @@ class JwtAuthenticationFilterTest {
     @Mock
     private UsersRepository usersRepository;
 
+    @Mock
+    private RefreshTokenService refreshTokenService;
+
     private UserRoleCache userRoleCache;
     private JwtService jwtService;
     private JwtAuthenticationFilter filter;
@@ -50,7 +54,7 @@ class JwtAuthenticationFilterTest {
     void setUp() {
         userRoleCache = new UserRoleCache();
         jwtService = new JwtService(TEST_SECRET, 2_700_000L);
-        filter = new JwtAuthenticationFilter(jwtService, userRoleCache, usersRepository);
+        filter = new JwtAuthenticationFilter(jwtService, userRoleCache, usersRepository, refreshTokenService);
     }
 
     @AfterEach
@@ -77,13 +81,19 @@ class JwtAuthenticationFilterTest {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         assertThat(auth.getAuthorities()).extracting(Object::toString).containsExactly("ROLE_USERS");
         assertThat(response.getHeader(JwtAuthenticationFilter.NEW_ACCESS_TOKEN_HEADER)).isNull();
+        assertThat(response.getHeader(JwtAuthenticationFilter.NEW_REFRESH_TOKEN_HEADER)).isNull();
         verify(chain).doFilter(request, response);
+        verifyNoInteractions(refreshTokenService);   // mismatch가 없으면 새 토큰을 발급할 이유도 없다
     }
 
     @Test
-    void 캐시의_role이_토큰과_다르면_현재role로_인가하고_새토큰을_헤더로_내려준다() throws Exception {
+    void 캐시의_role이_토큰과_다르면_현재role로_인가하고_새Access_Refresh_토큰을_헤더로_내려준다() throws Exception {
         // 승격 시나리오: 토큰은 USERS로 발급됐지만 그 사이 관리자가 ADMIN으로 바꿨다.
+        // Refresh Token도 같이 새로 내려줘야 한다 — 안 그러면 이 Access Token마저 나중에 자연
+        // 만료됐을 때, role 변경 시 방어적으로 폐기된 옛 Refresh Token으로 갱신을 시도하다 401을
+        // 맞아 결국 강제 로그아웃된다(리뷰에서 지적된 시나리오).
         userRoleCache.put(USER_ID, "ADMIN");
+        when(refreshTokenService.issue(USER_ID)).thenReturn("new-raw-refresh-token");
         String token = jwtService.generateToken(USER_ID, "USERS");
         MockHttpServletRequest request = requestWithToken(token);
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -100,12 +110,17 @@ class JwtAuthenticationFilterTest {
         assertThat(newPrincipal).isPresent();
         assertThat(newPrincipal.get().userId()).isEqualTo(USER_ID);
         assertThat(newPrincipal.get().role()).isEqualTo("ADMIN");
+
+        assertThat(response.getHeader(JwtAuthenticationFilter.NEW_REFRESH_TOKEN_HEADER))
+                .isEqualTo("new-raw-refresh-token");
+        verify(refreshTokenService).issue(USER_ID);
     }
 
     @Test
     void 캐시미스면_DB에서_채우고_그값으로_인가한다() throws Exception {
         String token = jwtService.generateToken(USER_ID, "USERS");
         when(usersRepository.findRoleById(USER_ID)).thenReturn(Optional.of("ADMIN"));
+        when(refreshTokenService.issue(USER_ID)).thenReturn("new-raw-refresh-token");
         MockHttpServletRequest request = requestWithToken(token);
         MockHttpServletResponse response = new MockHttpServletResponse();
         FilterChain chain = mock(FilterChain.class);
@@ -116,6 +131,10 @@ class JwtAuthenticationFilterTest {
         assertThat(auth.getAuthorities()).extracting(Object::toString).containsExactly("ROLE_ADMIN");
         // 다음 요청부터는 DB를 다시 안 타도록 캐시가 채워져 있어야 한다.
         assertThat(userRoleCache.get(USER_ID)).contains("ADMIN");
+        // DB 조회 결과도 토큰 claim(USERS)과 다르므로 마찬가지로 mismatch — 새 토큰 헤더가 내려간다.
+        assertThat(response.getHeader(JwtAuthenticationFilter.NEW_ACCESS_TOKEN_HEADER)).isNotBlank();
+        assertThat(response.getHeader(JwtAuthenticationFilter.NEW_REFRESH_TOKEN_HEADER))
+                .isEqualTo("new-raw-refresh-token");
     }
 
     @Test
@@ -133,6 +152,8 @@ class JwtAuthenticationFilterTest {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         assertThat(auth.getAuthorities()).extracting(Object::toString).containsExactly("ROLE_USERS");
         assertThat(response.getHeader(JwtAuthenticationFilter.NEW_ACCESS_TOKEN_HEADER)).isNull();
+        assertThat(response.getHeader(JwtAuthenticationFilter.NEW_REFRESH_TOKEN_HEADER)).isNull();
+        verifyNoInteractions(refreshTokenService);
     }
 
     @Test

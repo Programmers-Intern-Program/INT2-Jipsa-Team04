@@ -1,6 +1,7 @@
 package com.jipsa.user;
 
 import com.jipsa.auth.JwtService;
+import com.jipsa.auth.RefreshTokenService;
 import com.jipsa.auth.UserRoleCache;
 import com.jipsa.common.CurrentUserProvider;
 import com.jipsa.common.NotFoundException;
@@ -48,6 +49,9 @@ class UserProfileControllerTest {
 
     @MockitoBean
     private UsersRepository usersRepository;
+
+    @MockitoBean
+    private RefreshTokenService refreshTokenService;
 
     @Test
     void me_본인_프로필을_공통포맷으로_반환한다() throws Exception {
