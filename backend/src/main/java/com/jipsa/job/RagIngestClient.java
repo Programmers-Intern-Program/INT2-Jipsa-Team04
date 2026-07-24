@@ -46,6 +46,20 @@ public class RagIngestClient {
         log.info("Pushed ingest manifest for file {} to RAG", manifest.fileIdx());
     }
 
+    public void purge(Long fileIdx, Long usersIdx) {
+        if (baseUrl == null || baseUrl.isBlank()) {
+            throw new IllegalStateException("app.rag.base-url이 설정되지 않아 벡터 삭제를 진행할 수 없습니다.");
+        }
+        restClient.post()
+                .uri(baseUrl + "/files/" + fileIdx + "/purge")
+                .header("X-Internal-Token", token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(java.util.Map.of("users_idx", usersIdx))
+                .retrieve()
+                .toBodilessEntity();
+        log.info("Requested RAG purge for file {}", fileIdx);
+    }
+
     private static ClientHttpRequestFactory requestFactory(Duration readTimeout) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(CONNECT_TIMEOUT);

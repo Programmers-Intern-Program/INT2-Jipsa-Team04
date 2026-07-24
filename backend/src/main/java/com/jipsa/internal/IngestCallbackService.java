@@ -1,5 +1,6 @@
 package com.jipsa.internal;
 
+import com.jipsa.chunk.ChunkSyncService;
 import com.jipsa.common.exception.FileNotFoundException;
 import com.jipsa.file.File;
 import com.jipsa.file.FileRepository;
@@ -11,9 +12,12 @@ import org.springframework.transaction.annotation.Transactional;
 public class IngestCallbackService {
 
     private final FileRepository fileRepository;
+    private final ChunkSyncService chunkSyncService;
 
-    public IngestCallbackService(FileRepository fileRepository) {
+    public IngestCallbackService(FileRepository fileRepository,
+                                 ChunkSyncService chunkSyncService) {
         this.fileRepository = fileRepository;
+        this.chunkSyncService = chunkSyncService;
     }
 
     @Transactional
@@ -23,6 +27,7 @@ public class IngestCallbackService {
         if (request.success()) {
             file.setStatus(FileStatus.READY);
             file.setErrorMessage(null);
+            chunkSyncService.sync(fileIdx, request.indexVersion(), request.chunks());
         } else {
             file.setStatus(FileStatus.FAILED);
             file.setErrorMessage(request.errorMessage());

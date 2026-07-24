@@ -11,6 +11,12 @@ import com.jipsa.folder.FolderRepository;
 import com.jipsa.job.Job;
 import com.jipsa.job.JobRepository;
 import com.jipsa.job.JobService;
+import com.jipsa.job.RagIngestClient;
+import com.jipsa.chunk.ChunkRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -40,6 +46,9 @@ public class FileService {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private final String bucket;
     private final long storageQuotaBytes;
+    private final ChunkRepository chunkRepository;
+    private final RagIngestClient ragIngestClient;
+    private static final Logger log = LoggerFactory.getLogger(FileService.class);
 
     public FileService(FileRepository fileRepository,
                        JobRepository jobRepository,
@@ -48,7 +57,9 @@ public class FileService {
                        FileMetadataRepository fileMetadataRepository,
                        S3Service s3Service,
                        @Value("${app.s3.bucket}") String bucket,
-                       @Value("${app.storage.quota-bytes:107374182400}") long storageQuotaBytes) {
+                       @Value("${app.storage.quota-bytes:107374182400}") long storageQuotaBytes,
+                       ChunkRepository chunkRepository,
+                       RagIngestClient ragIngestClient) {
         this.fileRepository = fileRepository;
         this.jobRepository = jobRepository;
         this.jobService = jobService;
@@ -57,6 +68,8 @@ public class FileService {
         this.s3Service = s3Service;
         this.bucket = bucket;
         this.storageQuotaBytes = storageQuotaBytes;
+        this.chunkRepository = chunkRepository;
+        this.ragIngestClient = ragIngestClient;
     }
 
     @Transactional(readOnly = true)
@@ -145,10 +158,14 @@ public class FileService {
         fileRepository.findByFolderIdInAndDeletedAt(folderIds, deletedAt)
                 .forEach(file -> {
                     file.setDeletedAt(null);
-                    file.setStatus(FileStatus.UPLOADED);
                     file.setProcessingStage(null);
                     file.setErrorMessage(null);
-                    jobService.enqueueIngest(file.getId(), file.getUploadsId());
+                    if (chunkRepository.countByFileId(file.getId()) > 0) {
+                        file.setStatus(FileStatus.READY);
+                    } else {
+                        file.setStatus(FileStatus.UPLOADED);
+                        jobService.enqueueIngest(file.getId(), file.getUploadsId());
+                    }
                 });
     }
 
@@ -162,8 +179,10 @@ public class FileService {
             }
             jobRepository.deleteByFileId(file.getId());
             fileMetadataRepository.findById(file.getId()).ifPresent(fileMetadataRepository::delete);
+            chunkRepository.deleteByFileId(file.getId());
         });
         fileRepository.deleteAll(files);
+        files.forEach(file -> schedulePurge(file.getId(), file.getUsersId()));
     }
 
     @Transactional(readOnly = true)
@@ -192,10 +211,14 @@ public class FileService {
             file.setFolderId(null);
         }
         file.setDeletedAt(null);
-        file.setStatus(FileStatus.UPLOADED);
         file.setProcessingStage(null);
         file.setErrorMessage(null);
-        jobService.enqueueIngest(file.getId(), file.getUploadsId());
+        if (chunkRepository.countByFileId(file.getId()) > 0) {
+            file.setStatus(FileStatus.READY);
+        } else {
+            file.setStatus(FileStatus.UPLOADED);
+            jobService.enqueueIngest(file.getId(), file.getUploadsId());
+        }
     }
 
     private boolean isFolderDeletedOrMissing(Long folderId) {
@@ -219,7 +242,30 @@ public class FileService {
         }
         jobRepository.deleteByFileId(fileId);
         fileMetadataRepository.findById(fileId).ifPresent(fileMetadataRepository::delete);
+        chunkRepository.deleteByFileId(fileId);
         fileRepository.delete(file);
+        schedulePurge(file.getId(), file.getUsersId());
+    }
+
+    private void schedulePurge(Long fileId, Long usersId) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    purgeRagSafely(fileId, usersId);
+                }
+            });
+        } else {
+            purgeRagSafely(fileId, usersId);
+        }
+    }
+
+    private void purgeRagSafely(Long fileId, Long usersId) {
+        try {
+            ragIngestClient.purge(fileId, usersId);
+        } catch (RuntimeException e) {
+            log.warn("RAG purge 실패 (file {}): {}", fileId, e.getMessage());
+        }
     }
 
     @Transactional(readOnly = true)
