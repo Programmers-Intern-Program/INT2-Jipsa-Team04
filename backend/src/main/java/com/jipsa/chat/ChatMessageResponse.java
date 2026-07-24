@@ -9,6 +9,8 @@ public record ChatMessageResponse(
         String answer,
         String status,
         String feedbackRating,
+        String feedbackComment,
+        LocalDateTime feedbackAt,
         LocalDateTime createdAt,
         List<Citation> citations
 ) {

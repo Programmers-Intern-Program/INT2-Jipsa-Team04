@@ -95,6 +95,8 @@ public class ChatService {
                 ragResponse.answer(),
                 ragResponse.status(),
                 saved.getFeedbackRating(),
+                saved.getFeedbackComment(),
+                saved.getFeedbackAt(),
                 saved.getCreatedAt(),
                 citations);
     }
@@ -110,6 +112,8 @@ public class ChatService {
                     message.getAnswer(),
                     message.getAnswerStatus(),
                     message.getFeedbackRating(),
+                    message.getFeedbackComment(),
+                    message.getFeedbackAt(),
                     message.getCreatedAt(),
                     reconstructCitations(message.getId())));
         }

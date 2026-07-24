@@ -1,7 +1,7 @@
 package com.jipsa.chat;
 
+import com.jipsa.common.exception.TooManyRequestsException;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.server.ResponseStatusException;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -15,7 +15,7 @@ class ChatRateLimiterTest {
             limiter.check(1L);
         }
         assertThatThrownBy(() -> limiter.check(1L))
-                .isInstanceOf(ResponseStatusException.class);
+                .isInstanceOf(TooManyRequestsException.class);
     }
 
     @Test

@@ -1,8 +1,8 @@
 package com.jipsa.chat;
 
-import org.springframework.http.HttpStatus;
+import com.jipsa.common.exception.TooManyRequestsException;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -21,14 +21,30 @@ public class ChatRateLimiter {
         long now = System.currentTimeMillis();
         Deque<Long> timestamps = userRequests.computeIfAbsent(userId, key -> new ArrayDeque<>());
         synchronized (timestamps) {
-            while (!timestamps.isEmpty() && now - timestamps.peekFirst() > WINDOW_MS) {
-                timestamps.pollFirst();
-            }
+            evictOld(timestamps, now);
             if (timestamps.size() >= MAX_REQUESTS_PER_WINDOW) {
-                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
-                        "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.");
+                throw new TooManyRequestsException("요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.");
             }
             timestamps.addLast(now);
+        }
+    }
+
+    @Scheduled(fixedDelayString = "${app.chat.rate-limit.cleanup-ms:300000}")
+    public void cleanup() {
+        long now = System.currentTimeMillis();
+        userRequests.forEach((userId, timestamps) -> {
+            synchronized (timestamps) {
+                evictOld(timestamps, now);
+                if (timestamps.isEmpty()) {
+                    userRequests.remove(userId, timestamps);
+                }
+            }
+        });
+    }
+
+    private void evictOld(Deque<Long> timestamps, long now) {
+        while (!timestamps.isEmpty() && now - timestamps.peekFirst() > WINDOW_MS) {
+            timestamps.pollFirst();
         }
     }
 }
