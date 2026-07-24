@@ -8,6 +8,17 @@
 const TOKEN_STORAGE_KEY = "aidrive_token";
 const REFRESH_TOKEN_STORAGE_KEY = "aidrive_refresh_token";
 const USER_STORAGE_KEY = "aidrive_user";
+// 관리자가 이 사용자의 role을 바꾸면 JwtAuthenticationFilter가 다음 요청 응답에 이 헤더로
+// 새 Access Token을 실어 보낸다(재로그인 없이 반영). 있으면 조용히 저장 토큰을 교체한다.
+const NEW_ACCESS_TOKEN_HEADER = "X-New-Access-Token";
+// 같은 타이밍에 같이 내려오는 새 Refresh Token 헤더. role 변경 시 백엔드가 대상자의 기존
+// Refresh Token을 방어적으로 전부 폐기하기 때문에, 이걸 같이 안 받아두면 이 Access Token마저
+// 나중에 자연 만료됐을 때 옛(폐기된) Refresh Token으로 갱신을 시도하다 401 → 강제 로그아웃된다.
+const NEW_REFRESH_TOKEN_HEADER = "X-New-Refresh-Token";
+// role이 바뀌어 토큰이 조용히 교체됐을 때 발화하는 이벤트. React 쪽(App.tsx)이 이걸 구독해서
+// getMe()를 다시 불러 user 상태(관리자 메뉴 표시 등)를 갱신한다 — 토큰만 바꾸고 화면 상태는
+// 그대로 두면 새로고침 전까지 권한 변경이 눈에 안 보이는 문제가 있었다.
+export const TOKEN_ROLE_CHANGED_EVENT = "aidrive:token-role-changed";
 
 export class ApiError extends Error {
   status: number;
@@ -53,6 +64,23 @@ export function getCurrentUserId(): number | null {
     return Number.isFinite(id) ? id : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * 응답에 새 Access/Refresh Token 헤더가 실려 있으면(=role이 방금 바뀜) 저장소의 토큰을
+ * 조용히 교체하고, React 쪽에 알려서 user 상태도 다시 조회하게 한다.
+ */
+function applyRefreshedTokenHeader(response: Response): void {
+  const newToken = response.headers.get(NEW_ACCESS_TOKEN_HEADER);
+  if (newToken) {
+    localStorage.setItem(TOKEN_STORAGE_KEY, newToken);
+    window.dispatchEvent(new Event(TOKEN_ROLE_CHANGED_EVENT));
+  }
+
+  const newRefreshToken = response.headers.get(NEW_REFRESH_TOKEN_HEADER);
+  if (newRefreshToken) {
+    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, newRefreshToken);
   }
 }
 
@@ -162,6 +190,7 @@ export async function apiFetch<T>(
   const isAuthEndpoint = path.startsWith("/auth/");
 
   let response = await doFetch(path, method, body);
+  applyRefreshedTokenHeader(response);
 
   if (response.status === 401 && !isAuthEndpoint && getRefreshToken()) {
     try {
@@ -172,6 +201,7 @@ export async function apiFetch<T>(
       throw await toApiError(response);
     }
     response = await doFetch(path, method, body);   // 재시도는 최대 1회
+    applyRefreshedTokenHeader(response);
   }
 
   if (!response.ok) {

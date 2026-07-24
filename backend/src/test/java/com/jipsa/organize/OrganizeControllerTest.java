@@ -1,11 +1,14 @@
 package com.jipsa.organize;
 
 import com.jipsa.auth.JwtService;
+import com.jipsa.auth.RefreshTokenService;
+import com.jipsa.auth.UserRoleCache;
 import com.jipsa.common.BadRequestException;
 import com.jipsa.common.CurrentUserProvider;
 import com.jipsa.common.exception.FileNotFoundException;
 import com.jipsa.common.exception.ForbiddenException;
 import com.jipsa.folder.FolderNotFoundException;
+import com.jipsa.user.UsersRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -52,6 +55,15 @@ class OrganizeControllerTest {
     // (FolderControllerTest와 동일한 이유 — addFilters=false라 실제 인증엔 안 쓰임).
     @MockitoBean
     private JwtService jwtService;
+
+    @MockitoBean
+    private UserRoleCache userRoleCache;
+
+    @MockitoBean
+    private UsersRepository usersRepository;
+
+    @MockitoBean
+    private RefreshTokenService refreshTokenService;
 
     @Test
     void currentTree_현재_폴더_트리를_반환한다() throws Exception {

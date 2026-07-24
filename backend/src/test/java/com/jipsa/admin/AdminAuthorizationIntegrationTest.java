@@ -2,6 +2,8 @@ package com.jipsa.admin;
 
 import com.jipsa.auth.JwtAuthenticationFilter;
 import com.jipsa.auth.JwtService;
+import com.jipsa.auth.RefreshTokenService;
+import com.jipsa.auth.UserRoleCache;
 import com.jipsa.common.CurrentUserProvider;
 import com.jipsa.config.SecurityConfig;
 import org.junit.jupiter.api.Test;
@@ -16,6 +18,7 @@ import java.util.List;
 
 import static org.mockito.BDDMockito.given;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -54,6 +57,12 @@ class AdminAuthorizationIntegrationTest {
 
     @MockitoBean
     private com.jipsa.user.UsersRepository usersRepository;
+
+    @MockitoBean
+    private UserRoleCache userRoleCache;
+
+    @MockitoBean
+    private RefreshTokenService refreshTokenService;
 
     @org.junit.jupiter.api.BeforeEach
     void stubActiveUser() {
@@ -97,6 +106,32 @@ class AdminAuthorizationIntegrationTest {
                         .header("Authorization", "Bearer " + tokenFor("USERS")))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+    }
+
+    @Test
+    void list_JWT는_USERS이지만_방금_ADMIN으로_승격됐으면_재로그인없이_200이고_새토큰헤더를받는다() throws Exception {
+        // 재로그인 없이 반영 시나리오: 토큰 발급 이후 관리자로 승격된 사용자가 옛(USERS) 토큰으로
+        // 요청해도, 필터가 캐시(=DB)의 현재 role로 인가를 판단해 바로 통과해야 한다.
+        given(userRoleCache.get(ADMIN_ID)).willReturn(java.util.Optional.of("ADMIN"));
+        given(adminAccessGuard.isCurrentlyAdmin()).willReturn(true);
+        given(adminService.listUsers(ADMIN_ID, null, null))
+                .willReturn(new AdminUserListResponse(List.of(), 0L));
+        given(refreshTokenService.issue(ADMIN_ID)).willReturn("new-raw-refresh-token");
+
+        org.springframework.test.web.servlet.MvcResult result = mockMvc.perform(get("/api/v1/admin/users")
+                        .header("Authorization", "Bearer " + tokenFor("USERS")))
+                .andExpect(status().isOk())
+                .andExpect(header().exists(JwtAuthenticationFilter.NEW_ACCESS_TOKEN_HEADER))
+                .andExpect(header().string(JwtAuthenticationFilter.NEW_REFRESH_TOKEN_HEADER, "new-raw-refresh-token"))
+                .andReturn();
+
+        // 헤더에 뭔가 값이 있다는 것만으로는 "교체"가 증명되지 않는다 — 그 값을 실제로 디코드해서
+        // 새 토큰이 옛 토큰(USERS)이 아니라 지금 DB 기준 role(ADMIN)을 담고 있는지까지 확인한다.
+        String newToken = result.getResponse().getHeader(JwtAuthenticationFilter.NEW_ACCESS_TOKEN_HEADER);
+        java.util.Optional<com.jipsa.auth.JwtPrincipal> newPrincipal = jwtService.validateAndGetPrincipal(newToken);
+        org.assertj.core.api.Assertions.assertThat(newPrincipal).isPresent();
+        org.assertj.core.api.Assertions.assertThat(newPrincipal.get().userId()).isEqualTo(ADMIN_ID);
+        org.assertj.core.api.Assertions.assertThat(newPrincipal.get().role()).isEqualTo("ADMIN");
     }
 
     // --- POST /api/v1/admin/users/{id}/suspend ---

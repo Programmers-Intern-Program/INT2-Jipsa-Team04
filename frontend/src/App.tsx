@@ -29,6 +29,7 @@ import type { Document, AISettings, ChatMessage, ChatSession, SessionUser, MeRes
 import { getUserSettings, updateUserSettings } from "./api/userSettings";
 import { loginWithGoogle, logout as logoutApi } from "./api/auth";
 import { getMe } from "./api/me";
+import { TOKEN_ROLE_CHANGED_EVENT } from "./api/client";
 import {
   OAUTH_CALLBACK_PATH,
   clearOAuthState,
@@ -37,6 +38,7 @@ import {
   verifyOAuthState,
 } from "./utils/oauth";
 import { listAllFiles } from "./api/files";
+import { useUploads } from "./upload/UploadProvider";
 import { fetchWithRetry } from "./utils/retry";
 
 const TOKEN_KEY = "aidrive_token";
@@ -104,6 +106,7 @@ export default function App() {
   );
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [documents, setDocuments] = useState<Document[]>([]);
+  const { uploadedSignal } = useUploads();
   const [chatSessions, setChatSessions] = useState<ChatSession[]>(() => [
     createChatSession(getInitialSelectedDocIds([]))
   ]);
@@ -186,6 +189,26 @@ export default function App() {
     // isCallback도 아니고 토큰도 없으면 authLoading 초기값이 이미 false다.
   }, []);
 
+  // 관리자가 내 role을 바꾸면 apiFetch가 새 토큰을 조용히 저장하면서 이 이벤트를 발화한다
+  // (api/client.ts 참고). 토큰만 바뀌고 이 user 상태는 그대로 두면, 관리자 메뉴 노출 여부 등
+  // role 기반 화면이 새로고침 전까지 안 바뀌는 문제가 있어 getMe()를 다시 불러 동기화한다.
+  useEffect(() => {
+    function handleTokenRoleChanged() {
+      getMe()
+        .then((me) => {
+          const sessionUser = toSessionUser(me);
+          localStorage.setItem(USER_KEY, JSON.stringify(sessionUser));
+          setUser(sessionUser);
+        })
+        .catch((err) => {
+          console.warn("[auth] role 변경 감지 후 사용자 정보 갱신 실패:", err);
+        });
+    }
+
+    window.addEventListener(TOKEN_ROLE_CHANGED_EVENT, handleTokenRoleChanged);
+    return () => window.removeEventListener(TOKEN_ROLE_CHANGED_EVENT, handleTokenRoleChanged);
+  }, []);
+
   // 실제 설정 조회 시도 — user가 아직 null일 때(마운트 시점, OAuth 콜백으로 로그인 처리
   // 중이라 토큰이 저장되기 전)는 아예 시도하지 않고 건너뛴다. user가 채워지는 시점
   // (로그인 완료/세션 복원)에 맞춰 시도하도록 [user] 의존성을 쓴다. 이 시점엔 로그인이
@@ -212,6 +235,15 @@ export default function App() {
         console.error("[files] GET /api/v1/files 재시도 후에도 실패:", err);
       });
   }, [user]);
+
+  useEffect(() => {
+    if (uploadedSignal === 0) return;
+    listAllFiles()
+        .then(setDocuments)
+        .catch((err) => {
+          console.error("[uploads] 업로드 후 목록 재동기화 실패:", err);
+        });
+  }, [uploadedSignal]);
 
   // 로그아웃: 가능하면 refresh token 폐기 API를 호출하고(실패해도 무시),
   // 항상 localStorage(토큰·리프레시·사용자)를 정리한 뒤 랜딩으로 돌아간다.

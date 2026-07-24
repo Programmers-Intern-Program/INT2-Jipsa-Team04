@@ -19,6 +19,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.data.domain.PageRequest;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -31,7 +32,7 @@ public class UploadService {
     private static final long MAX_FILE_SIZE = 20L * 1024 * 1024;
     private static final int MAX_FILE_COUNT = 5;
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
-            "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "txt", "csv", "hwp", "hwpx", "md");
+            "pdf", "txt");
 
     private static final Logger log = LoggerFactory.getLogger(UploadService.class);
 
@@ -125,6 +126,23 @@ public class UploadService {
                 uploads.getTotal(),
                 uploads.getCreatedAt(),
                 uploads.getFinishedAt());
+    }
+
+    @Transactional(readOnly = true)
+    public List<RecentUploadItem> getRecent(Long userId, int limit) {
+        int capped = Math.min(Math.max(limit, 1), 100);
+        return fileRepository
+                .findByUsersIdAndDeletedAtIsNullOrderByCreatedAtDesc(userId, PageRequest.of(0, capped))
+                .stream()
+                .map(f -> new RecentUploadItem(
+                        f.getId(),
+                        f.getName(),
+                        f.getFileType(),
+                        f.getSizeBytes(),
+                        f.getStatus(),
+                        f.getErrorMessage(),
+                        f.getCreatedAt()))
+                .toList();
     }
 
     private Uploads findExistingBatch(Long userId, String idempotencyKey) {

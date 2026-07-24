@@ -30,6 +30,9 @@ public class RefreshTokenService {
     /** 로그아웃으로 폐기된 토큰의 사유. {@code Refresh_Tokens.Revoked_Reason}에 저장한다. */
     static final String REVOKED_REASON_LOGOUT = "LOGOUT";
 
+    /** 관리자 권한 변경으로 방어적 폐기된 토큰의 사유. {@link #revokeAllForUser} 참고. */
+    public static final String REVOKED_REASON_ROLE_CHANGED = "ROLE_CHANGED";
+
     private final RefreshTokensRepository refreshTokensRepository;
     private final long refreshValidityMs;
 
@@ -123,6 +126,30 @@ public class RefreshTokenService {
         // 정상·만료 모두 동일하게 폐기 기록 (만료 토큰도 200으로 폐기 이력을 남긴다)
         token.setRevokedAt(LocalDateTime.now());
         token.setRevokedReason(REVOKED_REASON_LOGOUT);   // 관리 엔티티 → 커밋 시 flush
+    }
+
+    /**
+     * 대상 사용자의 활성(미폐기) Refresh Token을 전부 폐기한다.
+     *
+     * <p>인가 판단 자체는 {@code JwtAuthenticationFilter}가 요청마다 최신 role로 재검증하므로
+     * 이 폐기가 없어도 권한 변경은 이미 안전하게 반영된다 — 이 메서드는 그 재검증 로직에 버그가
+     * 있거나 우회되는 경우를 대비한 방어적 이중 안전장치일 뿐이다({@code AdminService.updateRole}에서
+     * 호출). 이미 만료됐거나 이미 폐기된 토큰은 건드리지 않는다(멱등).
+     *
+     * <p>호출자({@code AdminService.updateRole})의 트랜잭션 안에서 호출되어야 한다 — 관리
+     * 엔티티 dirty checking으로 그 트랜잭션 커밋 시에만 flush된다.
+     *
+     * @param userId 대상 사용자 (Users.Users_IDX)
+     * @param reason {@code Revoked_Reason}에 기록할 사유
+     */
+    @Transactional
+    public void revokeAllForUser(Long userId, String reason) {
+        LocalDateTime now = LocalDateTime.now();
+        refreshTokensRepository.findByUsersIdAndRevokedAtIsNull(userId)
+                .forEach(token -> {
+                    token.setRevokedAt(now);
+                    token.setRevokedReason(reason);
+                });
     }
 
     /** SecureRandom 32바이트 → base64url(패딩 없음) 원문. */

@@ -1,8 +1,11 @@
 package com.jipsa.upload;
 
 import com.jipsa.auth.JwtService;
+import com.jipsa.auth.RefreshTokenService;
+import com.jipsa.auth.UserRoleCache;
 import com.jipsa.common.CurrentUserProvider;
 import com.jipsa.common.exception.UploadLimitExceededException;
+import com.jipsa.user.UsersRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -35,6 +38,15 @@ class UploadControllerTest {
 
     @MockitoBean
     private JwtService jwtService;
+
+    @MockitoBean
+    private UserRoleCache userRoleCache;
+
+    @MockitoBean
+    private UsersRepository usersRepository;
+
+    @MockitoBean
+    private RefreshTokenService refreshTokenService;
 
     @Test
     void uploadReturnsCreatedWithIds() throws Exception {
