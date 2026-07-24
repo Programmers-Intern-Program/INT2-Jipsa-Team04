@@ -11,6 +11,8 @@ import com.jipsa.folder.FolderRepository;
 import com.jipsa.job.Job;
 import com.jipsa.job.JobRepository;
 import com.jipsa.job.JobService;
+import com.jipsa.chunk.ChunkRepository;
+import com.jipsa.purge.RagPurgeService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -40,6 +42,8 @@ public class FileService {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private final String bucket;
     private final long storageQuotaBytes;
+    private final ChunkRepository chunkRepository;
+    private final RagPurgeService ragPurgeService;
 
     public FileService(FileRepository fileRepository,
                        JobRepository jobRepository,
@@ -48,7 +52,9 @@ public class FileService {
                        FileMetadataRepository fileMetadataRepository,
                        S3Service s3Service,
                        @Value("${app.s3.bucket}") String bucket,
-                       @Value("${app.storage.quota-bytes:107374182400}") long storageQuotaBytes) {
+                       @Value("${app.storage.quota-bytes:107374182400}") long storageQuotaBytes,
+                       ChunkRepository chunkRepository,
+                       RagPurgeService ragPurgeService) {
         this.fileRepository = fileRepository;
         this.jobRepository = jobRepository;
         this.jobService = jobService;
@@ -57,6 +63,8 @@ public class FileService {
         this.s3Service = s3Service;
         this.bucket = bucket;
         this.storageQuotaBytes = storageQuotaBytes;
+        this.chunkRepository = chunkRepository;
+        this.ragPurgeService = ragPurgeService;
     }
 
     @Transactional(readOnly = true)
@@ -145,10 +153,14 @@ public class FileService {
         fileRepository.findByFolderIdInAndDeletedAt(folderIds, deletedAt)
                 .forEach(file -> {
                     file.setDeletedAt(null);
-                    file.setStatus(FileStatus.UPLOADED);
                     file.setProcessingStage(null);
                     file.setErrorMessage(null);
-                    jobService.enqueueIngest(file.getId(), file.getUploadsId());
+                    if (chunkRepository.countByFileId(file.getId()) > 0) {
+                        file.setStatus(FileStatus.READY);
+                    } else {
+                        file.setStatus(FileStatus.UPLOADED);
+                        jobService.enqueueIngest(file.getId(), file.getUploadsId());
+                    }
                 });
     }
 
@@ -162,8 +174,10 @@ public class FileService {
             }
             jobRepository.deleteByFileId(file.getId());
             fileMetadataRepository.findById(file.getId()).ifPresent(fileMetadataRepository::delete);
+            chunkRepository.deleteByFileId(file.getId());
         });
         fileRepository.deleteAll(files);
+        files.forEach(file -> ragPurgeService.enqueue(file.getId(), file.getUsersId()));
     }
 
     @Transactional(readOnly = true)
@@ -192,10 +206,14 @@ public class FileService {
             file.setFolderId(null);
         }
         file.setDeletedAt(null);
-        file.setStatus(FileStatus.UPLOADED);
         file.setProcessingStage(null);
         file.setErrorMessage(null);
-        jobService.enqueueIngest(file.getId(), file.getUploadsId());
+        if (chunkRepository.countByFileId(file.getId()) > 0) {
+            file.setStatus(FileStatus.READY);
+        } else {
+            file.setStatus(FileStatus.UPLOADED);
+            jobService.enqueueIngest(file.getId(), file.getUploadsId());
+        }
     }
 
     private boolean isFolderDeletedOrMissing(Long folderId) {
@@ -219,7 +237,9 @@ public class FileService {
         }
         jobRepository.deleteByFileId(fileId);
         fileMetadataRepository.findById(fileId).ifPresent(fileMetadataRepository::delete);
+        chunkRepository.deleteByFileId(fileId);
         fileRepository.delete(file);
+        ragPurgeService.enqueue(file.getId(), file.getUsersId());
     }
 
     @Transactional(readOnly = true)
@@ -270,6 +290,7 @@ public class FileService {
             throw new BadRequestException("파일명이 너무 깁니다.");
         }
         file.setName(finalName);
+        jobService.enqueueIngest(file.getId(), file.getUploadsId());
     }
 
     @Transactional

@@ -431,6 +431,21 @@ CREATE TABLE `Chunk` (
         REFERENCES `File` (`File_IDX`)
 ) COMMENT 'AWS 서버 검색/응답용 청크 테이블. 원본 청크 기준은 Local RAG_Chunk';
 
+CREATE TABLE `Rag_Purge_Task` (
+                                  `Purge_Task_IDX` BIGINT NOT NULL AUTO_INCREMENT COMMENT '정리 작업 식별자(PK)',
+                                  `File_IDX` BIGINT NOT NULL COMMENT '영구삭제된 파일 식별자(FK 없음)',
+                                  `Users_IDX` BIGINT NOT NULL COMMENT '소유 사용자 식별자',
+                                  `Status` VARCHAR(30) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING, DONE',
+                                  `Attempts` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '시도 횟수',
+                                  `Next_Attempt_At` DATETIME(6) NULL COMMENT '다음 시도 시각',
+                                  `Last_Error` TEXT NULL COMMENT '최근 실패 사유',
+                                  `Created_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성 일시',
+                                  `Updated_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정 일시',
+
+                                  PRIMARY KEY (`Purge_Task_IDX`),
+                                  KEY `IX_PurgeTask_Status_Next` (`Status`, `Next_Attempt_At`)
+) COMMENT 'RAG/Qdrant 벡터 정리 재시도 아웃박스. File 참조 없음(파일은 이미 삭제됨)';
+
 /* =========================
    13. Conversation
    설명:
