@@ -47,6 +47,9 @@ public class FileMetadata {
     @Column(name = "Extracted_Entities")
     private String extractedEntities;
 
+    @Column(name = "Extraction_Index_Version")
+    private Integer extractionIndexVersion;
+
     @CreationTimestamp
     @Column(name = "Created_At", updatable = false)
     private LocalDateTime createdAt;

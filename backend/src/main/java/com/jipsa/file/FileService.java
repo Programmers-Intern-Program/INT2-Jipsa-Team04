@@ -85,6 +85,7 @@ public class FileService {
         FileMetadata metadata = fileMetadataRepository.findById(fileId).orElse(null);
         String summary = metadata != null && metadata.getSummary() != null ? metadata.getSummary() : "";
         List<String> tags = metadata != null ? parseStringList(metadata.getTags()) : List.of();
+        List<String> keywords = metadata != null ? parseStringList(metadata.getKeywords()) : List.of();
         String documentType = metadata != null ? metadata.getDocumentType() : null;
         String extractionStatus = metadata != null ? metadata.getExtractionStatus() : null;
         Double extractionConfidence = metadata != null ? metadata.getExtractionConfidence() : null;
@@ -97,7 +98,8 @@ public class FileService {
                 file.isStar(),
                 summary,
                 tags,
-                new FileDetailResponse.Entities(List.of(), List.of(), List.of(), null),
+                keywords,
+                parseEntities(metadata != null ? metadata.getExtractedEntities() : null),
                 file.getUpdatedAt(),
                 file.getStatus(),
                 file.getProcessingStage(),
@@ -394,6 +396,26 @@ public class FileService {
         } catch (JsonProcessingException e) {
             return List.of();
         }
+    }
+
+    private FileDetailResponse.Entities parseEntities(String json) {
+        if (json == null || json.isBlank()) {
+            return emptyEntities();
+        }
+        try {
+            FileDetailResponse.Entities parsed = OBJECT_MAPPER.readValue(json, FileDetailResponse.Entities.class);
+            return new FileDetailResponse.Entities(
+                    parsed.dates() == null ? List.of() : parsed.dates(),
+                    parsed.people() == null ? List.of() : parsed.people(),
+                    parsed.amounts() == null ? List.of() : parsed.amounts(),
+                    parsed.project());
+        } catch (JsonProcessingException e) {
+            return emptyEntities();
+        }
+    }
+
+    private FileDetailResponse.Entities emptyEntities() {
+        return new FileDetailResponse.Entities(List.of(), List.of(), List.of(), null);
     }
 
     private List<String> normalizeTags(List<String> tags) {

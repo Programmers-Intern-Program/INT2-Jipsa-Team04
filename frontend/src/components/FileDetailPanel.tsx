@@ -227,6 +227,17 @@ export default function FileDetailPanel({ fileId, folders, onClose, onTagsChange
                             </div>
                         )}
 
+                        {detail.keywords && detail.keywords.length > 0 && (
+                            <div className="space-y-1.5">
+                                <p className="text-[11px] font-bold text-outline mb-1.5">AI 키워드</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {detail.keywords.map((kw) => (
+                                        <span key={kw} className="px-2 py-0.5 bg-surface-container text-[11px] font-semibold text-on-surface rounded-lg">{kw}</span>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         {detail.extractionStatus && (
                             <div className="text-[11px] text-outline">
                                 추출 상태: <span className="font-bold text-on-surface">{detail.extractionStatus}</span>
