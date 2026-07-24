@@ -494,6 +494,10 @@ CREATE TABLE `Conversation_Chat` (
     `Routing_Reasoning` TEXT NULL COMMENT '라우팅 판단 근거. 민감정보 저장 금지',
     `Model_Used` VARCHAR(100) NULL COMMENT '응답 생성에 사용한 모델명',
     `Max_Result_No` JSON NULL COMMENT '검색 결과 수 또는 검색 옵션 JSON',
+    `Feedback_Rating` VARCHAR(10) NULL COMMENT '답변 피드백. UP 또는 DOWN',
+    `Feedback_Comment` TEXT NULL COMMENT '피드백 코멘트',
+    `Feedback_At` DATETIME(6) NULL COMMENT '피드백 등록/수정 일시',
+
 
     PRIMARY KEY (`Conversation_Chat_IDX`),
 
