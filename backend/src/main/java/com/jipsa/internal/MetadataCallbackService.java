@@ -34,8 +34,16 @@ public class MetadataCallbackService {
             created.setFileType(file.getFileType());
             return created;
         });
+        Integer incoming = request.indexVersion();
+        Integer stored = metadata.getExtractionIndexVersion();
+        if (incoming != null && stored != null && incoming < stored) {
+            return;
+        }
         if (!request.success()) {
             metadata.setExtractionStatus("FAILED");
+            if (incoming != null) {
+                metadata.setExtractionIndexVersion(incoming);
+            }
             fileMetadataRepository.save(metadata);
             return;
         }
@@ -44,6 +52,9 @@ public class MetadataCallbackService {
         metadata.setExtractedEntities(writeJson(request.entities()));
         metadata.setExtractionConfidence(request.confidence());
         metadata.setExtractionStatus("READY");
+        if (incoming != null) {
+            metadata.setExtractionIndexVersion(incoming);
+        }
         fileMetadataRepository.save(metadata);
     }
 

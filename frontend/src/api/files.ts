@@ -133,6 +133,7 @@ export interface FileDetail {
     star: boolean;
     summary: string;
     tags: string[];
+    keywords: string[];
     entities: {
         dates: string[];
         people: string[];

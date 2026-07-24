@@ -349,6 +349,7 @@ CREATE TABLE `File_Metadata` (
     `Extraction_Status` VARCHAR(30) NULL COMMENT 'AI 메타데이터 추출 상태. NULL이면 미실행',
     `Extraction_Confidence` DECIMAL(4,3) NULL COMMENT '추출 신뢰도 0.000~1.000',
     `Extracted_Entities` JSON NULL COMMENT '추출된 일반 엔티티(dates/people/amounts/org 등)',
+    `Extraction_Index_Version` INT UNSIGNED NULL COMMENT 'AI 메타데이터가 생성된 색인 버전. 오래된 콜백 무시용',
     `Created_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성 일시',
     `Updated_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정 일시',
 

@@ -4,6 +4,7 @@ import com.jipsa.file.File;
 import com.jipsa.file.FileRepository;
 import com.jipsa.file.FileMetadataRepository;
 import com.jipsa.file.FileStatus;
+import com.jipsa.file.FileMetadata;
 import com.jipsa.internal.IngestManifestService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -97,8 +98,11 @@ class JobProcessingServiceTest {
     void failureAtMaxAttemptsMarksFailed() {
         Job job = runningJob(3);
         File file = uploadedFile();
+        FileMetadata metadata = new FileMetadata();
+        metadata.setFileId(10L);
         when(jobRepository.findById(1L)).thenReturn(Optional.of(job));
         when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(file));
+        when(fileMetadataRepository.findById(10L)).thenReturn(Optional.of(metadata));
         doThrow(new RuntimeException("boom")).when(ragIngestClient).push(any());
 
         service.process(1L, "worker-1");
@@ -106,6 +110,7 @@ class JobProcessingServiceTest {
         assertThat(job.getJobStatus()).isEqualTo(JobStatus.FAILED);
         assertThat(file.getStatus()).isEqualTo(FileStatus.FAILED);
         assertThat(file.getErrorMessage()).isEqualTo("boom");
+        assertThat(metadata.getExtractionStatus()).isEqualTo("FAILED");
     }
 
     @Test

@@ -85,6 +85,7 @@ public class FileService {
         FileMetadata metadata = fileMetadataRepository.findById(fileId).orElse(null);
         String summary = metadata != null && metadata.getSummary() != null ? metadata.getSummary() : "";
         List<String> tags = metadata != null ? parseStringList(metadata.getTags()) : List.of();
+        List<String> keywords = metadata != null ? parseStringList(metadata.getKeywords()) : List.of();
         String documentType = metadata != null ? metadata.getDocumentType() : null;
         String extractionStatus = metadata != null ? metadata.getExtractionStatus() : null;
         Double extractionConfidence = metadata != null ? metadata.getExtractionConfidence() : null;
@@ -97,6 +98,7 @@ public class FileService {
                 file.isStar(),
                 summary,
                 tags,
+                keywords,
                 parseEntities(metadata != null ? metadata.getExtractedEntities() : null),
                 file.getUpdatedAt(),
                 file.getStatus(),

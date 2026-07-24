@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -48,16 +50,16 @@ class MetadataCallbackServiceTest {
         IngestMetadataRequest.Entities entities =
                 new IngestMetadataRequest.Entities(List.of("2026-07-24"), List.of("김철수"), List.of("1,000원"), "프로젝트A");
         metadataCallbackService.apply(3L,
-                new IngestMetadataRequest(true, null, "요약본", List.of("kw1", "kw2"), 0.87, entities));
+                new IngestMetadataRequest(true, null, 4, "요약본", List.of("kw1", "kw2"), 0.87, entities));
 
         ArgumentCaptor<FileMetadata> captor = ArgumentCaptor.forClass(FileMetadata.class);
         verify(fileMetadataRepository).save(captor.capture());
         FileMetadata saved = captor.getValue();
         assertThat(saved.getSummary()).isEqualTo("요약본");
         assertThat(saved.getExtractionStatus()).isEqualTo("READY");
-        assertThat(saved.getExtractionConfidence()).isEqualTo(0.87);
-        assertThat(saved.getExtractedEntities()).contains("김철수").contains("프로젝트A");
+        assertThat(saved.getExtractionIndexVersion()).isEqualTo(4);
         assertThat(saved.getKeywords()).contains("kw1");
+        assertThat(saved.getExtractedEntities()).contains("김철수").contains("프로젝트A");
         assertThat(saved.getTags()).isEqualTo("[\"내태그\"]");
         assertThat(saved.getDocumentType()).isEqualTo("계약서");
     }
@@ -68,11 +70,27 @@ class MetadataCallbackServiceTest {
         when(fileMetadataRepository.findById(3L)).thenReturn(Optional.empty());
 
         metadataCallbackService.apply(3L,
-                new IngestMetadataRequest(false, "extraction failed", null, null, null, null));
+                new IngestMetadataRequest(false, "extraction failed", 4, null, null, null, null));
 
         ArgumentCaptor<FileMetadata> captor = ArgumentCaptor.forClass(FileMetadata.class);
         verify(fileMetadataRepository).save(captor.capture());
         assertThat(captor.getValue().getExtractionStatus()).isEqualTo("FAILED");
         assertThat(captor.getValue().getSummary()).isNull();
+    }
+
+    @Test
+    void staleCallbackIsIgnored() {
+        FileMetadata existing = new FileMetadata();
+        existing.setFileId(3L);
+        existing.setExtractionIndexVersion(5);
+        existing.setExtractionStatus("READY");
+        when(fileRepository.findByIdAndDeletedAtIsNull(3L)).thenReturn(Optional.of(file()));
+        when(fileMetadataRepository.findById(3L)).thenReturn(Optional.of(existing));
+
+        metadataCallbackService.apply(3L,
+                new IngestMetadataRequest(true, null, 3, "오래된요약", List.of(), 0.5, null));
+
+        verify(fileMetadataRepository, never()).save(any());
+        assertThat(existing.getExtractionStatus()).isEqualTo("READY");
     }
 }

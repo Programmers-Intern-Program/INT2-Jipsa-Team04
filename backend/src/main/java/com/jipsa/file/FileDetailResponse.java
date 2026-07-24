@@ -12,6 +12,7 @@ public record FileDetailResponse(
         boolean star,
         String summary,
         List<String> tags,
+        List<String> keywords,
         Entities entities,
         LocalDateTime modifiedAt,
         FileStatus status,

@@ -8,6 +8,7 @@ import java.util.List;
 public record IngestMetadataRequest(
         @JsonProperty("success") @NotNull Boolean success,
         @JsonProperty("error_message") String errorMessage,
+        @JsonProperty("index_version") Integer indexVersion,
         @JsonProperty("summary") String summary,
         @JsonProperty("keywords") List<String> keywords,
         @JsonProperty("confidence") Double confidence,

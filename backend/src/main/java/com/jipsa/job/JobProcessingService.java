@@ -87,6 +87,13 @@ public class JobProcessingService {
         fileMetadataRepository.save(metadata);
     }
 
+    private void markMetadataFailed(File file) {
+        fileMetadataRepository.findById(file.getId()).ifPresent(metadata -> {
+            metadata.setExtractionStatus("FAILED");
+            fileMetadataRepository.save(metadata);
+        });
+    }
+
     private void handleFailure(Job job, File file, RuntimeException e) {
         LocalDateTime now = LocalDateTime.now();
         String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
@@ -97,6 +104,7 @@ public class JobProcessingService {
             if (file != null) {
                 file.setStatus(FileStatus.FAILED);
                 file.setErrorMessage(message);
+                markMetadataFailed(file);
             }
             log.warn("Job {} failed permanently after {} attempts: {}",
                     job.getId(), job.getAttempts(), message);
@@ -137,6 +145,7 @@ public class JobProcessingService {
                     file.setStatus(FileStatus.FAILED);
                     file.setErrorMessage(message);
                     file.setProcessingStage(null);
+                    markMetadataFailed(file);
                 });
             }
             log.warn("Reaped stuck job {} (file {}) as FAILED", job.getId(), job.getFileId());
