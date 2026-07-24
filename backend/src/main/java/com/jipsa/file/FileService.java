@@ -11,12 +11,8 @@ import com.jipsa.folder.FolderRepository;
 import com.jipsa.job.Job;
 import com.jipsa.job.JobRepository;
 import com.jipsa.job.JobService;
-import com.jipsa.job.RagIngestClient;
 import com.jipsa.chunk.ChunkRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
+import com.jipsa.purge.RagPurgeService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -47,8 +43,7 @@ public class FileService {
     private final String bucket;
     private final long storageQuotaBytes;
     private final ChunkRepository chunkRepository;
-    private final RagIngestClient ragIngestClient;
-    private static final Logger log = LoggerFactory.getLogger(FileService.class);
+    private final RagPurgeService ragPurgeService;
 
     public FileService(FileRepository fileRepository,
                        JobRepository jobRepository,
@@ -59,7 +54,7 @@ public class FileService {
                        @Value("${app.s3.bucket}") String bucket,
                        @Value("${app.storage.quota-bytes:107374182400}") long storageQuotaBytes,
                        ChunkRepository chunkRepository,
-                       RagIngestClient ragIngestClient) {
+                       RagPurgeService ragPurgeService) {
         this.fileRepository = fileRepository;
         this.jobRepository = jobRepository;
         this.jobService = jobService;
@@ -69,7 +64,7 @@ public class FileService {
         this.bucket = bucket;
         this.storageQuotaBytes = storageQuotaBytes;
         this.chunkRepository = chunkRepository;
-        this.ragIngestClient = ragIngestClient;
+        this.ragPurgeService = ragPurgeService;
     }
 
     @Transactional(readOnly = true)
@@ -182,7 +177,7 @@ public class FileService {
             chunkRepository.deleteByFileId(file.getId());
         });
         fileRepository.deleteAll(files);
-        files.forEach(file -> schedulePurge(file.getId(), file.getUsersId()));
+        files.forEach(file -> ragPurgeService.enqueue(file.getId(), file.getUsersId()));
     }
 
     @Transactional(readOnly = true)
@@ -244,28 +239,7 @@ public class FileService {
         fileMetadataRepository.findById(fileId).ifPresent(fileMetadataRepository::delete);
         chunkRepository.deleteByFileId(fileId);
         fileRepository.delete(file);
-        schedulePurge(file.getId(), file.getUsersId());
-    }
-
-    private void schedulePurge(Long fileId, Long usersId) {
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    purgeRagSafely(fileId, usersId);
-                }
-            });
-        } else {
-            purgeRagSafely(fileId, usersId);
-        }
-    }
-
-    private void purgeRagSafely(Long fileId, Long usersId) {
-        try {
-            ragIngestClient.purge(fileId, usersId);
-        } catch (RuntimeException e) {
-            log.warn("RAG purge 실패 (file {}): {}", fileId, e.getMessage());
-        }
+        ragPurgeService.enqueue(file.getId(), file.getUsersId());
     }
 
     @Transactional(readOnly = true)
@@ -316,6 +290,7 @@ public class FileService {
             throw new BadRequestException("파일명이 너무 깁니다.");
         }
         file.setName(finalName);
+        jobService.enqueueIngest(file.getId(), file.getUploadsId());
     }
 
     @Transactional

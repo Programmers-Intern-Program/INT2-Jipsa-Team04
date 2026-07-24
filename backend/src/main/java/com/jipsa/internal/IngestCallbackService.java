@@ -8,6 +8,8 @@ import com.jipsa.file.FileStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+
 @Service
 public class IngestCallbackService {
 
@@ -25,13 +27,33 @@ public class IngestCallbackService {
         File file = fileRepository.findByIdAndDeletedAtIsNull(fileIdx)
                 .orElseThrow(() -> new FileNotFoundException("파일을 찾을 수 없습니다: " + fileIdx));
         if (request.success()) {
-            file.setStatus(FileStatus.READY);
-            file.setErrorMessage(null);
-            chunkSyncService.sync(fileIdx, request.indexVersion(), request.chunks());
+            String inconsistency = validateSuccessPayload(request);
+            if (inconsistency != null) {
+                file.setStatus(FileStatus.FAILED);
+                file.setErrorMessage(inconsistency);
+            } else {
+                file.setStatus(FileStatus.READY);
+                file.setErrorMessage(null);
+                chunkSyncService.sync(fileIdx, request.indexVersion(), request.chunks());
+            }
         } else {
             file.setStatus(FileStatus.FAILED);
             file.setErrorMessage(request.errorMessage());
         }
         file.setProcessingStage(null);
+    }
+
+    private String validateSuccessPayload(IngestCompleteRequest request) {
+        if (request.indexVersion() == null) {
+            return "성공 콜백에 index_version이 없습니다.";
+        }
+        List<IngestCompleteRequest.ChunkPayload> chunks = request.chunks();
+        if (chunks == null || chunks.isEmpty()) {
+            return "성공 콜백에 청크 데이터가 없습니다.";
+        }
+        if (request.chunkCount() != null && request.chunkCount() != chunks.size()) {
+            return "chunk_count와 실제 청크 수가 일치하지 않습니다.";
+        }
+        return null;
     }
 }

@@ -8,7 +8,7 @@ import com.jipsa.folder.FolderNotFoundException;
 import com.jipsa.folder.FolderRepository;
 import com.jipsa.job.JobRepository;
 import com.jipsa.job.JobService;
-import com.jipsa.job.RagIngestClient;
+import com.jipsa.purge.RagPurgeService;
 import com.jipsa.chunk.ChunkRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -50,14 +50,14 @@ class FileServiceTest {
     @Mock
     private ChunkRepository chunkRepository;
     @Mock
-    private RagIngestClient ragIngestClient;
+    private RagPurgeService ragPurgeService;
 
     private FileService fileService;
 
     @BeforeEach
     void setUp() {
         fileService = new FileService(fileRepository, jobRepository, jobService, folderRepository,
-                fileMetadataRepository, s3Service, "test-bucket", 1000L, chunkRepository, ragIngestClient);
+                fileMetadataRepository, s3Service, "test-bucket", 1000L, chunkRepository, ragPurgeService);
     }
 
     private File ownedFile() {
