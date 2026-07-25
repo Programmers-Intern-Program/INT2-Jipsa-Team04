@@ -14,25 +14,33 @@ from pydantic import (
 
 
 class SupportedFileType(StrEnum):
-    """현재 RAG 파일 처리 파이프라인에서 지원하는 파일 타입."""
+    """현재 RAG 파일 처리 파이프라인에서 공식 지원하는 파일 타입.
 
-    # 외부 애플리케이션 서버가 전달하는 파일 타입 값은
-    # 소문자 확장자 형식을 사용한다.
-    #
-    # 현재 실제 파서 구현이 완료된 형식은 PDF뿐이다.
-    # DOCX, XLSX, PPTX 또는 이미지 파서가 추가되면
-    # 해당 값을 이 Enum과 DocumentParserFactory에 함께 등록한다.
+    현재 기능 범위에서는 텍스트 레이어가 존재하는 PDF만 지원한다.
+
+    TXT, DOCX, XLSX 및 PPTX는 요청 스키마 단계에서 거부한다. 향후 특정
+    형식을 지원하려면 다음 요소가 모두 구현된 뒤 이 Enum에 추가해야 한다.
+
+    - 형식별 안전한 파일 다운로드 검증
+    - DocumentParser 구현
+    - DocumentParserFactory 등록
+    - 원본 위치 메타데이터 규칙
+    - 청킹 및 색인 회귀 테스트
+    - API 계약 문서
+    """
+
+    # 외부 애플리케이션 서버가 전달하는 파일 타입 값은 소문자 확장자
+    # 형식을 사용한다.
     PDF = "pdf"
-    TXT = "txt"
 
 
 class FileProcessingRequest(BaseModel):
-    """애플리케이션 서버가 전달하는 파일 처리 요청 정보."""
+    """애플리케이션 서버가 전달하는 PDF 파일 처리 요청 정보."""
 
     # 정의되지 않은 요청 필드는 허용하지 않는다.
     #
-    # 애플리케이션 서버와 RAG 서버 사이의 요청 계약이
-    # 의도하지 않게 변경되는 것을 조기에 탐지하기 위한 설정이다.
+    # 애플리케이션 서버와 Local RAG 서버 사이의 요청 계약이 의도하지
+    # 않게 확장되는 것을 조기에 탐지한다.
     model_config = ConfigDict(
         extra="forbid",
         str_strip_whitespace=True,
@@ -50,7 +58,8 @@ class FileProcessingRequest(BaseModel):
     user_idx: int = Field(
         gt=0,
         description=(
-            "AWS 서버 DB Users.Users_IDX 외부 참조값이며 사용자별 검색 스코프 제한에 사용한다."
+            "AWS 서버 DB Users.Users_IDX 외부 참조값이며 "
+            "사용자별 검색 스코프 제한에 사용한다."
         ),
         examples=[45],
     )
@@ -86,7 +95,7 @@ class FileProcessingRequest(BaseModel):
     download_url: str = Field(
         min_length=1,
         max_length=8192,
-        description="원본 파일을 다운로드할 Presigned GET URL",
+        description="원본 PDF를 다운로드할 Presigned GET URL",
         examples=[
             "https://example-bucket.s3.ap-northeast-2.amazonaws.com/"
             "files/example-file.pdf?X-Amz-Signature=example"
@@ -96,7 +105,8 @@ class FileProcessingRequest(BaseModel):
     url_expires_in: int = Field(
         gt=0,
         description=(
-            "애플리케이션 서버가 Presigned GET URL을 발급할 때 설정한 유효 시간이며 단위는 초다."
+            "애플리케이션 서버가 Presigned GET URL을 발급할 때 설정한 "
+            "유효 시간이며 단위는 초다."
         ),
         examples=[900],
     )
@@ -110,12 +120,13 @@ class FileProcessingRequest(BaseModel):
         """Presigned GET URL 원문을 유지하면서 기본 구조를 검증한다.
 
         이 URL은 원본 파일을 다운로드하는 동안에만 사용한다.
-        Local RAG DB에는 URL 전체나 URL에서 추출한 S3_Key를 저장하지 않는다.
-        S3 객체 위치의 기준 데이터는 AWS 서버 DB의 File.S3_Key다.
 
-        url_expires_in은 URL 발급 시 설정한 TTL 정보다.
-        요청에 URL 발급 시각이 포함되어 있지 않으므로 RAG 서버는
-        url_expires_in 값만으로 현재 만료 시각을 계산할 수 없다.
+        Local RAG DB에는 URL 전체나 URL에서 추출한 S3_Key를 저장하지
+        않는다. S3 객체 위치의 기준 데이터는 AWS 서버 DB의 File.S3_Key다.
+
+        url_expires_in은 URL 발급 시 설정한 TTL 정보다. 요청에 URL 발급
+        시각이 포함되어 있지 않으므로 Local RAG 서버는 url_expires_in
+        값만으로 현재 만료 시각을 계산할 수 없다.
 
         실제 서명과 만료 여부는 S3가 다운로드 요청을 수신할 때 검증하며,
         만료된 URL이면 다운로드 계층에서 FILE_DOWNLOAD_FAILED로 변환한다.
@@ -125,25 +136,37 @@ class FileProcessingRequest(BaseModel):
             parsed = urlsplit(value)
             parsed_port = parsed.port
         except ValueError as error:
-            raise ValueError("Download URL is invalid.") from error
+            raise ValueError(
+                "Download URL is invalid.",
+            ) from error
 
         if parsed.scheme.lower() != "https":
-            raise ValueError("Download URL must use HTTPS.")
+            raise ValueError(
+                "Download URL must use HTTPS.",
+            )
 
         if parsed.hostname is None:
-            raise ValueError("Download URL must contain a hostname.")
+            raise ValueError(
+                "Download URL must contain a hostname.",
+            )
 
         if parsed.username is not None or parsed.password is not None:
-            raise ValueError("Download URL must not contain user information.")
+            raise ValueError(
+                "Download URL must not contain user information.",
+            )
 
         if parsed.fragment:
-            raise ValueError("Download URL must not contain a fragment.")
+            raise ValueError(
+                "Download URL must not contain a fragment.",
+            )
 
         if parsed_port is not None and parsed_port != 443:
-            raise ValueError("Download URL must use the default HTTPS port.")
+            raise ValueError(
+                "Download URL must use the default HTTPS port.",
+            )
 
-        # Presigned URL은 서명 계산에 사용된 path와 query를
-        # 임의로 정규화하거나 재구성하지 않고 전달받은 원문을 유지한다.
+        # Presigned URL은 서명 계산에 사용된 path와 query를 임의로
+        # 정규화하거나 재구성하지 않고 전달받은 원문을 유지한다.
         return value
 
     @field_validator("file_name")
@@ -154,13 +177,15 @@ class FileProcessingRequest(BaseModel):
     ) -> str:
         """파일명에 디렉터리 경로 문자가 포함되지 않았는지 검증한다."""
 
-        # file_name은 저장 경로나 디렉터리가 아닌
-        # 표시용 순수 파일명만 허용한다.
+        # file_name은 저장 경로나 디렉터리가 아닌 표시용 순수 파일명만
+        # 허용한다.
         #
         # 경로 구분자를 허용하면 임시 파일 또는 후속 저장 과정에서
         # 의도하지 않은 경로를 참조할 가능성이 있다.
         if "/" in value or "\\" in value:
-            raise ValueError("File name must not contain path separators.")
+            raise ValueError(
+                "File name must not contain path separators.",
+            )
 
         return value
 
@@ -173,7 +198,14 @@ class FileProcessingRequest(BaseModel):
         cls,
         value: object,
     ) -> object:
-        """문자열 파일 타입을 소문자로 정규화한다."""
+        """문자열 파일 타입을 소문자로 정규화한다.
+
+        "PDF", "pdf", " Pdf "는 모두 "pdf"로 정규화한다.
+
+        TXT, DOCX, XLSX 및 PPTX 값도 소문자로 정규화되지만
+        SupportedFileType에 정의되어 있지 않으므로 Pydantic Enum
+        검증 단계에서 거부된다.
+        """
 
         if isinstance(value, str):
             return value.strip().lower()
@@ -182,13 +214,16 @@ class FileProcessingRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_file_extension(self) -> Self:
-        """파일명 확장자와 요청 파일 타입이 일치하는지 검증한다."""
+        """파일명 확장자와 PDF 요청 타입이 일치하는지 검증한다.
 
-        if self.file_type is SupportedFileType.PDF and not self.file_name.lower().endswith(".pdf"):
-            raise ValueError("PDF file type requires a .pdf file extension.")
+        file_type이 pdf인데 file_name이 .pdf로 끝나지 않으면 실제
+        다운로드 전에 요청을 거부한다.
+        """
 
-        if self.file_type is SupportedFileType.TXT and not self.file_name.lower().endswith(".txt"):
-            raise ValueError("TXT file type requires a .txt file extension.")
+        if not self.file_name.lower().endswith(".pdf"):
+            raise ValueError(
+                "PDF file type requires a .pdf file extension.",
+            )
 
         return self
 
@@ -196,9 +231,11 @@ class FileProcessingRequest(BaseModel):
 class FileProcessingCompletedResponse(BaseModel):
     """다운로드부터 Local RAG DB 및 VectorDB 저장까지 완료된 처리 결과."""
 
-    # 응답 스키마에 정의되지 않은 내부 데이터가
-    # 외부 응답에 포함되지 않도록 제한한다.
-    model_config = ConfigDict(extra="forbid")
+    # 응답 스키마에 정의되지 않은 내부 데이터가 외부 응답에 포함되지
+    # 않도록 제한한다.
+    model_config = ConfigDict(
+        extra="forbid",
+    )
 
     rag_document_idx: int = Field(
         gt=0,
@@ -251,7 +288,7 @@ class FileProcessingCompletedResponse(BaseModel):
 
     text_unit_count: int = Field(
         gt=0,
-        description="실제 추출 텍스트가 존재하는 페이지 단위 수",
+        description="실제 추출 텍스트가 존재하는 PDF 페이지 단위 수",
         examples=[9],
     )
 
