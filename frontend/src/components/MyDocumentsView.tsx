@@ -41,7 +41,7 @@ import {
   restoreFolder,
   permanentDeleteFolder,
 } from "../api/folders";
-import { deleteFile, downloadFile, getDocumentTypes, getFileDetail, getFileStatus, getStorageUsage, listAllFiles, listAllTrash, listFiles, moveFiles, permanentDeleteFile, renameFile, restoreFile, toDocument, toggleStar } from "../api/files";
+import { deleteFile, downloadFile, getDocumentTypes, getFileDetail, getFileStatus, getStorageUsage, listAllFiles, listAllTrash, moveFiles, permanentDeleteFile, renameFile, restoreFile, toggleStar } from "../api/files";
 import { proposeOrganization, applyOrganization } from "../api/organize";
 import { ApiError } from "../api/client";
 import FileDetailPanel from "./FileDetailPanel";
@@ -84,10 +84,6 @@ export default function MyDocumentsView({
     getDocumentTypes().then((types) => { if (!cancelled) setDocumentTypeOptions(types); }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
-  const [serverSearchDocs, setServerSearchDocs] = useState<Document[] | null>(null);
-  const [searchTotal, setSearchTotal] = useState(0);
-  const [searchSize, setSearchSize] = useState(20);
-  const [searchPage, setSearchPage] = useState(0);
   const [trashDocs, setTrashDocs] = useState<Document[] | null>(null);
   const [trashFolders, setTrashFolders] = useState<FolderType[] | null>(null);
   const [storage, setStorage] = useState<{ usedBytes: number; quotaBytes: number } | null>(null);
@@ -210,39 +206,6 @@ export default function MyDocumentsView({
   const [folderMoveTarget, setFolderMoveTarget] = useState<number | null>(null);
 
   useEffect(() => {
-    setSearchPage(0);
-  }, [searchQuery, selectedType]);
-
-  useEffect(() => {
-    const keyword = searchQuery.trim();
-    if (!keyword || currentTab !== "mydrive") {
-      setServerSearchDocs(null);
-      setSearchTotal(0);
-      return;
-    }
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      listFiles({ keyword, docType: selectedType ?? undefined, page: searchPage })
-          .then((res) => {
-            if (cancelled) return;
-            setServerSearchDocs(res.items.map(toDocument));
-            setSearchTotal(res.total);
-            setSearchSize(res.size);
-          })
-          .catch((err) => {
-            if (cancelled) return;
-            console.warn("[files] GET /api/v1/files 실패 - mock 데이터로 폴백(비로그인 상태면 정상):", err);
-            setServerSearchDocs(null);
-            setSearchTotal(0);
-          });
-    }, 300);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [searchQuery, selectedType, searchPage, currentTab]);
-
-  useEffect(() => {
     if (currentTab !== "trash") {
       setTrashDocs(null);
       setTrashFolders(null);
@@ -319,7 +282,7 @@ export default function MyDocumentsView({
   const filteredDocuments = useMemo(() => {
     const source = currentTab === "trash"
         ? (trashDocs ?? [])
-        : (serverSearchDocs ?? documents);
+        : documents;
     return source.filter((doc) => {
       const matchesSearch =
           doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -350,7 +313,7 @@ export default function MyDocumentsView({
 
       return matchesSearch && matchesTabAndFolder && matchesType && matchesSecurity && matchesDocumentType && matchesTag && matchesDate;
     });
-  }, [documents, serverSearchDocs, trashDocs, searchQuery, selectedFolder, selectedType, selectedSecurity, selectedDocumentType, tagFilter, dateFromFilter, dateToFilter, currentTab, folders]);
+  }, [documents, trashDocs, searchQuery, selectedFolder, selectedType, selectedSecurity, selectedDocumentType, tagFilter, dateFromFilter, dateToFilter, currentTab, folders]);
 
   const sortedFilteredDocuments = useMemo(() => {
     if (currentTab === "recent") {
@@ -468,10 +431,15 @@ export default function MyDocumentsView({
   const handleRenameDocument = async (docId: string, currentName: string) => {
     const name = window.prompt("새 파일 이름을 입력하세요.", currentName);
     if (!name || !name.trim() || name.trim() === currentName) return;
+    const trimmed = name.trim();
+    const fileType = documents.find((d) => d.id === docId)?.fileType ?? "";
+    const dot = trimmed.lastIndexOf(".");
+    const base = dot > 0 ? trimmed.slice(0, dot) : trimmed;
+    const finalName = fileType ? `${base}.${fileType.toLowerCase()}` : trimmed;
     try {
-      await renameFile(Number(docId), name.trim());
+      await renameFile(Number(docId), trimmed);
       onUpdateDocuments(
-          documents.map((d) => (d.id === docId ? { ...d, name: name.trim() } : d))
+          documents.map((d) => (d.id === docId ? { ...d, name: finalName } : d))
       );
     } catch (err) {
       console.warn("[files] PATCH /api/v1/files/{id}/name 실패:", err);
@@ -1531,27 +1499,6 @@ export default function MyDocumentsView({
                   총 {filteredDocuments.length}개
                 </span>
               </div>
-              {serverSearchDocs && (
-                  <div className="flex items-center gap-3" id="vault-server-search-pagination">
-                  <span className="text-[10px] text-outline font-bold">
-                    서버 검색 {searchTotal}건 · {searchPage + 1} / {Math.max(1, Math.ceil(searchTotal / searchSize))} 페이지
-                  </span>
-                    <button
-                        onClick={() => setSearchPage((p) => Math.max(0, p - 1))}
-                        disabled={searchPage === 0}
-                        className="text-[11px] px-2.5 py-1 rounded-full border border-outline-variant font-bold disabled:opacity-40 hover:bg-surface-container cursor-pointer disabled:cursor-not-allowed"
-                    >
-                      이전
-                    </button>
-                    <button
-                        onClick={() => setSearchPage((p) => p + 1)}
-                        disabled={(searchPage + 1) * searchSize >= searchTotal}
-                        className="text-[11px] px-2.5 py-1 rounded-full border border-outline-variant font-bold disabled:opacity-40 hover:bg-surface-container cursor-pointer disabled:cursor-not-allowed"
-                    >
-                      다음
-                    </button>
-                  </div>
-              )}
             </div>
 
             {/* Batch Action Bar */}
