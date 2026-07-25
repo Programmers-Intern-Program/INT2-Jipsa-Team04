@@ -34,6 +34,7 @@ export default function FileDetailPanel({ fileId, folders, onClose, onTagsChange
 
     useEffect(() => {
         if (fileId == null) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setDetail(null);
             return;
         }

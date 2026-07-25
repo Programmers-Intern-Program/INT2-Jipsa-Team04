@@ -76,7 +76,7 @@ export function uploadOne(
         };
 
         xhr.onload = () => {
-            let payload: unknown = null;
+            let payload: unknown;
             try {
                 payload = JSON.parse(xhr.responseText);
             } catch {
