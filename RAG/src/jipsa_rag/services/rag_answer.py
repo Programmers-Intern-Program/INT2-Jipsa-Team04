@@ -1,6 +1,7 @@
 """청크 검색과 Claude 생성을 연결하여 근거 기반 RAG 답변을 생성한다."""
 
 import logging
+import re
 from typing import Final, Protocol
 
 from jipsa_rag.infrastructure.embedding.exceptions import EmbeddingError
@@ -19,6 +20,7 @@ from jipsa_rag.schemas.chunk_search import (
 from jipsa_rag.schemas.rag_answer import (
     RagAnswerRequest,
     RagAnswerResponse,
+    RagAnswerSource,
     RagAnswerStatus,
     RagAnswerUsage,
 )
@@ -32,6 +34,16 @@ _LOGGER = logging.getLogger(__name__)
 # 사용자는 검색 단계에서 근거가 없을 때와 Claude가 문서 근거만으로
 # 답변할 수 없다고 판단한 경우에 일관된 안내를 받는다.
 _INSUFFICIENT_EVIDENCE_ANSWER: Final[str] = "제공된 문서 근거만으로는 답변할 수 없습니다."
+
+# Claude 답변에서 대괄호로 감싼 SOURCE 숫자 식별자만 추출한다.
+#
+# 숫자 부분을 넓게 허용하여 SOURCE-0, SOURCE-01 같은 비정상 식별자도
+# 우선 추출한 뒤 프롬프트 출처 집합과 비교한다. 이렇게 해야 형식상 SOURCE
+# 인용처럼 보이지만 실제 프롬프트에 존재하지 않는 식별자를 정상 답변으로
+# 통과시키지 않는다.
+_SOURCE_CITATION_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"\[(?P<source_id>SOURCE-[0-9]+)\]"
+)
 
 
 class ChunkSearcher(Protocol):
@@ -92,10 +104,12 @@ class RagAnswerService:
     4. 검색 결과가 없으면 Claude API를 호출하지 않는다.
     5. 검색 청크를 안전한 근거 프롬프트로 구성한다.
     6. 생성 클라이언트를 통해 답변을 생성한다.
-    7. 답변, 출처 및 토큰 사용량을 외부 응답으로 변환한다.
+    7. Claude 답변의 ``[SOURCE-N]`` 인용을 추출하고 후보 출처와 대조한다.
+    8. 중복 인용을 제거한 최초 인용 순서대로 실제 사용 출처만 선택한다.
+    9. 답변, 실제 인용 출처 및 토큰 사용량을 외부 응답으로 변환한다.
 
-    질문, 청크 원문, 프롬프트 및 API Key는 로그 필드나 예외 메시지에
-    포함하지 않는다.
+    질문, 청크 원문, 프롬프트, Claude 답변 원문 및 API Key는 로그 필드나
+    예외 메시지에 포함하지 않는다.
     """
 
     def __init__(
@@ -131,6 +145,10 @@ class RagAnswerService:
         검색 결과가 비어 있으면 프롬프트 구성기와 생성 클라이언트를 호출하지
         않고 ``insufficient_evidence`` 응답을 반환한다.
 
+        Claude가 정상 답변을 생성한 경우에는 최소 한 개 이상의 유효한
+        ``[SOURCE-N]`` 인용이 있어야 한다. 모든 인용은 현재 프롬프트에 포함된
+        후보 출처에 존재해야 하며, 응답에는 실제로 인용된 출처만 포함한다.
+
         로그에는 사용자 식별자, 참조문서 수, 검색 결과 수 및 출처 수처럼
         운영에 필요한 최소 메타데이터만 기록한다. 질문, 청크, 프롬프트 및
         생성 결과 원문은 기록하지 않는다.
@@ -151,8 +169,8 @@ class RagAnswerService:
             GenerationError:
                 Claude 생성 공급자 호출 또는 응답 변환이 실패한 경우 발생한다.
             RagAnswerServiceError:
-                검색 범위, 프롬프트 구성, 응답 매핑 또는 예상하지 못한
-                내부 호출이 실패한 경우 발생한다.
+                검색 범위, 프롬프트 구성, 인용 검증, 응답 매핑 또는
+                예상하지 못한 내부 호출이 실패한 경우 발생한다.
         """
 
         # 각 answer 호출은 전달받은 요청을 독립적인 스냅샷으로 사용한다.
@@ -256,14 +274,15 @@ class RagAnswerService:
 
         # 생성된 답변, 질문, 청크 발췌문 및 모델 프롬프트는 기록하지 않는다.
         #
-        # 정상 완료 여부와 출처 개수만 기록하여 운영 추적에 필요한 정보를
-        # 확보하면서 문서 내용 노출을 방지한다.
+        # 정상 완료 여부와 실제 인용 출처 개수만 기록하여 운영 추적에 필요한
+        # 정보를 확보하면서 문서 및 생성 결과 내용 노출을 방지한다.
         _LOGGER.info(
             "RAG answer generation completed.",
             extra={
                 "event": "rag_answer_generation_completed",
                 "user_idx": request_snapshot.user_idx,
                 "reference_file_count": len(reference_file_idxs),
+                "answer_status": response.status.value,
                 "source_count": len(response.sources),
             },
         )
@@ -488,6 +507,103 @@ class RagAnswerService:
 
         return result
 
+    def _resolve_cited_sources(
+        self,
+        *,
+        answer: str,
+        prompt_sources: tuple[RagAnswerSource, ...],
+        user_idx: int,
+    ) -> tuple[RagAnswerSource, ...]:
+        """Claude 답변의 인용을 검증하고 실제 사용 출처만 선택한다.
+
+        답변에서 발견한 ``[SOURCE-N]`` 식별자는 최초 등장 순서로 수집하며,
+        같은 식별자가 반복되어도 응답 출처에는 한 번만 포함한다.
+
+        정상 답변에는 최소 한 개 이상의 인용이 필요하고, 추출된 모든 식별자는
+        현재 생성 프롬프트에 포함된 후보 출처와 정확히 일치해야 한다.
+
+        답변 원문과 실제 인용 식별자 값은 로그 또는 예외에 포함하지 않는다.
+        운영 로그에는 검증 실패 종류와 개수만 기록한다.
+
+        Args:
+            answer:
+                Claude가 반환한 답변 원문이다.
+            prompt_sources:
+                현재 생성 프롬프트에 포함되어 Claude가 인용할 수 있는 후보
+                출처 목록이다.
+            user_idx:
+                민감한 답변 원문 없이 요청을 추적하기 위한 사용자 식별자다.
+
+        Returns:
+            중복을 제거하고 최초 인용 순서를 유지한 실제 인용 출처 목록이다.
+
+        Raises:
+            RagAnswerServiceError:
+                프롬프트 후보 출처 식별자가 중복되거나, 정상 답변에 인용이
+                없거나, 프롬프트에 존재하지 않는 인용이 포함된 경우 발생한다.
+        """
+
+        prompt_source_by_id = {source.source_id: source for source in prompt_sources}
+
+        # 프롬프트 구성기는 SOURCE-N을 순차적으로 생성하므로 중복이 없어야 한다.
+        #
+        # 향후 다른 PromptBuilder 구현체가 주입되더라도 dict 변환 과정에서
+        # 중복 출처가 조용히 덮어써지지 않도록 서비스 경계에서 재검증한다.
+        if len(prompt_source_by_id) != len(prompt_sources):
+            _LOGGER.error(
+                "RAG answer prompt source contract failed.",
+                extra={
+                    "event": "rag_answer_prompt_source_contract_failed",
+                    "user_idx": user_idx,
+                    "prompt_source_count": len(prompt_sources),
+                },
+            )
+
+            raise RagAnswerServiceError(
+                operation="prompt_source_contract_violation",
+            )
+
+        cited_source_ids = _extract_unique_source_ids(answer)
+
+        if not cited_source_ids:
+            _LOGGER.error(
+                "RAG answer citation validation failed because no citation was present.",
+                extra={
+                    "event": "rag_answer_citation_validation_failed",
+                    "user_idx": user_idx,
+                    "validation_reason": "citation_required",
+                    "citation_count": 0,
+                    "prompt_source_count": len(prompt_sources),
+                },
+            )
+
+            raise RagAnswerServiceError(
+                operation="answer_citation_validation_failed",
+            )
+
+        unknown_source_count = sum(
+            source_id not in prompt_source_by_id for source_id in cited_source_ids
+        )
+
+        if unknown_source_count > 0:
+            _LOGGER.error(
+                "RAG answer citation validation failed because an unknown source was cited.",
+                extra={
+                    "event": "rag_answer_citation_validation_failed",
+                    "user_idx": user_idx,
+                    "validation_reason": "unknown_source",
+                    "citation_count": len(cited_source_ids),
+                    "unknown_source_count": unknown_source_count,
+                    "prompt_source_count": len(prompt_sources),
+                },
+            )
+
+            raise RagAnswerServiceError(
+                operation="answer_citation_validation_failed",
+            )
+
+        return tuple(prompt_source_by_id[source_id] for source_id in cited_source_ids)
+
     def _build_answer_response(
         self,
         *,
@@ -495,12 +611,34 @@ class RagAnswerService:
         prompt_result: RagPromptBuildResult,
         user_idx: int,
     ) -> RagAnswerResponse:
-        """생성 결과를 외부 응답으로 변환하고 검증 오류를 안전하게 처리한다.
+        """생성 결과의 인용을 검증한 뒤 외부 응답으로 안전하게 변환한다.
+
+        Claude가 근거 부족 고정 문구만 반환한 경우에는 정상 답변 인용 검증을
+        적용하지 않고 ``insufficient_evidence`` 응답으로 정규화한다.
+
+        그 외 답변은 최소 한 개 이상의 유효한 ``[SOURCE-N]`` 인용이 있어야
+        하며, 응답 ``sources``에는 실제로 인용된 출처만 포함한다.
 
         Pydantic 검증 오류는 전체 입력 객체를 표현할 수 있다. 생성 답변이나
         출처 발췌문이 예외에 포함되지 않도록 원본 오류를 서비스 경계에서
         안전한 예외로 변환한다.
         """
+
+        # 프롬프트가 지시한 고정 근거 부족 문구는 정상적인 생성 결과다.
+        #
+        # 앞뒤 공백이나 개행만 허용하고 외부 응답은 단일 고정 문자열로
+        # 정규화한다. 이 상태에는 출처와 Claude 생성 메타데이터를 포함하지 않는다.
+        if generation_result.text.strip() == _INSUFFICIENT_EVIDENCE_ANSWER:
+            return RagAnswerResponse(
+                answer=_INSUFFICIENT_EVIDENCE_ANSWER,
+                status=RagAnswerStatus.INSUFFICIENT_EVIDENCE,
+            )
+
+        cited_sources = self._resolve_cited_sources(
+            answer=generation_result.text,
+            prompt_sources=prompt_result.sources,
+            user_idx=user_idx,
+        )
 
         response: RagAnswerResponse | None = None
         mapping_failed = False
@@ -509,7 +647,7 @@ class RagAnswerService:
             response = RagAnswerResponse(
                 answer=generation_result.text,
                 status=RagAnswerStatus.ANSWERED,
-                sources=prompt_result.sources,
+                sources=cited_sources,
                 model=generation_result.model,
                 usage=RagAnswerUsage(
                     input_tokens=(generation_result.usage.input_tokens),
@@ -529,7 +667,7 @@ class RagAnswerService:
                 extra={
                     "event": "rag_answer_response_mapping_failed",
                     "user_idx": user_idx,
-                    "source_count": len(prompt_result.sources),
+                    "source_count": len(cited_sources),
                 },
             )
 
@@ -538,6 +676,38 @@ class RagAnswerService:
             )
 
         return response
+
+
+def _extract_unique_source_ids(
+    answer: str,
+) -> tuple[str, ...]:
+    """답변에서 인용 ID를 중복 없이 최초 등장 순서로 추출한다.
+
+    정규식 검색은 답변의 왼쪽에서 오른쪽으로 진행한다. 이미 확인한 ID는
+    ``seen_source_ids``에서 제외하므로 같은 출처가 여러 문장에 반복 인용되어도
+    첫 번째 위치를 기준으로 한 번만 반환한다.
+
+    Args:
+        answer:
+            Claude가 반환한 답변 원문이다.
+
+    Returns:
+        ``SOURCE-N`` 문자열의 최초 등장 순서 tuple이다.
+    """
+
+    ordered_source_ids: list[str] = []
+    seen_source_ids: set[str] = set()
+
+    for match in _SOURCE_CITATION_PATTERN.finditer(answer):
+        source_id = match.group("source_id")
+
+        if source_id in seen_source_ids:
+            continue
+
+        seen_source_ids.add(source_id)
+        ordered_source_ids.append(source_id)
+
+    return tuple(ordered_source_ids)
 
 
 def _remove_exception_chain(
