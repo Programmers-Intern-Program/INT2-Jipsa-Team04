@@ -214,3 +214,25 @@ export async function apiFetch<T>(
 
   return response.json() as Promise<T>;
 }
+
+export async function apiFetchBlob(path: string): Promise<Blob> {
+  let response = await doFetch(path, "GET", undefined);
+  applyRefreshedTokenHeader(response);
+
+  if (response.status === 401 && getRefreshToken()) {
+    try {
+      await refreshTokenOnce();
+    } catch {
+      clearAuthStorage();
+      throw await toApiError(response);
+    }
+    response = await doFetch(path, "GET", undefined);
+    applyRefreshedTokenHeader(response);
+  }
+
+  if (!response.ok) {
+    throw await toApiError(response);
+  }
+
+  return response.blob();
+}

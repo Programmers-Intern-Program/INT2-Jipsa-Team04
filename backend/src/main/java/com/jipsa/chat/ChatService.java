@@ -172,10 +172,12 @@ public class ChatService {
             citation.setSectionTitle(source.sectionTitle());
             citation.setExcerpt(source.excerpt());
             citation.setScore(source.score());
+            citation.setSourceId(source.sourceId());
             citation.setCitationOrder(order++);
             messageCitationRepository.save(citation);
 
             citations.add(new ChatMessageResponse.Citation(
+                    source.sourceId(),
                     source.fileIdx(),
                     source.fileName(),
                     source.page(),
@@ -190,6 +192,7 @@ public class ChatService {
         List<ChatMessageResponse.Citation> result = new ArrayList<>();
         for (MessageCitation citation : messageCitationRepository.findByConversationChatIdOrderByCitationOrder(chatId)) {
             result.add(new ChatMessageResponse.Citation(
+                    citation.getSourceId(),
                     citation.getFileId(),
                     citation.getFileName(),
                     citation.getPage(),

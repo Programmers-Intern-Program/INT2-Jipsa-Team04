@@ -14,10 +14,14 @@ import {
   X,
   Plus,
   Pencil,
+  ThumbsUp,
+  ThumbsDown,
 } from "lucide-react";
 import type { Document, ChatSession, ChatMessage, Folder } from "../types";
 import { getFolderPath } from "../utils/folderTree";
 import { listFolders } from "../api/folders";
+import SourcePreviewModal from "./SourcePreviewModal";
+import type { Citation } from "../api/chat";
 
 interface AIChatViewProps {
   documents: Document[];
@@ -29,7 +33,8 @@ interface AIChatViewProps {
   onRenameChatTab: (id: string, title: string) => void;
   onToggleDocSelection: (id: string) => void;
   onSendMessage: (text: string, refDocIds: string[]) => Promise<void>;
-  isLoadingChat: boolean;
+  onRetry?: () => void;
+  onFeedback: (messageId: number, rating: "UP" | "DOWN") => void;
 }
 
 export default function AIChatView({
@@ -42,11 +47,32 @@ export default function AIChatView({
   onRenameChatTab,
   onToggleDocSelection,
   onSendMessage,
-  isLoadingChat
+  onRetry,
+  onFeedback
 }: AIChatViewProps) {
   const [inputText, setInputText] = useState("");
   const [isAddSourceOpen, setIsAddSourceOpen] = useState(false);
   const [folders, setFolders] = useState<Folder[]>([]);
+  const [previewCitation, setPreviewCitation] = useState<Citation | null>(null);
+  const renderMessageText = (message: ChatMessage) => {
+    if (message.sender !== "ai" || message.citations.length === 0) return message.text;
+    return message.text.split(/(\[SOURCE-\d+\])/g).map((part, index) => {
+      const match = part.match(/^\[SOURCE-(\d+)\]$/);
+      if (!match) return part;
+      const citation = message.citations.find((c) => c.sourceId === `SOURCE-${match[1]}`);
+      if (!citation) return part;
+      return (
+          <button
+              key={index}
+              type="button"
+              onClick={() => setPreviewCitation(citation)}
+              className="inline-flex items-center align-baseline text-[11px] font-bold text-secondary bg-secondary/10 hover:bg-secondary/20 rounded px-1 mx-0.5 cursor-pointer"
+          >
+            {match[1]}
+          </button>
+      );
+    });
+  };
   useEffect(() => {
     listFolders().then(setFolders).catch(() => {});
   }, []);
@@ -54,6 +80,8 @@ export default function AIChatView({
   const activeSession = chatSessions.find((s) => s.id === activeChatSessionId) ?? chatSessions[0];
   const selectedDocIds = activeSession.selectedDocIds;
   const chatHistory = activeSession.chatHistory;
+  const isLoadingChat = activeSession.isLoading ?? false;
+  const chatError = activeSession.error ?? null;
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -233,17 +261,17 @@ export default function AIChatView({
                       {msg.sender === "ai" && (
                         <div className="flex items-center gap-2 mb-3 border-b border-outline-variant/30 pb-2">
                           <span className="text-label-md text-primary font-bold">AI Drive Assistant</span>
-                          <span className="px-2 py-0.5 bg-secondary/10 text-secondary text-[10px] font-extrabold rounded-full animate-pulse">RAG 분석 완료</span>
+                          {msg.status === "insufficient_evidence" ? (
+                              <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-extrabold rounded-full">근거 부족</span>
+                          ) : (
+                              <span className="px-2 py-0.5 bg-secondary/10 text-secondary text-[10px] font-extrabold rounded-full animate-pulse">RAG 분석 완료</span>
+                          )}
                         </div>
-                      )}
-
-                      {msg.sender === "ai" && (msg.routing || msg.mapResults || msg.modelUsed) && (
-                        <AIChatProcessDetails msg={msg} />
                       )}
 
                       {/* Message Content Body */}
                       <div className="text-body-md text-on-surface leading-relaxed space-y-3 font-sans whitespace-pre-line">
-                        {msg.text}
+                        {renderMessageText(msg)}
                       </div>
 
                       {/* Citation / Sources link in AI bubbles */}
@@ -253,21 +281,49 @@ export default function AIChatView({
                           {msg.citations.map((cite, idx) => (
                             <button 
                               key={idx}
-                              onClick={() => {
-                                alert(`[인용 근거 확인]\n폴더: ${cite.info}\n파일명: ${cite.name}\n\n해당 파일은 검증된 사실만을 담고 있는 보안 저장소에 보관되어 있습니다.`);
-                              }}
+                              onClick={() => setPreviewCitation(cite)}
                               className="px-3 py-1 bg-surface-container text-secondary text-xs font-bold rounded-lg border border-secondary/10 hover:bg-secondary/15 transition-all flex items-center gap-1 cursor-pointer"
                             >
                               <Link2 className="w-3.5 h-3.5" />
-                              {cite.name.split(".")[0]}
+                              {cite.fileName.split(".")[0]}
                             </button>
                           ))}
                         </div>
                       )}
+
+                      {msg.sender === "ai" && msg.messageId != null && (
+                          <div className="mt-4 flex items-center gap-2 pt-3 border-t border-outline-variant/30">
+                            <span className="text-[11px] text-outline font-bold">이 답변이 도움이 되었나요?</span>
+                            <button
+                                type="button"
+                                onClick={() => onFeedback(msg.messageId!, "UP")}
+                                className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
+                                    msg.feedbackRating === "UP"
+                                        ? "bg-secondary/15 border-secondary/40 text-secondary"
+                                        : "border-outline-variant text-outline hover:bg-surface-container"
+                                }`}
+                                title="도움이 됨"
+                            >
+                              <ThumbsUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => onFeedback(msg.messageId!, "DOWN")}
+                                className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
+                                    msg.feedbackRating === "DOWN"
+                                        ? "bg-rose-50 border-rose-300 text-rose-600"
+                                        : "border-outline-variant text-outline hover:bg-surface-container"
+                                }`}
+                                title="도움이 안 됨"
+                            >
+                              <ThumbsDown className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                      )}
                     </div>
                     {/* Timestamp and Process Time */}
                     <span className="text-[10px] text-outline mt-2 font-medium" id={`msg-meta-${msg.id}`}>
-                      {msg.timestamp} {msg.processingTime && `· AI 분석처리 ${msg.processingTime}`}
+                      {msg.timestamp}
                     </span>
                   </div>
 
@@ -309,6 +365,21 @@ export default function AIChatView({
         {/* Floating Input area at bottom */}
         <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-white via-white/95 to-transparent border-t border-outline-variant/20" id="chat-input-bar-container">
           <div className="max-w-4xl mx-auto">
+            {chatError && (
+                <div className="mb-3 flex items-center justify-between gap-3 px-4 py-3 bg-rose-50 border border-rose-200 rounded-xl" id="chat-error-strip">
+                  <span className="text-body-sm text-rose-700 font-semibold">{chatError}</span>
+                  {onRetry && (
+                      <button
+                          type="button"
+                          onClick={onRetry}
+                          disabled={isLoadingChat}
+                          className="px-3 py-1.5 bg-rose-600 text-white text-xs font-bold rounded-lg hover:bg-rose-700 transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        다시 시도
+                      </button>
+                  )}
+                </div>
+            )}
             <form onSubmit={handleSend} className="relative bg-white/90 border border-outline-variant rounded-2xl shadow-xl overflow-hidden focus-within:ring-2 focus-within:ring-primary focus-within:border-primary transition-all">
               <div className="flex items-end gap-2 p-4">
                 <button 
@@ -441,6 +512,14 @@ export default function AIChatView({
           </div>
         )}
       </AnimatePresence>
+      {previewCitation && (
+          <SourcePreviewModal
+              citation={previewCitation}
+              fileName={previewCitation.fileName}
+              fileType={previewCitation.fileName.split(".").pop() ?? ""}
+              onClose={() => setPreviewCitation(null)}
+          />
+      )}
     </motion.div>
   );
 }
@@ -541,75 +620,3 @@ function ChatTab({
   );
 }
 
-function AIChatProcessDetails({ msg }: { msg: ChatMessage }) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  return (
-    <div className="mb-4 bg-surface-container-lowest border border-outline-variant/50 rounded-xl overflow-hidden font-sans w-full">
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full px-3.5 py-2.5 flex items-center justify-between text-[11px] font-extrabold text-primary hover:bg-primary/5 transition-colors cursor-pointer"
-      >
-        <span className="flex items-center gap-1.5">
-          <Sparkles className="w-3.5 h-3.5 animate-pulse text-secondary shrink-0" />
-          <span>AI 지능형 RAG 분석 프로세스 {isOpen ? "닫기" : "상세 분석 보기"}</span>
-        </span>
-        <span className="text-[10px] text-outline font-semibold">
-          {msg.routing?.mode === "synthesis" ? "📊 종합 융합 분석 (Map-Reduce)" : "🔍 정밀 사실 매칭 (Lookup)"}
-        </span>
-      </button>
-
-      {isOpen && (
-        <div className="p-3.5 border-t border-outline-variant/25 bg-surface-bright space-y-3.5 text-[11px] leading-relaxed">
-          {/* Query Routing */}
-          {msg.routing && (
-            <div className="space-y-1">
-              <div className="flex items-center gap-1.5">
-                <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold ${
-                  msg.routing.mode === "synthesis" 
-                    ? "bg-purple-50 text-purple-700 border border-purple-100" 
-                    : "bg-cyan-50 text-cyan-700 border border-cyan-100"
-                }`}>
-                  {msg.routing.mode.toUpperCase()}
-                </span>
-                <span className="text-on-surface font-extrabold text-[10.5px]">질문 라우팅 및 의도 판별</span>
-              </div>
-              <p className="text-on-surface-variant font-medium pl-1 text-[10.5px] bg-surface-container-low p-2 rounded-lg">
-                💡 {msg.routing.reasoning}
-              </p>
-            </div>
-          )}
-
-          {/* Model Used */}
-          {msg.modelUsed && (
-            <div className="flex justify-between items-center bg-surface-container-low p-2 rounded-lg text-[10px]">
-              <span className="text-outline font-bold">수행 모델:</span>
-              <span className="font-mono font-extrabold text-secondary">{msg.modelUsed}</span>
-            </div>
-          )}
-
-          {/* Map Phase Results */}
-          {msg.mapResults && msg.mapResults.length > 0 && (
-            <div className="space-y-1.5">
-              <span className="text-on-surface font-extrabold text-[10.5px] block">🔍 분할 추출 단계 (Map Phase)</span>
-              <div className="space-y-1.5">
-                {msg.mapResults.map((mapRes, index) => (
-                  <div key={index} className="bg-secondary/[0.02] border border-secondary/10 rounded-lg p-2.5 text-[10px]">
-                    <div className="flex items-center justify-between font-bold text-secondary mb-1">
-                      <span className="truncate max-w-[180px]">📂 {mapRes.docName}</span>
-                      <span className="text-[8.5px] bg-secondary/10 px-1 py-0.5 rounded shrink-0">개별 추출 성공</span>
-                    </div>
-                    <p className="text-on-surface-variant leading-relaxed">
-                      {mapRes.partialSummary}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}

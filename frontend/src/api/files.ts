@@ -1,7 +1,5 @@
 import type { Document } from "../types";
-import { ApiError, apiFetch } from "./client";
-
-const TOKEN_STORAGE_KEY = "aidrive_token";
+import { apiFetch, apiFetchBlob } from "./client";
 
 export interface FileListItem {
     fileId: number;
@@ -193,13 +191,8 @@ export function getDocumentTypes(): Promise<string[]> {
     return apiFetch<{ documentTypes: string[] }>("/metadata/document-types").then((res) => res.documentTypes);
 }
 
-async function fetchBlob(path: string): Promise<Blob> {
-    const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-    const response = await fetch(`/api/v1${path}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!response.ok) throw new ApiError(response.status, response.statusText);
-    return response.blob();
+function fetchBlob(path: string): Promise<Blob> {
+    return apiFetchBlob(path);
 }
 
 export async function downloadFile(fileId: number, name: string): Promise<void> {
@@ -219,6 +212,10 @@ export async function viewFile(fileId: number): Promise<void> {
     const url = URL.createObjectURL(blob);
     window.open(url, "_blank");
     setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+export function fetchFileBlob(fileId: number): Promise<Blob> {
+    return fetchBlob(`/files/${fileId}/view`);
 }
 
 export interface FileStatusInfo {

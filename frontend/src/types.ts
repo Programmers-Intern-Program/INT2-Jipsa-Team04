@@ -1,3 +1,5 @@
+import type { Citation } from "./api/chat";
+
 // 필드명은 API 문서.md (GET /api/v1/files/{id}, GET /api/v1/users/me/settings) 기준으로 정렬.
 
 /**
@@ -98,15 +100,11 @@ export interface ChatMessage {
   id: string;
   sender: "user" | "ai";
   text: string;
-  citations: { name: string; info: string }[];
+  citations: Citation[];
   timestamp: string;
-  processingTime?: string;
-  routing?: {
-    mode: "lookup" | "synthesis" | "general";
-    reasoning: string;
-  };
-  mapResults?: { docName: string; partialSummary: string }[];
-  modelUsed?: string;
+  messageId?: number;
+  status?: "answered" | "insufficient_evidence";
+  feedbackRating?: "UP" | "DOWN" | null;
 }
 
 /** AI 채팅 탭(여러 개의 독립된 대화 창)을 표현. 프론트 전용 개념, 백엔드 스펙엔 없음. */
@@ -115,6 +113,10 @@ export interface ChatSession {
   title: string;
   chatHistory: ChatMessage[];
   selectedDocIds: string[];
+  conversationId?: number;
+  isLoading?: boolean;
+  error?: string | null;
+  lastAttempt?: { text: string; fileIds: number[] };
 }
 
 /** GET /api/v1/organize/current-tree, propose/apply 공용 폴더 트리 노드. backend FolderTreeNode와 1:1. */
