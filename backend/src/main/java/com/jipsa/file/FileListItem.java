@@ -15,6 +15,7 @@ public record FileListItem(
         String summary,
         List<String> tags,
         String securityRank,
-        String documentType
+        String documentType,
+        String extractionStatus
 ) {
 }

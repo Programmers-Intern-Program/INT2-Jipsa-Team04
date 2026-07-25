@@ -248,25 +248,26 @@ export default function MyDocumentsView({
   }, []);
 
   useEffect(() => {
-    const pending = documents.filter((d) => d.status === "PROCESSING" || d.status === "UPLOADED");
+    const pending = documents.filter((d) =>
+        d.status === "PROCESSING" || d.status === "UPLOADED" ||
+        d.extractionStatus === "PROCESSING" || d.extractionStatus === "GENERATING");
     if (pending.length === 0) return;
     let cancelled = false;
     const timer = setInterval(async () => {
-      const results = await Promise.allSettled(
-          pending.map((d) => getFileStatus(Number(d.id)).then((s) => ({ id: d.id, status: s.status })))
-      );
+      const statuses = await Promise.allSettled(pending.map((d) => getFileStatus(Number(d.id))));
       if (cancelled) return;
-      const done = results
-          .filter((r): r is PromiseFulfilledResult<{ id: string; status: string }> => r.status === "fulfilled")
-          .map((r) => r.value)
-          .filter((u) => u.status !== "PROCESSING" && u.status !== "UPLOADED");
-      if (done.length > 0) {
-        onUpdateDocuments(
-            documents.map((d) => {
-              const u = done.find((x) => x.id === d.id);
-              return u ? { ...d, status: u.status } : d;
-            })
-        );
+      let changed = false;
+      statuses.forEach((r, i) => {
+        if (r.status !== "fulfilled") return;
+        const doc = pending[i];
+        const info = r.value;
+        if (info.status !== doc.status || (info.extractionStatus ?? null) !== (doc.extractionStatus ?? null)) {
+          changed = true;
+        }
+      });
+      if (changed) {
+        const fresh = await listAllFiles();
+        if (!cancelled) onUpdateDocuments(fresh);
       }
     }, 4000);
     return () => {
@@ -274,7 +275,7 @@ export default function MyDocumentsView({
       clearInterval(timer);
     };
   }, [documents, onUpdateDocuments]);
-
+  
   const storagePercent = storage && storage.quotaBytes > 0
       ? Math.min(100, Math.round((storage.usedBytes / storage.quotaBytes) * 100))
       : 0;

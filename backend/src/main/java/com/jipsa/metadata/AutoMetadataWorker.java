@@ -36,4 +36,12 @@ public class AutoMetadataWorker {
             autoMetadataService.process(fileId);
         }
     }
+
+    @Scheduled(fixedDelayString = "${app.metadata.ai.reap-interval-ms:60000}")
+    public void reap() {
+        if (!enabled) {
+            return;
+        }
+        autoMetadataService.reapStale();
+    }
 }

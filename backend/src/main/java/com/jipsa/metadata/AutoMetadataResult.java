@@ -8,8 +8,16 @@ import java.util.List;
 public record AutoMetadataResult(
         String summary,
         List<String> keywords,
-        List<String> entities,
+        Entities entities,
         String documentType,
         Double confidence
 ) {
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Entities(
+            List<String> dates,
+            List<String> people,
+            List<String> amounts,
+            String project
+    ) {
+    }
 }

@@ -77,6 +77,7 @@ export interface Document {
   piiDetected: boolean;
   status?: string;
   processingStage?: string;
+  extractionStatus?: string | null;
   star?: boolean;
   docType?: string;
   entities?: {

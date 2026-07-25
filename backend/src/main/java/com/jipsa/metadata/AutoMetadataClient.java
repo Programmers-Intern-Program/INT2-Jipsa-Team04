@@ -17,7 +17,7 @@ public class AutoMetadataClient {
 
     private static final String SYSTEM_PROMPT = """
             문서 앞부분 일부를 보고 메타데이터를 추출한다. 설명 없이 JSON 객체 하나만 출력한다.
-            {"summary":"2문장 이하 한국어 요약","keywords":["최대 5개"],"entities":["날짜·인물·금액·조직 등 최대 5개"],"documentType":"아래 목록 중 하나 또는 null","confidence":0.0}
+            {"summary":"2문장 이하 한국어 요약","keywords":["최대 5개"],"entities":{"dates":["최대 5"],"people":["최대 5"],"amounts":["최대 5"],"project":"프로젝트명 또는 null"},"documentType":"아래 목록 중 하나 또는 null","confidence":0.0}
             documentType 후보: 계약서, 보고서, 청구서, 회의록, 이력서, 제안서, 견적서, 영수증, 발표자료, 공문, 논문, 기타
             근거가 부족하면 documentType은 null, confidence는 낮게 준다.
             """;
