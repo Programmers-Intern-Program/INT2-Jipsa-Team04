@@ -16,25 +16,24 @@ from jipsa_rag.infrastructure.document.parsers.pdf import (
 class DocumentParserFactory:
     """등록된 문서 형식별 파서를 조회하고 관리한다.
 
-    파일 처리 API와 서비스 계층은 PdfDocumentParser 같은 구체 구현체를
-    직접 선택하지 않는다.
+    파일 처리 API와 서비스 계층은 PdfDocumentParser와 같은 구체적인
+    파서 구현을 직접 선택하지 않는다.
 
-    호출자는 처리할 문서 형식만 Factory에 전달하고, Factory는 해당 형식에
-    등록된 DocumentParser 구현체를 반환한다.
+    호출자는 처리할 문서 형식만 Factory에 전달하고, Factory는 현재
+    지원 정책에 따라 등록된 DocumentParser 구현체를 반환한다.
 
-    현재 프로젝트의 공식 지원 범위는 PDF뿐이다.
+    현재 Local RAG 파일 처리 정책은 텍스트 레이어가 존재하는 PDF만
+    지원한다. 따라서 기본 등록 목록에는 PdfDocumentParser만 포함한다.
 
-    따라서 기본 Factory에는 PdfDocumentParser만 등록하며 다음 형식은
-    DocumentType 열거형에 존재하더라도 의도적으로 등록하지 않는다.
+    다음 형식은 현재 지원하지 않는다.
 
     - TXT
     - DOCX
     - XLSX
     - PPTX
 
-    열거형에 형식이 존재하는 것과 실제 파일 처리 기능이 지원되는 것은
-    서로 다른 개념이다. 형식 이름이 내부 모델에 정의되어 있더라도 파서가
-    등록되지 않았다면 UnsupportedDocumentTypeError를 발생시킨다.
+    위 형식은 파서 구현과 지원 정책이 확정되기 전까지 기본 Factory에
+    등록하지 않는다.
     """
 
     def __init__(
@@ -47,15 +46,14 @@ class DocumentParserFactory:
             parsers:
                 Factory에 등록할 DocumentParser 구현체 목록이다.
 
-                값을 전달하지 않으면 현재 공식 지원 파서인
-                PdfDocumentParser만 자동으로 등록한다.
+                값을 전달하지 않으면 현재 실제 지원 형식인 PDF 파서만
+                자동으로 등록한다.
 
                 호출자가 명시적인 목록을 전달하면 기본 파서를 추가하지
                 않고 전달받은 목록만 등록한다.
 
-                빈 tuple을 전달하면 등록된 파서가 전혀 없는 Factory를
-                만들 수 있다. 테스트에서는 이 특성을 이용하여 등록 상태를
-                완전히 통제할 수 있다.
+                빈 tuple을 전달하면 등록된 파서가 없는 Factory를 만들 수
+                있다. 테스트에서는 이를 이용해 등록 상태를 완전히 통제한다.
 
         Raises:
             DuplicateDocumentParserError:
@@ -66,25 +64,22 @@ class DocumentParserFactory:
         registered_parsers: tuple[DocumentParser, ...]
 
         if parsers is not None:
-            # 호출자가 파서 목록을 직접 전달했다면 PDF 기본 파서를
-            # 암묵적으로 추가하지 않는다.
+            # 호출자가 파서 목록을 명시했다면 기본 파서를 추가하지 않는다.
             #
-            # 이를 통해 테스트나 향후 별도 실행 프로필에서 등록할 파서를
-            # 명시적으로 통제할 수 있다.
+            # 빈 tuple도 유효한 명시적 입력이므로 truthy 여부가 아니라
+            # None 여부로 기본 등록 여부를 판단한다.
             registered_parsers = tuple(parsers)
         else:
-            # 현재 사용자 요구사항과 파일 처리 계약은 PDF만 지원한다.
+            # 현재 실제 파일 처리 정책에서 지원하는 형식은 PDF뿐이다.
             #
-            # TXT 모듈이 존재하더라도 실제 파서 구현이 완료되지 않았으므로
-            # 기본 등록 목록에 포함해서는 안 된다.
-            registered_parsers = (
-                PdfDocumentParser(),
-            )
+            # TXT, DOCX, XLSX 및 PPTX는 요청 스키마와 Factory 양쪽에서
+            # 지원하지 않도록 유지한다.
+            registered_parsers = (PdfDocumentParser(),)
 
         # 문서 형식을 Key로 사용하여 대응하는 파서를 저장한다.
         #
-        # 반복적인 if/elif 분기 대신 정규화된 DocumentType을 이용해
-        # 결정적으로 파서를 조회한다.
+        # 조회 시 반복적인 if/elif 분기를 사용하지 않고 정규화된
+        # DocumentType을 이용해 결정적으로 파서를 선택한다.
         self._parsers: dict[DocumentType, DocumentParser] = {}
 
         for parser in registered_parsers:
@@ -102,16 +97,15 @@ class DocumentParserFactory:
 
         Raises:
             DuplicateDocumentParserError:
-                동일한 file_type을 처리하는 파서가 이미 등록된 경우
-                발생한다.
+                동일한 file_type의 파서가 이미 등록된 경우 발생한다.
         """
 
         file_type = parser.file_type
 
         # 동일한 문서 형식에 여러 파서가 등록되면 등록 순서에 따라
-        # 조회 결과가 달라질 수 있다.
+        # 선택 결과가 달라질 수 있다.
         #
-        # 파서 선택 결과를 결정적으로 유지하기 위해 같은 DocumentType의
+        # 파서 선택 결과를 결정적으로 유지하기 위해 동일 형식의
         # 중복 등록을 명시적으로 거부한다.
         if file_type in self._parsers:
             raise DuplicateDocumentParserError(file_type)
@@ -122,19 +116,19 @@ class DocumentParserFactory:
         self,
         file_type: DocumentType | str,
     ) -> DocumentParser:
-        """문서 형식을 정규화하고 대응하는 파서를 반환한다.
+        """문서 형식을 정규화하고 등록된 파서를 반환한다.
 
         문자열 입력은 앞뒤 공백을 제거하고 대문자로 변환한다.
 
-        다음 값은 모두 DocumentType.PDF로 처리된다.
+        다음 값은 모두 DocumentType.PDF로 정규화된다.
 
-        - "PDF"
-        - "pdf"
-        - " Pdf "
+        - ``"PDF"``
+        - ``"pdf"``
+        - ``" Pdf "``
 
-        TXT, DOCX, XLSX, PPTX 값도 DocumentType으로 정규화될 수는 있지만
-        현재 Factory에 파서가 등록되어 있지 않으므로 조회 단계에서
-        UnsupportedDocumentTypeError가 발생한다.
+        DocumentType에 정의되어 있더라도 현재 Factory에 등록되지 않은
+        TXT, DOCX, XLSX 및 PPTX는 UnsupportedDocumentTypeError로
+        거부한다.
 
         Args:
             file_type:
@@ -146,7 +140,7 @@ class DocumentParserFactory:
         Raises:
             UnsupportedDocumentTypeError:
                 DocumentType에 정의되지 않은 값이거나 해당 형식의
-                파서가 현재 등록되어 있지 않은 경우 발생한다.
+                파서가 현재 Factory에 등록되지 않은 경우 발생한다.
         """
 
         normalized_file_type = self._normalize_file_type(file_type)
@@ -154,11 +148,11 @@ class DocumentParserFactory:
         try:
             return self._parsers[normalized_file_type]
         except KeyError as error:
-            # DocumentType에 정의된 형식이라도 실제 파서가 등록되지
-            # 않았다면 현재 서비스가 지원하는 형식이 아니다.
+            # 알려진 문서 형식이라도 현재 지원 정책상 파서가 등록되지
+            # 않았다면 일반 KeyError를 노출하지 않는다.
             #
-            # 일반 KeyError를 외부로 전달하지 않고 문서 파서 계층의
-            # 명확한 미지원 형식 예외로 변환한다.
+            # 문서 파서 계층의 공통 미지원 형식 예외로 변환하여 API가
+            # 일관된 오류로 처리할 수 있도록 한다.
             raise UnsupportedDocumentTypeError(
                 normalized_file_type,
             ) from error
@@ -167,9 +161,9 @@ class DocumentParserFactory:
         self,
         file_type: DocumentType | str,
     ) -> bool:
-        """요청한 문서 형식의 파서가 현재 등록되어 있는지 반환한다.
+        """요청한 문서 형식의 파서가 등록되어 있는지 반환한다.
 
-        DocumentType에 정의되지 않은 문자열이나 아직 구현되지 않은
+        DocumentType에 정의되지 않은 문자열이나 현재 지원하지 않는
         문서 형식은 예외를 외부로 전달하지 않고 False를 반환한다.
 
         Args:
@@ -207,14 +201,11 @@ class DocumentParserFactory:
     ) -> DocumentType:
         """DocumentType 또는 문자열 입력을 DocumentType으로 통일한다.
 
-        DocumentType 값은 그대로 반환한다.
+        DocumentType 값은 그대로 반환한다. 문자열은 앞뒤 공백을 제거하고
+        대문자로 변환한 뒤 공통 Enum 값으로 변환한다.
 
-        문자열은 앞뒤 공백을 제거하고 대문자로 변환한 뒤 공통 Enum 값으로
-        변환한다.
-
-        이 메서드는 형식 이름이 DocumentType에 정의되어 있는지만 확인한다.
-        실제 지원 여부는 get_parser() 또는 supports()가 등록된 파서를
-        기준으로 판단한다.
+        이 메서드는 문서 형식 이름을 정규화할 뿐 지원 여부를 결정하지
+        않는다. 실제 지원 여부는 해당 형식의 파서 등록 상태로 판단한다.
 
         Args:
             file_type:
@@ -225,8 +216,7 @@ class DocumentParserFactory:
 
         Raises:
             UnsupportedDocumentTypeError:
-                PDF, TXT, DOCX, XLSX 및 PPTX 중 어느 값으로도
-                변환할 수 없는 경우 발생한다.
+                DocumentType에 정의된 값으로 변환할 수 없는 경우 발생한다.
         """
 
         if isinstance(file_type, DocumentType):
@@ -237,9 +227,6 @@ class DocumentParserFactory:
         try:
             return DocumentType(normalized_value)
         except ValueError as error:
-            # Enum 변환 과정의 일반 ValueError에는 입력 문자열이
-            # 포함될 수 있다.
-            #
-            # 상위 계층이 문서 파서 공통 예외만 처리할 수 있도록
-            # UnsupportedDocumentTypeError로 변환한다.
+            # Enum 변환 과정의 일반 ValueError를 외부로 노출하지 않고
+            # 문서 파서 계층의 공통 미지원 형식 예외로 변환한다.
             raise UnsupportedDocumentTypeError(file_type) from error

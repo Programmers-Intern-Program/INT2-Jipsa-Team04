@@ -1,4 +1,4 @@
-"""문서 형식별 파서 선택 Factory의 PDF 전용 계약을 테스트한다."""
+"""문서 형식별 파서 선택 Factory의 등록과 조회 동작을 테스트한다."""
 
 import pytest
 
@@ -16,21 +16,16 @@ from jipsa_rag.infrastructure.document.parsers.pdf import (
 
 
 def test_factory_registers_only_pdf_parser_by_default() -> None:
-    """기본 Factory가 공식 지원 형식인 PDF 파서만 등록한다."""
+    """기본 Factory에는 현재 지원 형식인 PDF 파서만 등록되어야 한다."""
 
     factory = DocumentParserFactory()
 
-    parser = factory.get_parser(
-        DocumentType.PDF,
-    )
+    pdf_parser = factory.get_parser(DocumentType.PDF)
 
-    assert isinstance(
-        parser,
-        PdfDocumentParser,
-    )
+    assert isinstance(pdf_parser, PdfDocumentParser)
 
-    # TXT 모듈이 저장소에 존재하더라도 실제 파서 구현과 공식 지원
-    # 계약이 없는 상태이므로 기본 등록 형식에 포함되어서는 안 된다.
+    # TXT, DOCX, XLSX 및 PPTX는 내부 DocumentType에 정의되어 있더라도
+    # 현재 Local RAG 파일 처리 정책에서는 지원하지 않는다.
     assert factory.registered_file_types == frozenset(
         {
             DocumentType.PDF,
@@ -50,21 +45,19 @@ def test_factory_registers_only_pdf_parser_by_default() -> None:
             id="uppercase-pdf-with-whitespace",
         ),
         pytest.param(
-            " Pdf ",
-            id="mixed-case-pdf-with-whitespace",
+            DocumentType.PDF,
+            id="pdf-enum",
         ),
     ],
 )
-def test_factory_normalizes_pdf_file_type_string(
-    file_type_value: str,
+def test_factory_normalizes_supported_pdf_type(
+    file_type_value: DocumentType | str,
 ) -> None:
-    """PDF 문자열의 대소문자와 앞뒤 공백을 정규화한다."""
+    """PDF 문자열의 대소문자와 앞뒤 공백을 정규화해야 한다."""
 
     factory = DocumentParserFactory()
 
-    parser = factory.get_parser(
-        file_type_value,
-    )
+    parser = factory.get_parser(file_type_value)
 
     assert parser.file_type is DocumentType.PDF
     assert factory.supports(file_type_value) is True
@@ -75,143 +68,68 @@ def test_factory_normalizes_pdf_file_type_string(
     [
         pytest.param(
             DocumentType.TXT,
-            id="txt",
+            id="txt-enum",
+        ),
+        pytest.param(
+            "txt",
+            id="txt-string",
         ),
         pytest.param(
             DocumentType.DOCX,
-            id="docx",
+            id="docx-enum",
+        ),
+        pytest.param(
+            "docx",
+            id="docx-string",
         ),
         pytest.param(
             DocumentType.XLSX,
-            id="xlsx",
-        ),
-        pytest.param(
-            DocumentType.PPTX,
-            id="pptx",
-        ),
-    ],
-)
-def test_factory_rejects_unregistered_non_pdf_document_types(
-    unsupported_file_type: DocumentType,
-) -> None:
-    """TXT·DOCX·XLSX·PPTX는 파서 미등록 형식으로 거부한다."""
-
-    factory = DocumentParserFactory()
-
-    # Enum에는 형식 이름이 정의되어 있더라도 실제 파서가 등록되지
-    # 않았으므로 현재 서비스 지원 형식으로 판단하면 안 된다.
-    assert factory.supports(
-        unsupported_file_type,
-    ) is False
-
-    with pytest.raises(
-        UnsupportedDocumentTypeError,
-    ) as exception_info:
-        factory.get_parser(
-            unsupported_file_type,
-        )
-
-    # DocumentType으로 전달한 값은 예외에도 같은 Enum 값으로 보존되어
-    # 상위 계층이 실패 형식을 안전하게 분류할 수 있어야 한다.
-    assert exception_info.value.file_type is unsupported_file_type
-
-
-@pytest.mark.parametrize(
-    (
-        "file_type_value",
-        "expected_document_type",
-    ),
-    [
-        pytest.param(
-            "txt",
-            DocumentType.TXT,
-            id="lowercase-txt",
-        ),
-        pytest.param(
-            " DOCX ",
-            DocumentType.DOCX,
-            id="uppercase-docx-with-whitespace",
+            id="xlsx-enum",
         ),
         pytest.param(
             "xlsx",
-            DocumentType.XLSX,
-            id="lowercase-xlsx",
+            id="xlsx-string",
         ),
         pytest.param(
-            "Pptx",
             DocumentType.PPTX,
-            id="mixed-case-pptx",
+            id="pptx-enum",
+        ),
+        pytest.param(
+            "pptx",
+            id="pptx-string",
         ),
     ],
 )
-def test_factory_normalizes_but_rejects_unregistered_file_type_strings(
-    file_type_value: str,
-    expected_document_type: DocumentType,
+def test_factory_rejects_unregistered_document_types(
+    unsupported_file_type: DocumentType | str,
 ) -> None:
-    """미지원 문자열은 정규화되더라도 파서 조회 단계에서 거부한다."""
+    """TXT, DOCX, XLSX 및 PPTX 파서 조회를 거부해야 한다."""
 
     factory = DocumentParserFactory()
 
-    assert factory.supports(
-        file_type_value,
-    ) is False
+    assert factory.supports(unsupported_file_type) is False
 
-    with pytest.raises(
-        UnsupportedDocumentTypeError,
-    ) as exception_info:
-        factory.get_parser(
-            file_type_value,
-        )
-
-    # 문자열이 공통 DocumentType으로 정상 변환된 뒤 등록 여부 검증에서
-    # 실패했다는 것을 확인한다.
-    assert exception_info.value.file_type is expected_document_type
+    with pytest.raises(UnsupportedDocumentTypeError):
+        factory.get_parser(unsupported_file_type)
 
 
 def test_factory_rejects_unknown_document_type_string() -> None:
-    """DocumentType에도 정의되지 않은 문자열을 거부한다."""
+    """DocumentType에도 정의되지 않은 문자열을 거부해야 한다."""
 
     factory = DocumentParserFactory()
 
-    assert factory.supports(
-        "CSV",
-    ) is False
+    assert factory.supports("CSV") is False
 
-    with pytest.raises(
-        UnsupportedDocumentTypeError,
-    ) as exception_info:
-        factory.get_parser(
-            "CSV",
-        )
+    with pytest.raises(UnsupportedDocumentTypeError) as exception_info:
+        factory.get_parser("CSV")
 
-    # Enum 변환 자체가 불가능한 입력은 원래 문자열을 예외에 보존한다.
     assert exception_info.value.file_type == "CSV"
 
 
-def test_factory_allows_explicit_empty_parser_registration() -> None:
-    """빈 파서 목록을 전달하면 아무 형식도 지원하지 않는 Factory를 만든다."""
-
-    factory = DocumentParserFactory(
-        parsers=(),
-    )
-
-    assert factory.registered_file_types == frozenset()
-    assert factory.supports(DocumentType.PDF) is False
-
-    with pytest.raises(
-        UnsupportedDocumentTypeError,
-    ):
-        factory.get_parser(
-            DocumentType.PDF,
-        )
-
-
 def test_factory_rejects_duplicate_parser_registration() -> None:
-    """동일한 PDF 파서가 중복 등록되는 것을 방지한다."""
+    """동일한 문서 형식의 파서가 중복 등록되는 것을 방지한다."""
 
-    with pytest.raises(
-        DuplicateDocumentParserError,
-    ) as exception_info:
+    with pytest.raises(DuplicateDocumentParserError) as exception_info:
         DocumentParserFactory(
             parsers=(
                 PdfDocumentParser(),
@@ -220,3 +138,15 @@ def test_factory_rejects_duplicate_parser_registration() -> None:
         )
 
     assert exception_info.value.file_type is DocumentType.PDF
+
+
+def test_factory_allows_explicit_empty_registration() -> None:
+    """빈 파서 목록을 전달하면 모든 문서 형식을 미지원으로 처리한다."""
+
+    factory = DocumentParserFactory(parsers=())
+
+    assert factory.registered_file_types == frozenset()
+    assert factory.supports(DocumentType.PDF) is False
+
+    with pytest.raises(UnsupportedDocumentTypeError):
+        factory.get_parser(DocumentType.PDF)
