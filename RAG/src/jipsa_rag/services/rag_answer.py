@@ -41,9 +41,7 @@ _INSUFFICIENT_EVIDENCE_ANSWER: Final[str] = "제공된 문서 근거만으로는
 # 우선 추출한 뒤 프롬프트 출처 집합과 비교한다. 이렇게 해야 형식상 SOURCE
 # 인용처럼 보이지만 실제 프롬프트에 존재하지 않는 식별자를 정상 답변으로
 # 통과시키지 않는다.
-_SOURCE_CITATION_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"\[(?P<source_id>SOURCE-[0-9]+)\]"
-)
+_SOURCE_CITATION_PATTERN: Final[re.Pattern[str]] = re.compile(r"\[(?P<source_id>SOURCE-[0-9]+)\]")
 
 
 class ChunkSearcher(Protocol):
