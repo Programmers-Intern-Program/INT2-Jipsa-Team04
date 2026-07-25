@@ -274,6 +274,20 @@ export default function AIChatView({
                         {renderMessageText(msg)}
                       </div>
 
+                      {msg.sender === "ai" && msg.referenceFiles && msg.referenceFiles.length > 0 && (
+                          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                            <span className="text-[11px] text-outline font-bold">참조 문서:</span>
+                            {msg.referenceFiles.map((ref, idx) => (
+                                <span
+                                    key={idx}
+                                    className="px-2 py-0.5 bg-surface-container-low text-on-surface-variant text-[11px] rounded-md border border-outline-variant/50"
+                                >
+                              {ref.fileName ?? `#${ref.fileId}`}
+                            </span>
+                            ))}
+                          </div>
+                      )}
+
                       {/* Citation / Sources link in AI bubbles */}
                       {msg.sender === "ai" && msg.citations.length > 0 && (
                         <div className="mt-5 flex flex-wrap gap-2 pt-4 border-t border-outline-variant/30">

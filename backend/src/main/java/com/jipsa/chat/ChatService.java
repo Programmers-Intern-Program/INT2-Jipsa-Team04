@@ -4,6 +4,7 @@ import com.jipsa.chunk.Chunk;
 import com.jipsa.chunk.ChunkRepository;
 import com.jipsa.common.BadRequestException;
 import com.jipsa.file.FileRepository;
+import com.jipsa.file.File;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,6 +14,8 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 
 @Service
 public class ChatService {
@@ -68,10 +71,11 @@ public class ChatService {
         }
 
         return transactionTemplate.execute(status ->
-                persistAnswer(userId, conversationId, question, ragResponse, durationMs));
+                persistAnswer(userId, conversationId, question, referenceFileIds, ragResponse, durationMs));
     }
 
     private ChatMessageResponse persistAnswer(Long userId, Long conversationId, String question,
+                                              List<Long> referenceFileIds,
                                               RagAnswerResponse ragResponse, long durationMs) {
         Conversation conversation = requireOwned(userId, conversationId);
 
@@ -83,6 +87,7 @@ public class ChatService {
         chat.setModelUsed(ragResponse.model());
         chat.setRoutingMode("RAG");
         chat.setDurationMs(durationMs);
+        chat.setReferenceFileIds(serializeFileIds(referenceFileIds));
         applyUsage(chat, ragResponse.usage());
         ConversationChat saved = conversationChatRepository.save(chat);
 
@@ -98,7 +103,8 @@ public class ChatService {
                 saved.getFeedbackComment(),
                 saved.getFeedbackAt(),
                 saved.getCreatedAt(),
-                citations);
+                citations,
+                resolveReferenceFiles(referenceFileIds));
     }
 
     @Transactional(readOnly = true)
@@ -115,7 +121,8 @@ public class ChatService {
                     message.getFeedbackComment(),
                     message.getFeedbackAt(),
                     message.getCreatedAt(),
-                    reconstructCitations(message.getId())));
+                    reconstructCitations(message.getId()),
+                    resolveReferenceFiles(parseFileIds(message.getReferenceFileIds()))));
         }
         return result;
     }
@@ -199,6 +206,53 @@ public class ChatService {
                     citation.getSectionTitle(),
                     citation.getExcerpt(),
                     citation.getScore()));
+        }
+        return result;
+    }
+
+    private String serializeFileIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return null;
+        }
+        StringBuilder builder = new StringBuilder("[");
+        for (int i = 0; i < ids.size(); i++) {
+            if (i > 0) {
+                builder.append(",");
+            }
+            builder.append(ids.get(i));
+        }
+        return builder.append("]").toString();
+    }
+
+    private List<Long> parseFileIds(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        String trimmed = json.trim();
+        if (trimmed.length() <= 2) {
+            return List.of();
+        }
+        List<Long> ids = new ArrayList<>();
+        for (String part : trimmed.substring(1, trimmed.length() - 1).split(",")) {
+            String value = part.trim();
+            if (!value.isEmpty()) {
+                ids.add(Long.parseLong(value));
+            }
+        }
+        return ids;
+    }
+
+    private List<ChatMessageResponse.ReferenceFile> resolveReferenceFiles(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, String> names = new HashMap<>();
+        for (File file : fileRepository.findAllById(ids)) {
+            names.put(file.getId(), file.getName());
+        }
+        List<ChatMessageResponse.ReferenceFile> result = new ArrayList<>();
+        for (Long id : ids) {
+            result.add(new ChatMessageResponse.ReferenceFile(id, names.get(id)));
         }
         return result;
     }
