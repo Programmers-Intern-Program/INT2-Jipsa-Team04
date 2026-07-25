@@ -12,7 +12,8 @@ public record ChatMessageResponse(
         String feedbackComment,
         LocalDateTime feedbackAt,
         LocalDateTime createdAt,
-        List<Citation> citations
+        List<Citation> citations,
+        List<ReferenceFile> referenceFiles
 ) {
     public record Citation(
             String sourceId,
@@ -22,6 +23,12 @@ public record ChatMessageResponse(
             String sectionTitle,
             String excerpt,
             Double score
+    ) {
+    }
+
+    public record ReferenceFile(
+            Long fileId,
+            String fileName
     ) {
     }
 }

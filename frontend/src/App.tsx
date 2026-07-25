@@ -105,6 +105,7 @@ function mapServerMessagesToHistory(messages: ChatMessageResponse[]): ChatMessag
       messageId: message.messageId,
       status: message.status,
       feedbackRating: message.feedbackRating,
+      referenceFiles: message.referenceFiles,
     });
   }
   return history;
@@ -410,6 +411,7 @@ export default function App() {
         messageId: response.messageId,
         status: response.status,
         feedbackRating: response.feedbackRating,
+        referenceFiles: response.referenceFiles,
       };
       setChatSessions((prev) =>
           prev.map((item) =>

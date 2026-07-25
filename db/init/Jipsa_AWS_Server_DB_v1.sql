@@ -498,6 +498,7 @@ CREATE TABLE `Conversation_Chat` (
     `Feedback_Comment` TEXT NULL COMMENT '피드백 코멘트',
     `Feedback_At` DATETIME(6) NULL COMMENT '피드백 등록/수정 일시',
     `Answer_Status` VARCHAR(30) NULL COMMENT 'RAG 답변 상태. answered 또는 insufficient_evidence',
+    `Reference_File_Idxs` JSON NULL COMMENT '답변 근거로 사용한 참조 문서 File_IDX 목록',
 
 
     PRIMARY KEY (`Conversation_Chat_IDX`),

@@ -74,4 +74,7 @@ public class ConversationChat {
 
     @Column(name = "Answer_Status", length = 30)
     private String answerStatus;
+
+    @Column(name = "Reference_File_Idxs", columnDefinition = "JSON")
+    private String referenceFileIds;
 }

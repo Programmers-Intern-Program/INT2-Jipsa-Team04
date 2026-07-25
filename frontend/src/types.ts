@@ -1,4 +1,4 @@
-import type { Citation } from "./api/chat";
+import type { Citation, ReferenceFile } from "./api/chat";
 
 // 필드명은 API 문서.md (GET /api/v1/files/{id}, GET /api/v1/users/me/settings) 기준으로 정렬.
 
@@ -105,6 +105,7 @@ export interface ChatMessage {
   messageId?: number;
   status?: "answered" | "insufficient_evidence";
   feedbackRating?: "UP" | "DOWN" | null;
+  referenceFiles?: ReferenceFile[];
 }
 
 /** AI 채팅 탭(여러 개의 독립된 대화 창)을 표현. 프론트 전용 개념, 백엔드 스펙엔 없음. */

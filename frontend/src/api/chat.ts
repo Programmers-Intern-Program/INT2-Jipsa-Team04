@@ -17,6 +17,11 @@ export interface Citation {
     score: number | null;
 }
 
+export interface ReferenceFile {
+    fileId: number;
+    fileName: string | null;
+}
+
 export interface ChatMessageResponse {
     messageId: number;
     question: string;
@@ -27,6 +32,7 @@ export interface ChatMessageResponse {
     feedbackAt: string | null;
     createdAt: string;
     citations: Citation[];
+    referenceFiles: ReferenceFile[];
 }
 
 export interface SendMessageRequest {
