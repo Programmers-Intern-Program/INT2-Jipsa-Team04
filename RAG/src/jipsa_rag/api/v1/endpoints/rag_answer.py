@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncIterator
 from http import HTTPStatus
-from typing import Annotated
+from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends
 
@@ -60,6 +60,14 @@ router = APIRouter(
     prefix="/rag",
     tags=["RAG Answer"],
 )
+
+# Claude 답변의 인용 검증 실패를 식별하는 서비스 작업 코드다.
+#
+# 이 값은 Claude가 정상 HTTP 응답을 반환했더라도 답변에 인용이 없거나,
+# 현재 프롬프트에 존재하지 않는 SOURCE-N을 인용한 경우 사용된다.
+# 이러한 결과는 일반적인 내부 서버 오류가 아니라 생성 공급자 응답 계약 위반이므로
+# API 계층에서 INVALID_GENERATION_RESPONSE로 변환한다.
+_CITATION_VALIDATION_OPERATION: Final[str] = "answer_citation_validation_failed"
 
 
 # Claude 생성 설정은 별도의 BaseSettings 모델에서 관리한다.
@@ -306,6 +314,48 @@ def _convert_generation_error(
     )
 
 
+def _convert_rag_answer_service_error(
+    error: RagAnswerServiceError,
+    *,
+    user_idx: int,
+) -> AppException:
+    """답변 서비스 계약 오류를 민감 정보 없는 공통 API 오류로 변환한다.
+
+    Claude 답변의 인용 검증 실패는 생성 요청 자체가 실패한 것이 아니라
+    공급자가 반환한 답변이 Local RAG의 SOURCE-N 계약을 만족하지 못한 상태다.
+    따라서 AWS Backend가 정상 답변으로 처리하지 않도록 502
+    ``INVALID_GENERATION_RESPONSE``로 변환한다.
+
+    그 밖의 서비스 작업 오류는 현재 공개 오류 코드로 더 세분화할 수 없는
+    내부 오케스트레이션 실패이므로 기존과 같이 500으로 처리한다.
+
+    Args:
+        error:
+            답변 서비스가 원문 대신 안전한 ``operation``만 보관한 예외다.
+        user_idx:
+            질문 원문 없이 요청 범위를 추적하기 위한 사용자 식별자다.
+
+    Returns:
+        공통 예외 처리기가 외부 오류 응답으로 변환할 ``AppException``이다.
+    """
+
+    log_context: dict[str, str | int] = {
+        "user_idx": user_idx,
+        "rag_answer_error_type": type(error).__name__,
+        "rag_answer_operation": error.operation,
+    }
+
+    if error.operation == _CITATION_VALIDATION_OPERATION:
+        error_code = ErrorCode.INVALID_GENERATION_RESPONSE
+    else:
+        error_code = ErrorCode.INTERNAL_SERVER_ERROR
+
+    return AppException(
+        error_code,
+        log_context=log_context,
+    )
+
+
 @router.post(
     "/answers",
     status_code=HTTPStatus.OK,
@@ -313,10 +363,10 @@ def _convert_generation_error(
     summary="선택 참조문서 기반 RAG 답변 생성",
     description=(
         "질문 전송 시점에 전달된 reference_file_idxs 범위에서만 "
-        "관련 청크를 검색한다. 검색 결과가 없으면 Claude API를 "
-        "호출하지 않고 근거 부족 응답을 반환한다. 정상 답변에는 "
-        "파일명, 원본 위치, 섹션 및 길이가 제한된 청크 발췌문 "
-        "출처가 포함된다."
+        "관련 청크를 검색한다. 검색 결과가 없거나 Claude가 정해진 "
+        "근거 부족 문구를 반환하면 insufficient_evidence 응답을 반환한다. "
+        "정상 답변에는 유효한 [SOURCE-N] 인용이 하나 이상 필요하며, "
+        "응답 sources에는 Claude가 실제로 인용한 출처만 포함된다."
     ),
     responses={
         HTTPStatus.UNAUTHORIZED: {
@@ -332,7 +382,10 @@ def _convert_generation_error(
         },
         HTTPStatus.BAD_GATEWAY: {
             "model": ApiResponse[None],
-            "description": ("TEI·Qdrant·Claude 요청 거부 또는 외부 서비스 응답 계약 오류"),
+            "description": (
+                "TEI·Qdrant·Claude 요청 거부, 외부 서비스 응답 계약 오류 또는 "
+                "Claude SOURCE-N 인용 계약 위반"
+            ),
         },
         HTTPStatus.SERVICE_UNAVAILABLE: {
             "model": ApiResponse[None],
@@ -354,7 +407,7 @@ async def answer_question(
 ) -> ApiResponse[RagAnswerResponse]:
     """내부 인증된 요청에 대해 선택 문서 근거 기반 답변을 반환한다.
 
-    질문, 검색 청크, 생성 프롬프트, 답변 원문 및 API Key는 이 함수의
+    질문, 검색 청크, 생성 프롬프트, Claude 답변 원문 및 API Key는 이 함수의
     로그 컨텍스트나 예외 메시지에 기록하지 않는다. 하위 계층 오류는
     오류 타입과 안전한 작업 메타데이터만 남기는 ``AppException``으로
     변환한다.
@@ -384,16 +437,13 @@ async def answer_question(
         ) from None
 
     except RagAnswerServiceError as error:
-        # operation은 서비스가 미리 정의한 안전한 식별자다.
-        #
-        # 원본 질문, 청크, 프롬프트 또는 하위 예외 메시지는
-        # AppException의 원인 체인과 로그 컨텍스트에 연결하지 않는다.
-        raise AppException(
-            ErrorCode.INTERNAL_SERVER_ERROR,
-            log_context={
-                "user_idx": request.user_idx,
-                "rag_answer_operation": error.operation,
-            },
+        # 서비스 예외는 질문, 청크, 프롬프트 또는 Claude 응답 원문 대신
+        # 안전한 operation만 보관한다. 변환된 AppException도 원본 서비스
+        # 예외를 원인 체인으로 연결하지 않아 외부 로그 수집기가 예외 객체를
+        # 직렬화하더라도 민감한 생성 데이터에 접근하지 못하게 한다.
+        raise _convert_rag_answer_service_error(
+            error,
+            user_idx=request.user_idx,
         ) from None
 
     return ApiResponse[RagAnswerResponse](
