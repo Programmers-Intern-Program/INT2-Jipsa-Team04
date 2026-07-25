@@ -25,6 +25,7 @@ export default function SettingsView({ user, committedSettings, onSaveSettings }
 
   // Sync state if committedSettings changes from parent
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLocalSettings({ ...committedSettings });
   }, [committedSettings]);
 

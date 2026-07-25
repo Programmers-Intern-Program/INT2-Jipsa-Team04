@@ -207,6 +207,7 @@ export default function MyDocumentsView({
 
   useEffect(() => {
     if (currentTab !== "trash") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTrashDocs(null);
       setTrashFolders(null);
       return;

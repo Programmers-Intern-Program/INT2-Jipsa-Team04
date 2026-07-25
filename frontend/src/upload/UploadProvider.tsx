@@ -227,6 +227,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useUploads(): UploadContextValue {
     const ctx = useContext(UploadContext);
     if (!ctx) throw new Error("useUploads must be used within UploadProvider");
