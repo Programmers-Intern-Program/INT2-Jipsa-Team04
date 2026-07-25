@@ -19,7 +19,6 @@ _DECODE_CANDIDATES: Final[tuple[str, ...]] = ("utf-8-sig", "utf-8", "cp949")
 
 
 class TxtDocumentParser:
-
     @property
     def file_type(self) -> DocumentType:
         return DocumentType.TXT
