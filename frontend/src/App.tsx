@@ -152,9 +152,6 @@ export default function App() {
   const [activeChatSessionId, setActiveChatSessionId] = useState<string>(() => chatSessions[0].id);
   const [committedSettings, setCommittedSettings] = useState<AISettings>({ sensitivity: 0.85, voiceModel: "Nova (명확하고 신뢰감 있는)", responseStyle: "간결형", instantSummary: true, autoHighlight: false, pushNotification: true });
   const [isUploadOpen, setIsUploadOpen] = useState(false);
-  const [isLoadingChat, setIsLoadingChat] = useState(false);
-  const [chatError, setChatError] = useState<string | null>(null);
-  const lastChatAttempt = useRef<{ sessionId: string; text: string; fileIds: number[] } | null>(null);
   const [globalSearch, setGlobalSearch] = useState("");
 
   // StrictMode(dev)에서 아래 useEffect가 2번 실행돼 같은 authorization code가 두 번
@@ -394,9 +391,11 @@ export default function App() {
   };
 
   const runSend = async (sessionId: string, text: string, fileIds: number[]) => {
-    lastChatAttempt.current = { sessionId, text, fileIds };
-    setChatError(null);
-    setIsLoadingChat(true);
+    setChatSessions((prev) =>
+        prev.map((item) =>
+            item.id === sessionId ? { ...item, isLoading: true, error: null, lastAttempt: { text, fileIds } } : item
+        )
+    );
     try {
       const session = chatSessions.find((item) => item.id === sessionId);
       if (!session) return;
@@ -414,14 +413,15 @@ export default function App() {
       };
       setChatSessions((prev) =>
           prev.map((item) =>
-              item.id === sessionId ? { ...item, chatHistory: [...item.chatHistory, aiMessage] } : item
+              item.id === sessionId
+                  ? { ...item, chatHistory: [...item.chatHistory, aiMessage], isLoading: false, lastAttempt: undefined }
+                  : item
           )
       );
-      lastChatAttempt.current = null;
     } catch (err) {
-      setChatError(describeChatError(err));
-    } finally {
-      setIsLoadingChat(false);
+      setChatSessions((prev) =>
+          prev.map((item) => (item.id === sessionId ? { ...item, isLoading: false, error: describeChatError(err) } : item))
+      );
     }
   };
 
@@ -429,7 +429,9 @@ export default function App() {
     const targetSessionId = activeChatSessionId;
     const fileIds = refDocIds.map(Number).filter((id) => Number.isFinite(id) && id > 0);
     if (fileIds.length === 0) {
-      setChatError("참조할 문서를 1개 이상 선택해 주세요.");
+      setChatSessions((prev) =>
+          prev.map((item) => (item.id === targetSessionId ? { ...item, error: "참조할 문서를 1개 이상 선택해 주세요." } : item))
+      );
       return;
     }
     const userMessage: ChatMessage = {
@@ -448,9 +450,9 @@ export default function App() {
   };
 
   const handleRetryChat = async () => {
-    const attempt = lastChatAttempt.current;
-    if (!attempt) return;
-    await runSend(attempt.sessionId, attempt.text, attempt.fileIds);
+    const session = chatSessions.find((s) => s.id === activeChatSessionId);
+    if (!session || !session.lastAttempt) return;
+    await runSend(session.id, session.lastAttempt.text, session.lastAttempt.fileIds);
   };
 
   const handleFeedback = async (messageId: number, rating: "UP" | "DOWN") => {
@@ -789,8 +791,6 @@ export default function App() {
                   onRenameChatTab={handleRenameChatTab}
                   onToggleDocSelection={handleToggleDocSelection}
                   onSendMessage={handleSendMessage}
-                  isLoadingChat={isLoadingChat}
-                  chatError={chatError}
                   onRetry={handleRetryChat}
                   onFeedback={handleFeedback}
                 />

@@ -114,6 +114,9 @@ export interface ChatSession {
   chatHistory: ChatMessage[];
   selectedDocIds: string[];
   conversationId?: number;
+  isLoading?: boolean;
+  error?: string | null;
+  lastAttempt?: { text: string; fileIds: number[] };
 }
 
 /** GET /api/v1/organize/current-tree, propose/apply 공용 폴더 트리 노드. backend FolderTreeNode와 1:1. */

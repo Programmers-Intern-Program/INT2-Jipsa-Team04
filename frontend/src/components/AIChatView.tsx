@@ -33,8 +33,6 @@ interface AIChatViewProps {
   onRenameChatTab: (id: string, title: string) => void;
   onToggleDocSelection: (id: string) => void;
   onSendMessage: (text: string, refDocIds: string[]) => Promise<void>;
-  isLoadingChat: boolean;
-  chatError?: string | null;
   onRetry?: () => void;
   onFeedback: (messageId: number, rating: "UP" | "DOWN") => void;
 }
@@ -49,8 +47,6 @@ export default function AIChatView({
   onRenameChatTab,
   onToggleDocSelection,
   onSendMessage,
-  isLoadingChat,
-  chatError,
   onRetry,
   onFeedback
 }: AIChatViewProps) {
@@ -84,6 +80,8 @@ export default function AIChatView({
   const activeSession = chatSessions.find((s) => s.id === activeChatSessionId) ?? chatSessions[0];
   const selectedDocIds = activeSession.selectedDocIds;
   const chatHistory = activeSession.chatHistory;
+  const isLoadingChat = activeSession.isLoading ?? false;
+  const chatError = activeSession.error ?? null;
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -518,7 +516,7 @@ export default function AIChatView({
           <SourcePreviewModal
               citation={previewCitation}
               fileName={previewCitation.fileName}
-              fileType={documents.find((d) => d.id === String(previewCitation.fileId))?.fileType ?? ""}
+              fileType={previewCitation.fileName.split(".").pop() ?? ""}
               onClose={() => setPreviewCitation(null)}
           />
       )}
