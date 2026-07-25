@@ -15,6 +15,7 @@ public record ChatMessageResponse(
         List<Citation> citations
 ) {
     public record Citation(
+            String sourceId,
             Long fileId,
             String fileName,
             Integer page,

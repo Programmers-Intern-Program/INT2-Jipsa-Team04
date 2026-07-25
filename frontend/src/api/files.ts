@@ -221,6 +221,10 @@ export async function viewFile(fileId: number): Promise<void> {
     setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
+export function fetchFileBlob(fileId: number): Promise<Blob> {
+    return fetchBlob(`/files/${fileId}/view`);
+}
+
 export interface FileStatusInfo {
     status: string;
     processingStage: string | null;

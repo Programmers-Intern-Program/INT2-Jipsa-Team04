@@ -44,6 +44,9 @@ public class MessageCitation {
     @Column(name = "Score")
     private Double score;
 
+    @Column(name = "Source_Id", length = 32)
+    private String sourceId;
+
     @Column(name = "Citation_Order", nullable = false)
     private Integer citationOrder;
 

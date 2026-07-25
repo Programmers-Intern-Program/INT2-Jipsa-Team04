@@ -532,6 +532,7 @@ CREATE TABLE `Message_Citation` (
     `Section_Title` VARCHAR(500) NULL COMMENT '섹션 제목 스냅샷',
     `Excerpt` TEXT NULL COMMENT 'RAG 발췌문 스냅샷',
     `Score` DECIMAL(6,5) NULL COMMENT '관련도 점수 스냅샷',
+    `Source_Id` VARCHAR(32) NULL COMMENT 'RAG SOURCE-N 인용 식별자 스냅샷',
     `Citation_Order` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT '답변 내 인용 순서',
     `Created_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성 일시',
 

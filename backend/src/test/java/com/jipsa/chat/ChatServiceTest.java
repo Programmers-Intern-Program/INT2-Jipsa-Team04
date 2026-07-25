@@ -101,6 +101,8 @@ class ChatServiceTest {
         assertThat(captor.getValue().getFileName()).isEqualTo("파일.pdf");
         assertThat(captor.getValue().getExcerpt()).isEqualTo("발췌문");
         assertThat(captor.getValue().getScore()).isEqualTo(0.82);
+        assertThat(captor.getValue().getSourceId()).isEqualTo("SOURCE-1");
+        assertThat(result.citations().get(0).sourceId()).isEqualTo("SOURCE-1");
     }
 
     @Test
@@ -194,6 +196,7 @@ class ChatServiceTest {
         citation.setSectionTitle("섹션");
         citation.setExcerpt("발췌");
         citation.setScore(0.82);
+        citation.setSourceId("SOURCE-2");
         when(messageCitationRepository.findByConversationChatIdOrderByCitationOrder(50L)).thenReturn(List.of(citation));
 
         List<ChatMessageResponse> result = chatService.listMessages(7L, 1L);
@@ -204,6 +207,7 @@ class ChatServiceTest {
         assertThat(result.get(0).citations().get(0).fileName()).isEqualTo("파일.pdf");
         assertThat(result.get(0).citations().get(0).excerpt()).isEqualTo("발췌");
         assertThat(result.get(0).citations().get(0).score()).isEqualTo(0.82);
+        assertThat(result.get(0).citations().get(0).sourceId()).isEqualTo("SOURCE-2");
     }
 
     @Test
