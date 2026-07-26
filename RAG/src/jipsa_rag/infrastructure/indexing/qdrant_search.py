@@ -233,29 +233,23 @@ class QdrantChunkSearchRepository:
         *,
         client: AsyncQdrantClient | None = None,
     ) -> None:
-        """Qdrant 설정과 선택적인 테스트 클라이언트를 주입받는다."""
+        """Qdrant 설정과 선택적인 외부 클라이언트를 주입받는다.
+
+        외부 클라이언트가 주입되지 않은 경우 생성자에서는 실제
+        AsyncQdrantClient를 생성하지 않는다.
+
+        요청 스키마 또는 Repository 자체 검증에서 검색이 거부되는 경우에는
+        Qdrant 연결이 필요하지 않다. 따라서 최초 유효한 검색 직전까지
+        클라이언트 생성을 지연하여 불필요한 서버 버전 확인과 호환성 경고를
+        방지한다.
+        """
 
         self._settings = settings
-        self._owns_client = client is None
 
-        self._client = client or AsyncQdrantClient(
-            url=settings.qdrant_url,
-            grpc_port=settings.qdrant_grpc_port,
-            prefer_grpc=settings.qdrant_prefer_grpc,
-            api_key=(
-                settings.qdrant_api_key.get_secret_value()
-                if settings.qdrant_api_key is not None
-                else None
-            ),
-            # qdrant-client timeout은 정수 초를 사용한다.
-            #
-            # 설정값을 내림하면 관리자가 지정한 시간보다 짧아질 수 있으므로
-            # 올림한 뒤 최소 1초를 보장한다.
-            timeout=max(
-                1,
-                ceil(settings.qdrant_timeout_seconds),
-            ),
-        )
+        # 외부에서 주입한 클라이언트는 테스트 또는 상위 생명주기 관리자가
+        # 소유하므로 Repository.close()에서 종료하지 않는다.
+        self._owns_client = client is None
+        self._client = client
 
     async def search(
         self,
@@ -268,6 +262,10 @@ class QdrantChunkSearchRepository:
     ) -> tuple[ChunkSearchHit, ...]:
         """요청 사용자의 선택된 활성 문서 청크만 관련도 순으로 조회한다."""
 
+        # 모든 입력 및 임베딩 계약을 Qdrant 클라이언트 생성 전에 검증한다.
+        #
+        # 잘못된 검색 요청은 실제 VectorDB 연결이나 서버 버전 확인 없이
+        # Repository 경계에서 즉시 거부한다.
         _validate_positive_integer(
             user_idx,
             field_name="user_idx",
@@ -303,8 +301,12 @@ class QdrantChunkSearchRepository:
             reference_file_idxs=reference_file_idxs,
         )
 
+        # 모든 로컬 검증과 Filter 생성이 완료된 뒤에만 실제 Qdrant
+        # 클라이언트를 생성한다.
+        client = self._get_client()
+
         try:
-            response = await self._client.query_points(
+            response = await client.query_points(
                 collection_name=self._settings.qdrant_collection,
                 query=list(query_embedding.vector),
                 query_filter=query_filter,
@@ -336,10 +338,57 @@ class QdrantChunkSearchRepository:
         )
 
     async def close(self) -> None:
-        """Repository가 직접 생성한 Qdrant 클라이언트 연결을 종료한다."""
+        """Repository가 실제 생성한 Qdrant 클라이언트만 종료한다.
 
-        if self._owns_client:
-            await self._client.close()
+        Repository가 생성되었지만 유효한 검색이 실행되지 않았다면
+        클라이언트는 아직 존재하지 않는다. 이 경우 종료 과정에서도
+        클라이언트를 새로 생성하지 않는다.
+
+        외부에서 주입한 클라이언트의 생명주기는 호출자가 관리한다.
+        """
+
+        if not self._owns_client or self._client is None:
+            return
+
+        # 종료가 성공한 뒤에만 참조를 제거한다.
+        #
+        # close()에서 예외가 발생하면 기존 클라이언트 참조를 유지하여
+        # 상위 계층이 오류를 확인하거나 종료를 다시 시도할 수 있게 한다.
+        await self._client.close()
+        self._client = None
+
+    def _get_client(self) -> AsyncQdrantClient:
+        """최초 유효한 검색에서 소유 Qdrant 클라이언트를 한 번만 생성한다.
+
+        단순 Repository 생성, 요청 검증 실패 및 close() 호출만으로는
+        AsyncQdrantClient를 생성하지 않는다.
+
+        실제 query_points 호출이 필요한 경우 기존과 동일한 설정으로
+        클라이언트를 생성한다. check_compatibility 값을 전달하지 않으므로
+        실제 Qdrant 연결에서는 qdrant-client의 기본 호환성 검사가 유지된다.
+        """
+
+        if self._client is None:
+            self._client = AsyncQdrantClient(
+                url=self._settings.qdrant_url,
+                grpc_port=self._settings.qdrant_grpc_port,
+                prefer_grpc=self._settings.qdrant_prefer_grpc,
+                api_key=(
+                    self._settings.qdrant_api_key.get_secret_value()
+                    if self._settings.qdrant_api_key is not None
+                    else None
+                ),
+                # qdrant-client timeout은 정수 초를 사용한다.
+                #
+                # 설정값을 내림하면 관리자가 지정한 시간보다 짧아질 수 있으므로
+                # 올림한 뒤 최소 1초를 보장한다.
+                timeout=max(
+                    1,
+                    ceil(self._settings.qdrant_timeout_seconds),
+                ),
+            )
+
+        return self._client
 
     def _validate_query_embedding(
         self,
