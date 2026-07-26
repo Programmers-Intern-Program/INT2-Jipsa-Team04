@@ -5,6 +5,7 @@ import com.jipsa.chunk.ChunkRepository;
 import com.jipsa.common.BadRequestException;
 import com.jipsa.file.FileRepository;
 import com.jipsa.file.File;
+import com.jipsa.file.FileStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -155,7 +156,7 @@ public class ChatService {
 
     private List<Long> recentUserFileIds(Long userId) {
         return fileRepository
-                .findByUsersIdAndDeletedAtIsNullOrderByCreatedAtDesc(userId, PageRequest.of(0, MAX_REFERENCE_FILE_COUNT))
+                .findByUsersIdAndStatusAndDeletedAtIsNullOrderByCreatedAtDesc(userId, FileStatus.READY, PageRequest.of(0, MAX_REFERENCE_FILE_COUNT))
                 .stream().map(File::getId).toList();
     }
 
@@ -216,6 +217,10 @@ public class ChatService {
                 ids.add(source.fileIdx());
             }
         }
+        return loadCurrentNames(ids);
+    }
+
+    private Map<Long, String> loadCurrentNames(Set<Long> ids) {
         Map<Long, String> names = new HashMap<>();
         if (ids.isEmpty()) {
             return names;
@@ -227,12 +232,21 @@ public class ChatService {
     }
 
     private List<ChatMessageResponse.Citation> reconstructCitations(Long chatId) {
+        List<MessageCitation> stored = messageCitationRepository.findByConversationChatIdOrderByCitationOrder(chatId);
+        Set<Long> fileIds = new LinkedHashSet<>();
+        for (MessageCitation citation : stored) {
+            if (citation.getFileId() != null) {
+                fileIds.add(citation.getFileId());
+            }
+        }
+        Map<Long, String> currentNames = loadCurrentNames(fileIds);
         List<ChatMessageResponse.Citation> result = new ArrayList<>();
-        for (MessageCitation citation : messageCitationRepository.findByConversationChatIdOrderByCitationOrder(chatId)) {
+        for (MessageCitation citation : stored) {
+            String fileName = currentNames.getOrDefault(citation.getFileId(), citation.getFileName());
             result.add(new ChatMessageResponse.Citation(
                     citation.getSourceId(),
                     citation.getFileId(),
-                    citation.getFileName(),
+                    fileName,
                     citation.getPage(),
                     citation.getSectionTitle(),
                     citation.getExcerpt(),

@@ -5,6 +5,7 @@ import com.jipsa.chunk.ChunkRepository;
 import com.jipsa.common.BadRequestException;
 import com.jipsa.file.FileRepository;
 import com.jipsa.file.File;
+import com.jipsa.file.FileStatus;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -172,7 +173,7 @@ class ChatServiceTest {
         File f2 = new File();
         f2.setId(11L);
         f2.setName("B.pdf");
-        when(fileRepository.findByUsersIdAndDeletedAtIsNullOrderByCreatedAtDesc(eq(7L), any()))
+        when(fileRepository.findByUsersIdAndStatusAndDeletedAtIsNullOrderByCreatedAtDesc(eq(7L), eq(FileStatus.READY), any()))
                 .thenReturn(List.of(f1, f2));
         stubSaveReturnsId();
         when(ragAnswerClient.answer(any())).thenReturn(new RagAnswerResponse("답변", "answered",
@@ -238,6 +239,30 @@ class ChatServiceTest {
         assertThat(result.get(0).citations().get(0).sourceId()).isEqualTo("SOURCE-2");
         assertThat(result.get(0).referenceFiles()).hasSize(1);
         assertThat(result.get(0).referenceFiles().get(0).fileId()).isEqualTo(10L);
+    }
+
+    @Test
+    void listMessagesRefreshesCitationFileNameToCurrent() {
+        when(conversationRepository.findByIdAndUsersIdAndDelFalse(1L, 7L)).thenReturn(Optional.of(ownedConversation()));
+        ConversationChat message = new ConversationChat();
+        message.setId(50L);
+        message.setQuestion("질문");
+        message.setAnswer("답변");
+        message.setAnswerStatus("answered");
+        when(conversationChatRepository.findByConversationIdAndDelFalseOrderByCreatedAt(1L)).thenReturn(List.of(message));
+        MessageCitation citation = new MessageCitation();
+        citation.setFileId(10L);
+        citation.setFileName("A.pdf");
+        citation.setSourceId("SOURCE-1");
+        when(messageCitationRepository.findByConversationChatIdOrderByCitationOrder(50L)).thenReturn(List.of(citation));
+        File renamed = new File();
+        renamed.setId(10L);
+        renamed.setName("B.pdf");
+        when(fileRepository.findAllById(any())).thenReturn(List.of(renamed));
+
+        List<ChatMessageResponse> result = chatService.listMessages(7L, 1L);
+
+        assertThat(result.get(0).citations().get(0).fileName()).isEqualTo("B.pdf");
     }
 
     @Test
