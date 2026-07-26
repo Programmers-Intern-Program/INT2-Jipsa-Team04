@@ -116,11 +116,15 @@ public class FileService {
         Integer attempts = jobRepository.findTopByFileIdOrderByCreatedAtDesc(fileId)
                 .map(Job::getAttempts)
                 .orElse(0);
+        String extractionStatus = fileMetadataRepository.findById(fileId)
+                .map(FileMetadata::getExtractionStatus)
+                .orElse(null);
         return new FileStatusResponse(
                 file.getStatus(),
                 file.getProcessingStage(),
                 attempts,
-                file.getErrorMessage());
+                file.getErrorMessage(),
+                extractionStatus);
     }
 
     @Transactional
@@ -376,7 +380,8 @@ public class FileService {
                 summary,
                 tags,
                 file.getSecurityRank(),
-                metadata != null ? metadata.getDocumentType() : null);
+                metadata != null ? metadata.getDocumentType() : null,
+                metadata != null ? metadata.getExtractionStatus() : null);
     }
 
     private String escapeLike(String keyword) {

@@ -50,6 +50,9 @@ public class FileMetadata {
     @Column(name = "Extraction_Index_Version")
     private Integer extractionIndexVersion;
 
+    @Column(name = "Claim_Token", length = 36)
+    private String claimToken;
+
     @CreationTimestamp
     @Column(name = "Created_At", updatable = false)
     private LocalDateTime createdAt;
