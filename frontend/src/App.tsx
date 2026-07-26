@@ -430,12 +430,6 @@ export default function App() {
   const handleSendMessage = async (text: string, refDocIds: string[]) => {
     const targetSessionId = activeChatSessionId;
     const fileIds = refDocIds.map(Number).filter((id) => Number.isFinite(id) && id > 0);
-    if (fileIds.length === 0) {
-      setChatSessions((prev) =>
-          prev.map((item) => (item.id === targetSessionId ? { ...item, error: "참조할 문서를 1개 이상 선택해 주세요." } : item))
-      );
-      return;
-    }
     const userMessage: ChatMessage = {
       id: `chat-${Date.now()}`,
       sender: "user",
