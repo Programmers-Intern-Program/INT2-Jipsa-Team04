@@ -19,11 +19,12 @@ public interface FileMetadataRepository extends JpaRepository<FileMetadata, Long
 
     @Modifying(clearAutomatically = true)
     @Query("update FileMetadata m set m.extractionStatus = 'GENERATING', "
-            + "m.extractionIndexVersion = :version, m.updatedAt = :now "
+            + "m.extractionIndexVersion = (select max(c.indexVersion) from Chunk c where c.fileId = m.fileId), "
+            + "m.updatedAt = :now "
             + "where m.fileId = :id and m.extractionStatus = 'PROCESSING' "
             + "and exists (select f.id from File f where f.id = m.fileId "
             + "and f.status = com.jipsa.file.FileStatus.READY and f.deletedAt is null)")
-    int claimForGeneration(@Param("id") Long id, @Param("version") Integer version, @Param("now") LocalDateTime now);
+    int claimForGeneration(@Param("id") Long id, @Param("now") LocalDateTime now);
 
     @Modifying(clearAutomatically = true)
     @Query("update FileMetadata m set m.extractionStatus = 'PROCESSING', m.updatedAt = :now "

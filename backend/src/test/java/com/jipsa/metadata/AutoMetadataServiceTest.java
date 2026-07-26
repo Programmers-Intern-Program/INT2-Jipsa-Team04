@@ -46,18 +46,18 @@ class AutoMetadataServiceTest {
                 objectMapper, properties, transactionManager, 6, 4000, 300000L, 500);
     }
 
-    private FileMetadata generatingMetadata(String documentType, Integer indexVersion) {
+    private FileMetadata generatingMetadata(String documentType, Integer claimVersion) {
         FileMetadata metadata = new FileMetadata();
         metadata.setFileId(1L);
         metadata.setExtractionStatus("GENERATING");
-        metadata.setExtractionIndexVersion(indexVersion);
+        metadata.setExtractionIndexVersion(claimVersion);
         metadata.setDocumentType(documentType);
         return metadata;
     }
 
-    private void stubClaim(int version) {
-        when(chunkRepository.findMaxIndexVersionByFileId(1L)).thenReturn(version);
-        when(fileMetadataRepository.claimForGeneration(eq(1L), any(), any())).thenReturn(1);
+    private void stubClaim(int latestVersion) {
+        when(fileMetadataRepository.claimForGeneration(eq(1L), any())).thenReturn(1);
+        lenient().when(chunkRepository.findMaxIndexVersionByFileId(1L)).thenReturn(latestVersion);
         Chunk chunk = mock(Chunk.class);
         lenient().when(chunk.getContent()).thenReturn("문서 앞부분 본문입니다.");
         lenient().when(chunkRepository.findByFileIdOrderByChunkIndexAsc(eq(1L), any())).thenReturn(List.of(chunk));
@@ -173,8 +173,7 @@ class AutoMetadataServiceTest {
 
     @Test
     void skipsWhenClaimNotWon() {
-        when(chunkRepository.findMaxIndexVersionByFileId(1L)).thenReturn(1);
-        when(fileMetadataRepository.claimForGeneration(eq(1L), any(), any())).thenReturn(0);
+        when(fileMetadataRepository.claimForGeneration(eq(1L), any())).thenReturn(0);
 
         service.process(1L);
 
@@ -182,27 +181,10 @@ class AutoMetadataServiceTest {
     }
 
     @Test
-    void discardsStaleResult() {
+    void discardsWhenChunksAdvanced() {
         stubClaim(2);
         when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(generatingMetadata(null, 1)));
         when(autoMetadataClient.generate(any())).thenReturn(result("오래된 요약", List.of("k"), "보고서", 0.9));
-
-        service.process(1L);
-
-        FileMetadata metadata = fileMetadataRepository.findById(1L).orElseThrow();
-        assertThat(metadata.getSummary()).isNull();
-        assertThat(metadata.getExtractionStatus()).isEqualTo("GENERATING");
-    }
-
-    @Test
-    void discardsWhenChunksAdvancedDuringGeneration() {
-        when(chunkRepository.findMaxIndexVersionByFileId(1L)).thenReturn(1, 2);
-        when(fileMetadataRepository.claimForGeneration(eq(1L), any(), any())).thenReturn(1);
-        Chunk chunk = mock(Chunk.class);
-        lenient().when(chunk.getContent()).thenReturn("본문");
-        lenient().when(chunkRepository.findByFileIdOrderByChunkIndexAsc(eq(1L), any())).thenReturn(List.of(chunk));
-        when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(generatingMetadata(null, 1)));
-        when(autoMetadataClient.generate(any())).thenReturn(result("요약", List.of("k"), "보고서", 0.9));
 
         service.process(1L);
 

@@ -58,9 +58,8 @@ public class AutoMetadataService {
     }
 
     public void process(Long fileId) {
-        Integer version = chunkRepository.findMaxIndexVersionByFileId(fileId);
         Integer claimed = transactionTemplate.execute(status ->
-                fileMetadataRepository.claimForGeneration(fileId, version, LocalDateTime.now()));
+                fileMetadataRepository.claimForGeneration(fileId, LocalDateTime.now()));
         if (claimed == null || claimed == 0) {
             return;
         }
@@ -78,7 +77,7 @@ public class AutoMetadataService {
             return;
         }
         try {
-            transactionTemplate.executeWithoutResult(status -> persist(fileId, version, result));
+            transactionTemplate.executeWithoutResult(status -> persist(fileId, result));
         } catch (RuntimeException e) {
             log.warn("AI 메타데이터 저장 실패 (file {}): {}", fileId, e.getMessage());
         }
@@ -117,16 +116,14 @@ public class AutoMetadataService {
         return builder.toString();
     }
 
-    private void persist(Long fileId, Integer version, AutoMetadataResult result) {
+    private void persist(Long fileId, AutoMetadataResult result) {
         FileMetadata metadata = fileMetadataRepository.findById(fileId).orElse(null);
         if (metadata == null || !"GENERATING".equals(metadata.getExtractionStatus())) {
             return;
         }
-        if (version != null && !version.equals(metadata.getExtractionIndexVersion())) {
-            return;
-        }
+        Integer claimVersion = metadata.getExtractionIndexVersion();
         Integer latest = chunkRepository.findMaxIndexVersionByFileId(fileId);
-        if (version != null && latest != null && !latest.equals(version)) {
+        if (claimVersion != null && latest != null && !latest.equals(claimVersion)) {
             return;
         }
         String summary = truncate(result == null ? null : result.summary(), maxSummaryChars);
