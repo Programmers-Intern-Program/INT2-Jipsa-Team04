@@ -1,6 +1,18 @@
-"""파일 처리 요청 API에서 사용하는 요청 및 응답 스키마를 정의한다."""
+"""RAG 파일 처리 API의 요청·응답 Pydantic 스키마를 정의한다.
+
+이 모듈은 애플리케이션 서버와 Local RAG 서버 사이의 외부 계약 경계다.
+지원 문서 형식, 파일명 확장자, Presigned URL의 기본 구조와 응답 필드를
+여기서 검증하여 잘못된 요청이 다운로드, 파싱, 임베딩 또는 저장 단계까지
+진입하지 않게 한다.
+
+지원 형식은 PDF, DOCX, PPTX, TXT, XLSX이며, 각 요청은 ``file_type``과
+``file_name``의 마지막 확장자가 반드시 일치해야 한다. 실제 파일 내용은
+다운로드 계층의 MIME Type·Magic Byte 검증과 형식별 파서의 구조 검증에서
+추가로 확인한다.
+"""
 
 from enum import StrEnum
+from pathlib import Path
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
@@ -14,24 +26,40 @@ from pydantic import (
 
 
 class SupportedFileType(StrEnum):
-    """현재 RAG 파일 처리 파이프라인에서 지원하는 파일 타입."""
+    """RAG 인제스트, 파싱, 청킹과 검색 출처 계약에서 지원하는 문서 형식.
 
-    # 현 단계의 인제스트, 파싱, 청킹, 임베딩 및 검색 출처 계약은
-    # PDF만 정식 지원한다.
-    #
-    # TXT, DOCX, XLSX, PPTX는 파서와 저장·검색 계약이 모두 준비되기 전까지
-    # 이 Enum에 추가하지 않는다. 따라서 해당 값은 FastAPI 요청 검증 단계에서
-    # 즉시 거부되며 다운로드나 Local RAG 저장을 시작하지 않는다.
+    값은 애플리케이션 서버의 요청 JSON과 Local RAG API 응답에 사용되므로
+    소문자 확장자 형태를 유지한다. 내부 파서 계층의 ``DocumentType``은 대문자
+    값을 사용하지만 ``StrEnum``은 문자열 비교와 직렬화에서 자연스럽게 처리된다.
+    """
+
     PDF = "pdf"
+    DOCX = "docx"
+    PPTX = "pptx"
+    TXT = "txt"
+    XLSX = "xlsx"
+
+
+# file_type과 file_name을 교차 검증할 때 사용할 정확한 마지막 확장자 맵이다.
+# enum에 새 형식이 추가되면 comprehension이 자동으로 같은 이름의 확장자를 만든다.
+_EXPECTED_EXTENSION_BY_FILE_TYPE: dict[SupportedFileType, str] = {
+    file_type: f".{file_type.value}"
+    for file_type in SupportedFileType
+}
 
 
 class FileProcessingRequest(BaseModel):
-    """애플리케이션 서버가 전달하는 PDF 처리 요청 정보."""
+    """애플리케이션 서버가 Local RAG에 전달하는 문서 처리 요청.
 
-    # 정의되지 않은 요청 필드는 허용하지 않는다.
-    #
-    # 애플리케이션 서버와 RAG 서버 사이의 요청 계약이 의도하지 않게
-    # 변경되는 것을 조기에 탐지하기 위한 설정이다.
+    이 요청은 원본 파일의 영구 식별자와 표시 정보, Presigned GET URL을 전달한다.
+    Local RAG는 AWS DB를 직접 조회하거나 S3 자격 증명을 보관하지 않으며, 전달받은
+    URL을 다운로드에만 사용한다.
+    """
+
+    # 정의되지 않은 필드를 조용히 무시하면 애플리케이션 서버와 RAG 서버의 계약이
+    # 서로 달라졌을 때 문제를 늦게 발견할 수 있다. extra="forbid"로 즉시 실패시킨다.
+    # 문자열 앞뒤 공백은 공통적으로 제거하되 Presigned URL validator는 원문 구조를
+    # 다시 생성하지 않고 전달된 문자열을 그대로 반환한다.
     model_config = ConfigDict(
         extra="forbid",
         str_strip_whitespace=True,
@@ -40,8 +68,8 @@ class FileProcessingRequest(BaseModel):
     file_idx: int = Field(
         gt=0,
         description=(
-            "AWS 서버 DB File.File_IDX 식별자이며 "
-            "파일의 영구적인 정체성과 저장소 간 조인 키로 사용한다."
+            "AWS 서버 DB File.File_IDX 식별자이며 파일의 영구적인 정체성과 "
+            "저장소 간 조인 키로 사용한다."
         ),
         examples=[123],
     )
@@ -49,7 +77,8 @@ class FileProcessingRequest(BaseModel):
     user_idx: int = Field(
         gt=0,
         description=(
-            "AWS 서버 DB Users.Users_IDX 외부 참조값이며 사용자별 검색 스코프 제한에 사용한다."
+            "AWS 서버 DB Users.Users_IDX 외부 참조값이며 사용자별 검색 "
+            "스코프 제한에 사용한다."
         ),
         examples=[45],
     )
@@ -58,8 +87,8 @@ class FileProcessingRequest(BaseModel):
         default=None,
         gt=0,
         description=(
-            "AWS 서버 DB Folder.Folder_IDX 외부 참조값이며 "
-            "폴더 단위 검색 필터에 사용한다. 루트 파일은 null일 수 있다."
+            "AWS 서버 DB Folder.Folder_IDX 외부 참조값이며 폴더 단위 검색 "
+            "필터에 사용한다. 루트 파일은 null일 수 있다."
         ),
         examples=[9],
     )
@@ -68,60 +97,57 @@ class FileProcessingRequest(BaseModel):
         min_length=1,
         max_length=255,
         description=(
-            "요청 시점 File.Display_Name의 스냅샷이다. "
-            "표시와 진단 목적으로만 사용하며 파일 참조에는 file_idx를 사용한다."
+            "요청 시점 File.Display_Name의 표시용 스냅샷이다. 실제 파일 참조는 "
+            "file_idx를 사용하고, 이 값은 확장자 검증과 출처 표시에 사용한다."
         ),
-        examples=["2026 Q3 회의록.pdf"],
+        examples=["2026 Q3 회의록.docx"],
     )
 
     file_type: SupportedFileType = Field(
         description=(
-            "실제 파일 형식이며 문서 파서 선택에 사용한다. "
-            "현재 파일 처리 파이프라인은 pdf만 지원한다."
+            "실제 원본 문서 형식이며 DocumentParserFactory의 파서 선택에 사용한다."
         ),
-        examples=["pdf"],
+        examples=["docx"],
     )
 
     download_url: str = Field(
         min_length=1,
         max_length=8192,
-        description="원본 PDF를 다운로드할 Presigned GET URL",
+        description=(
+            "애플리케이션 서버가 발급한 원본 문서용 Presigned GET URL이다. "
+            "Local RAG DB에는 저장하지 않는다."
+        ),
         examples=[
             "https://example-bucket.s3.ap-northeast-2.amazonaws.com/"
-            "files/example-file.pdf?X-Amz-Signature=example"
+            "files/example-file.docx?X-Amz-Signature=example"
         ],
     )
 
     url_expires_in: int = Field(
         gt=0,
         description=(
-            "애플리케이션 서버가 Presigned GET URL을 발급할 때 설정한 유효 시간이며 단위는 초다."
+            "Presigned GET URL 발급 시 설정된 유효 시간이며 단위는 초다. "
+            "발급 시각이 요청에 없으므로 이 값만으로 현재 만료 여부를 계산하지 않는다."
         ),
         examples=[900],
     )
 
     @field_validator("download_url")
     @classmethod
-    def validate_download_url(
-        cls,
-        value: str,
-    ) -> str:
-        """Presigned GET URL 원문을 유지하면서 기본 구조를 검증한다.
+    def validate_download_url(cls, value: str) -> str:
+        """Presigned GET URL의 기본 구조를 검증하고 원문을 그대로 반환한다.
 
-        이 URL은 원본 파일을 다운로드하는 동안에만 사용한다.
-        Local RAG DB에는 URL 전체나 URL에서 추출한 S3_Key를 저장하지 않는다.
-        S3 객체 위치의 기준 데이터는 AWS 서버 DB의 File.S3_Key다.
-
-        ``url_expires_in``은 URL 발급 시 설정한 TTL 정보다. 요청에 URL 발급
-        시각이 포함되지 않으므로 RAG 서버는 이 값만으로 현재 만료 시각을
-        계산할 수 없다. 실제 서명과 만료 여부는 저장소가 다운로드 요청을
-        수신할 때 검증한다.
+        서명 검증에는 path와 query의 정확한 원문이 사용될 수 있으므로 URL을
+        재조합하거나 query 파라미터를 정렬하지 않는다. 허용 호스트 suffix에 대한
+        최종 SSRF 방어는 환경 설정이 필요한 ``HttpFileDownloader``가 수행한다.
         """
 
         try:
             parsed = urlsplit(value)
             parsed_port = parsed.port
         except ValueError as error:
+            # 잘못된 IPv6 괄호나 포트 문자열 등 urlsplit 속성 해석 오류를
+            # Pydantic 필드 검증 오류로 변환한다.
             raise ValueError("Download URL is invalid.") from error
 
         if parsed.scheme.lower() != "https":
@@ -139,21 +165,17 @@ class FileProcessingRequest(BaseModel):
         if parsed_port is not None and parsed_port != 443:
             raise ValueError("Download URL must use the default HTTPS port.")
 
-        # Presigned URL은 서명 계산에 사용된 path와 query를 임의로
-        # 정규화하거나 재구성하지 않고 전달받은 원문을 유지한다.
         return value
 
     @field_validator("file_name")
     @classmethod
-    def validate_file_name(
-        cls,
-        value: str,
-    ) -> str:
-        """파일명에 디렉터리 경로 문자가 포함되지 않았는지 검증한다."""
+    def validate_file_name(cls, value: str) -> str:
+        """표시용 파일명에 디렉터리 경로 구분자가 없는지 검증한다.
 
-        # file_name은 저장 경로나 디렉터리가 아닌 표시용 순수 파일명만
-        # 허용한다. 경로 구분자를 허용하면 임시 파일 또는 후속 저장
-        # 과정에서 의도하지 않은 경로를 참조할 가능성이 있다.
+        파일명은 실제 임시 경로 생성에 사용하지 않지만, 순수 표시명 계약을 유지하고
+        출처 UI나 후속 코드에서 경로처럼 오인되는 것을 방지한다.
+        """
+
         if "/" in value or "\\" in value:
             raise ValueError("File name must not contain path separators.")
 
@@ -164,11 +186,8 @@ class FileProcessingRequest(BaseModel):
         mode="before",
     )
     @classmethod
-    def normalize_file_type(
-        cls,
-        value: object,
-    ) -> object:
-        """문자열 파일 타입을 소문자 형식으로 정규화한다."""
+    def normalize_file_type(cls, value: object) -> object:
+        """문자열 file_type의 앞뒤 공백과 대소문자를 정규화한다."""
 
         if isinstance(value, str):
             return value.strip().lower()
@@ -177,102 +196,105 @@ class FileProcessingRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_file_extension(self) -> Self:
-        """PDF 요청의 파일명 확장자가 .pdf인지 검증한다."""
+        """선언한 문서 형식과 파일명의 마지막 확장자를 교차 검증한다.
 
-        # SupportedFileType에는 PDF만 존재하지만 파일명 확장자까지
-        # 교차 검증하여 "file_type=pdf, file_name=document.txt" 같은
-        # 모순된 manifest가 다운로드 단계로 진행되지 않게 한다.
-        if not self.file_name.lower().endswith(".pdf"):
-            raise ValueError("PDF file type requires a .pdf file extension.")
+        예를 들어 ``file_type="docx"``인데 ``file_name="report.pdf"``인 요청은
+        네트워크 다운로드 전에 422로 거부한다. 이 검증만으로 실제 파일 내용을
+        신뢰하지는 않으며, 다운로드 후 MIME Type, Magic Byte와 패키지 구조를 다시
+        확인한다.
+        """
+
+        expected_extension = _EXPECTED_EXTENSION_BY_FILE_TYPE[self.file_type]
+        actual_extension = Path(self.file_name).suffix.lower()
+
+        if actual_extension != expected_extension:
+            raise ValueError(
+                f"{self.file_type.value.upper()} file type requires a "
+                f"{expected_extension} file extension."
+            )
 
         return self
 
 
 class FileProcessingCompletedResponse(BaseModel):
-    """다운로드부터 Local RAG DB 및 VectorDB 저장까지 완료된 처리 결과."""
+    """다운로드부터 Local RAG DB와 Qdrant 색인까지 완료된 응답 데이터.
 
-    # 응답 스키마에 정의되지 않은 내부 데이터가 외부 응답에 포함되지 않도록
-    # 명시된 필드만 허용한다.
-    model_config = ConfigDict(
-        extra="forbid",
-    )
+    기존 PDF 응답의 ``page_count`` 필드명을 유지하여 하위 호환성을 보장한다.
+    PDF에서는 실제 페이지 수이고, 다른 형식에서는 파서가 생성한 원본 위치 unit
+    수를 전달한다. 새로운 일반명 필드를 동시에 추가하면 애플리케이션 서버 계약을
+    변경해야 하므로 현재 변경에서는 기존 필드를 재사용한다.
+    """
+
+    # 내부 객체의 추가 속성이 실수로 API 응답에 직렬화되지 않도록 정의된 필드만 허용한다.
+    model_config = ConfigDict(extra="forbid")
 
     rag_document_idx: int = Field(
         gt=0,
         description="Local RAG DB RAG_Document 식별자",
-        examples=[100],
     )
 
     file_idx: int = Field(
         gt=0,
-        description="처리 대상 파일의 AWS 서버 DB File.File_IDX",
-        examples=[123],
+        description="처리 대상 AWS 서버 DB File.File_IDX",
     )
 
     user_idx: int = Field(
         gt=0,
-        description="파일 소유 사용자의 AWS 서버 DB Users.Users_IDX",
-        examples=[45],
+        description="파일 소유 사용자 식별자",
     )
 
     folder_idx: int | None = Field(
         default=None,
         gt=0,
         description="파일이 속한 폴더 식별자",
-        examples=[9],
     )
 
     file_name: str = Field(
         min_length=1,
         max_length=255,
         description="처리 요청 시점의 파일 표시명 스냅샷",
-        examples=["2026 Q3 회의록.pdf"],
     )
 
     file_type: SupportedFileType = Field(
-        description="처리가 완료된 원본 파일 타입",
-        examples=["pdf"],
+        description="처리가 완료된 원본 파일 형식",
     )
 
     file_size_bytes: int = Field(
         gt=0,
-        description="다운로드와 검증이 완료된 원본 PDF 크기",
-        examples=[1048576],
+        description="다운로드와 검증이 완료된 원본 파일의 실제 바이트 크기",
     )
 
     page_count: int = Field(
         gt=0,
-        description="PDF 파서가 확인한 원본 문서 전체 페이지 수",
-        examples=[10],
+        description=(
+            "기존 PDF 응답 하위 호환성을 위한 원본 단위 수다. PDF에서는 실제 "
+            "페이지 수이며, DOCX/PPTX/TXT/XLSX에서는 파서가 생성한 원본 위치 "
+            "단위 수다."
+        ),
     )
 
     text_unit_count: int = Field(
         gt=0,
-        description="실제 추출 텍스트가 존재하는 PDF 페이지 단위 수",
-        examples=[9],
+        description="실제 추출 텍스트가 존재하는 원본 위치 단위 수",
     )
 
     chunk_count: int = Field(
         gt=0,
-        description="Local RAG DB와 VectorDB에 저장된 청크 수",
-        examples=[42],
+        description="Local RAG DB와 Qdrant에 저장된 검색 청크 수",
     )
 
     embedding_model: str = Field(
         min_length=1,
         max_length=255,
         description="청크 임베딩 생성에 사용한 모델 식별자",
-        examples=["Qwen/Qwen3-Embedding-0.6B"],
     )
 
     embedding_dim: int = Field(
         gt=0,
         description="청크별 임베딩 벡터 차원",
-        examples=[1024],
     )
 
     processing_status: Literal["INDEXED"] = Field(
         default="INDEXED",
-        description="Local RAG DB와 VectorDB 저장 완료 상태",
-        examples=["INDEXED"],
+        description="Local RAG DB와 Qdrant 색인이 확정된 완료 상태",
     )
