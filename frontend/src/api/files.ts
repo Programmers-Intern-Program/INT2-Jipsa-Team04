@@ -14,6 +14,7 @@ export interface FileListItem {
     tags: string[];
     securityRank: string | null;
     documentType: string | null;
+    extractionStatus: string | null;
 }
 
 export interface FileListResponse {
@@ -82,6 +83,7 @@ export function toDocument(item: FileListItem): Document {
         status: item.status,
         star: item.star,
         documentType: item.documentType ?? null,
+        extractionStatus: item.extractionStatus ?? null,
     };
 }
 
@@ -223,6 +225,7 @@ export interface FileStatusInfo {
     processingStage: string | null;
     attempts: number;
     errorMessage: string | null;
+    extractionStatus: string | null;
 }
 
 export function getFileStatus(fileId: number): Promise<FileStatusInfo> {
