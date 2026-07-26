@@ -51,6 +51,7 @@ from jipsa_rag.schemas.rag_answer import (
     RagAnswerResponse,
 )
 from jipsa_rag.services.prompt_builder import RagPromptBuilder
+from jipsa_rag.services.query_routing import RoutedRagAnswerService
 from jipsa_rag.services.rag_answer import (
     RagAnswerService,
     RagAnswerServiceError,
@@ -124,9 +125,14 @@ def get_rag_answer_service(
     prompt_builder: RagPromptBuilderDependency,
     generation_client: ClaudeGenerationClientDependency,
 ) -> RagAnswerService:
-    """검색, 프롬프트 구성 및 Claude 생성을 연결한 답변 서비스를 반환한다."""
+    """질의 분류·전략 라우팅과 기존 답변 흐름을 결합한 서비스를 반환한다.
 
-    return RagAnswerService(
+    ``RoutedRagAnswerService``는 기존 ``RagAnswerService``의 하위 타입이다.
+    lookup 질문은 기존 검색 결과와 답변 흐름을 그대로 사용하고,
+    synthesis 질문에만 PDF별 청크 그룹 순서를 적용한다.
+    """
+
+    return RoutedRagAnswerService(
         chunk_searcher=chunk_search_service,
         prompt_builder=prompt_builder,
         generation_client=generation_client,
@@ -366,7 +372,9 @@ def _convert_rag_answer_service_error(
         "관련 청크를 검색한다. 검색 결과가 없거나 Claude가 정해진 "
         "근거 부족 문구를 반환하면 insufficient_evidence 응답을 반환한다. "
         "정상 답변에는 유효한 [SOURCE-N] 인용이 하나 이상 필요하며, "
-        "응답 sources에는 Claude가 실제로 인용한 출처만 포함된다."
+        "응답 sources에는 Claude가 실제로 인용한 출처만 포함된다. "
+        "질문은 규칙 기반으로 lookup 또는 synthesis로 분류되며, "
+        "synthesis 검색 결과는 PDF별로 그룹화된 순서로 생성 단계에 전달된다."
     ),
     responses={
         HTTPStatus.UNAUTHORIZED: {
