@@ -1,6 +1,5 @@
 """HTTP 다운로더가 다섯 지원 형식의 MIME과 Magic Byte를 검증하는지 테스트한다."""
 
-from collections.abc import AsyncIterator
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile
@@ -13,8 +12,7 @@ from jipsa_rag.core.exceptions import AppException
 from jipsa_rag.infrastructure.file.downloader import HttpFileDownloader
 
 _FILE_URL = (
-    "https://example-bucket.s3.ap-northeast-2.amazonaws.com/"
-    "files/document?X-Amz-Signature=test"
+    "https://example-bucket.s3.ap-northeast-2.amazonaws.com/files/document?X-Amz-Signature=test"
 )
 
 
@@ -38,7 +36,7 @@ def settings() -> Settings:
         database_name="Jipsa_Local_RAG",
         database_user="test_user",
         database_password="test_password",
-        file_download_allowed_host_suffixes=(".amazonaws.com",),
+        file_download_allowed_host_suffixes=".amazonaws.com",
         file_download_connect_timeout_seconds=5.0,
         file_download_read_timeout_seconds=30.0,
         file_download_max_size_bytes=1024 * 1024,

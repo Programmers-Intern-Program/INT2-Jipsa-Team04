@@ -43,8 +43,7 @@ class SupportedFileType(StrEnum):
 # file_type과 file_name을 교차 검증할 때 사용할 정확한 마지막 확장자 맵이다.
 # enum에 새 형식이 추가되면 comprehension이 자동으로 같은 이름의 확장자를 만든다.
 _EXPECTED_EXTENSION_BY_FILE_TYPE: dict[SupportedFileType, str] = {
-    file_type: f".{file_type.value}"
-    for file_type in SupportedFileType
+    file_type: f".{file_type.value}" for file_type in SupportedFileType
 }
 
 
@@ -77,8 +76,7 @@ class FileProcessingRequest(BaseModel):
     user_idx: int = Field(
         gt=0,
         description=(
-            "AWS 서버 DB Users.Users_IDX 외부 참조값이며 사용자별 검색 "
-            "스코프 제한에 사용한다."
+            "AWS 서버 DB Users.Users_IDX 외부 참조값이며 사용자별 검색 스코프 제한에 사용한다."
         ),
         examples=[45],
     )
@@ -104,9 +102,7 @@ class FileProcessingRequest(BaseModel):
     )
 
     file_type: SupportedFileType = Field(
-        description=(
-            "실제 원본 문서 형식이며 DocumentParserFactory의 파서 선택에 사용한다."
-        ),
+        description=("실제 원본 문서 형식이며 DocumentParserFactory의 파서 선택에 사용한다."),
         examples=["docx"],
     )
 

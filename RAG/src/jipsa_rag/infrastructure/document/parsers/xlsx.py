@@ -52,8 +52,10 @@ from jipsa_rag.infrastructure.document.parsers._common import (
 # 캐시된 수식 값을 우선 사용하는 XLSX 텍스트 파서임을 명시한다.
 _XLSX_PARSER_TYPE: Final[str] = "XLSX_CACHED_VALUE"
 
-# 행 경계, 수식 값 선택 또는 메타데이터 의미가 변경되면 증가시킨다.
-_XLSX_PARSER_VERSION: Final[str] = "1.0.0"
+# 1.1.0부터 시트 번호, 셀 시작/끝 좌표, 행·열 범위와 실제 값 셀 좌표를
+# 명시적으로 보존한다. Parser_Version 변화는 Local RAG의 문서 식별자와
+# 결정적 Chunk ID에 포함되므로 기존 1.0.0 색인을 자동으로 대체한다.
+_XLSX_PARSER_VERSION: Final[str] = "1.1.0"
 
 # ZIP 시그니처만으로는 다른 OOXML 형식과 구분할 수 없으므로 workbook 루트를 확인한다.
 _XLSX_REQUIRED_MEMBERS: Final[frozenset[str]] = frozenset(
@@ -177,6 +179,7 @@ class XlsxDocumentParser:
                     "table_names": tuple(table_names),
                     "table_ranges": tuple(table_ranges),
                     "merged_range_count": merged_range_count,
+                    "source_unit_count": len(units),
                 },
             )
         except DocumentParserError:
@@ -210,14 +213,8 @@ class XlsxDocumentParser:
         merged_by_row = self._map_merged_ranges_by_row(formula_sheet)
 
         units: list[ParsedDocumentUnit] = []
-        table_names = [
-            table.displayName
-            for table in formula_sheet.tables.values()
-        ]
-        table_ranges = [
-            table.ref
-            for table in formula_sheet.tables.values()
-        ]
+        table_names = [table.displayName for table in formula_sheet.tables.values()]
+        table_ranges = [table.ref for table in formula_sheet.tables.values()]
 
         for row_number in range(1, formula_sheet.max_row + 1):
             try:
@@ -262,6 +259,7 @@ class XlsxDocumentParser:
         """하나의 원본 행을 탭 구분 문자열과 셀 위치 메타데이터로 변환한다."""
 
         meaningful_columns: list[int] = []
+        meaningful_cells: list[str] = []
         display_values: dict[int, str] = {}
 
         # 수식 관련 정보는 같은 순번의 tuple끼리 대응하도록 동일 순서로 누적한다.
@@ -291,14 +289,14 @@ class XlsxDocumentParser:
             # openpyxl의 data_type="f"가 정상 신호지만 일부 생성 도구는 문자열만
             # "="로 시작하게 기록할 수 있어 두 조건을 모두 확인한다.
             is_formula = formula_cell.data_type == "f" or (
-                isinstance(formula_value, str)
-                and formula_value.startswith("=")
+                isinstance(formula_value, str) and formula_value.startswith("=")
             )
 
             if formula_value is None and cached_value is None:
                 continue
 
             meaningful_columns.append(column_number)
+            meaningful_cells.append(formula_cell.coordinate)
 
             if is_formula:
                 formula_cells.append(formula_cell.coordinate)
@@ -313,9 +311,7 @@ class XlsxDocumentParser:
             # 수식 캐시가 존재하면 사용자가 마지막으로 저장한 계산 결과를 검색 텍스트에
             # 사용한다. 캐시가 없으면 수식 표현식 자체를 남겨 정보가 완전히 사라지지 않게 한다.
             selected_value = (
-                cached_value
-                if is_formula and cached_value is not None
-                else formula_value
+                cached_value if is_formula and cached_value is not None else formula_value
             )
             display_values[column_number] = self._value_to_text(selected_value)
 
@@ -337,15 +333,33 @@ class XlsxDocumentParser:
             f"{get_column_letter(last_column)}{row_number}"
         )
 
+        start_cell = f"{get_column_letter(first_column)}{row_number}"
+        end_cell = f"{get_column_letter(last_column)}{row_number}"
+
         metadata: dict[str, SourceMetadataValue] = {
             "unit_type": "table_row" if table_names else "row",
+            "location_kind": "xlsx_cell_range",
+            # sheet_index는 기존 계약과의 호환성을 유지한다. sheet_number를 같은
+            # 1-based 값으로 추가하여 소비자가 인덱스의 0/1 시작 여부를 추측하지
+            # 않아도 되게 한다.
             "sheet_index": sheet_index,
+            "sheet_number": sheet_index,
             "sheet_name": formula_sheet.title,
             "row_number": row_number,
+            "start_row": row_number,
+            "end_row": row_number,
+            "start_column": first_column,
+            "end_column": last_column,
+            "start_cell": start_cell,
+            "end_cell": end_cell,
             "cell_range": cell_range,
-            # 빈 중간 셀을 제외하고 실제 값이나 수식이 존재하는 셀 개수다.
+            "cell_coordinates": tuple(meaningful_cells),
+            # cell_count는 실제 값 또는 수식이 있는 셀 수이고 column_span은
+            # 중간 빈 셀까지 포함한 화면상의 열 범위 길이다.
             "cell_count": len(meaningful_columns),
+            "column_span": last_column - first_column + 1,
             "merged_ranges": merged_ranges,
+            "merged_cell_ranges": merged_ranges,
             "table_names": table_names,
             "formula_cells": tuple(formula_cells),
             "formula_expressions": tuple(formula_expressions),
@@ -376,10 +390,7 @@ class XlsxDocumentParser:
             for row_number in range(minimum_row, maximum_row + 1):
                 mutable_map.setdefault(row_number, []).append(table.displayName)
 
-        return {
-            row_number: tuple(names)
-            for row_number, names in mutable_map.items()
-        }
+        return {row_number: tuple(names) for row_number, names in mutable_map.items()}
 
     @staticmethod
     def _map_merged_ranges_by_row(
@@ -396,10 +407,7 @@ class XlsxDocumentParser:
             ):
                 mutable_map.setdefault(row_number, []).append(str(merged_range))
 
-        return {
-            row_number: tuple(ranges)
-            for row_number, ranges in mutable_map.items()
-        }
+        return {row_number: tuple(ranges) for row_number, ranges in mutable_map.items()}
 
     @staticmethod
     def _value_to_text(value: object) -> str:
@@ -410,7 +418,7 @@ class XlsxDocumentParser:
 
         # 날짜·시간은 로컬 표시 형식보다 ISO 8601이 실행 환경에 독립적이고 검색 및
         # 비교가 쉽다. timezone 정보가 객체에 있으면 isoformat()이 함께 보존한다.
-        if isinstance(value, (datetime, date, time)):
+        if isinstance(value, datetime | date | time):
             return value.isoformat()
 
         # Python의 str(True)는 "True"지만 스프레드시트 표기와 일관되게 대문자를 쓴다.
@@ -428,13 +436,13 @@ class XlsxDocumentParser:
         Decimal은 float로 변환한다. 그 밖의 값은 안전한 문자열 표현으로 보존한다.
         """
 
-        if value is None or isinstance(value, (str, int, float, bool)):
+        if value is None or isinstance(value, str | int | float | bool):
             return value
 
         if isinstance(value, Decimal):
             return float(value)
 
-        if isinstance(value, (datetime, date, time)):
+        if isinstance(value, datetime | date | time):
             return value.isoformat()
 
         return str(value)

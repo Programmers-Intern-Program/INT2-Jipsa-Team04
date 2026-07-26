@@ -1027,11 +1027,27 @@ def test_file_processing_request_rejects_non_https_url(
 def test_file_processing_request_rejects_unsupported_file_type(
     file_processing_client: TestClient,
 ) -> None:
-    """현재 요청 스키마에서 허용하지 않는 파일 타입을 거부한다."""
+    """정식 지원 목록에 존재하지 않는 문서 형식을 요청 단계에서 거부한다.
+
+    현재 파일 처리 API가 지원하는 문서 형식은 PDF, DOCX, PPTX, TXT,
+    XLSX다. 따라서 이전 PDF 전용 계약에서 사용하던 DOCX는 더 이상
+    미지원 형식 검증에 사용할 수 없다.
+
+    공통 DocumentType과 Parser Factory에 등록되지 않은 ODT를 사용하여
+    미지원 형식 거부 계약을 검증한다.
+
+    함수명은 기존 Pytest Node ID 및 외부 테스트 명령과의 하위 호환성을
+    유지하기 위해 변경하지 않는다.
+    """
 
     request_body = VALID_FILE_PROCESSING_REQUEST.copy()
-    request_body["file_name"] = "project-guide.docx"
-    request_body["file_type"] = "docx"
+
+    # 파일명과 선언된 형식을 모두 ODT로 맞춘다.
+    #
+    # 이렇게 해야 실패 원인이 파일명 확장자와 file_type의 불일치가 아니라
+    # 지원 목록에 존재하지 않는 문서 형식 자체가 된다.
+    request_body["file_name"] = "project-guide.odt"
+    request_body["file_type"] = "odt"
 
     response = file_processing_client.post(
         "/api/v1/files/process",
@@ -1040,10 +1056,18 @@ def test_file_processing_request_rejects_unsupported_file_type(
 
     body = response.json()
 
+    # 미지원 형식은 다운로더나 Parser Factory에 도달하기 전에
+    # FileProcessingRequest의 요청 스키마 검증 단계에서 거부되어야 한다.
     assert response.status_code == 422
     assert body["success"] is False
     assert body["code"] == "REQUEST_VALIDATION_FAILED"
-    assert body["data"]["errors"][0]["field"] == "body.file_type"
+    assert body["message"] == "Request validation failed."
+
+    invalid_fields = {error["field"] for error in body["data"]["errors"]}
+
+    # Pydantic 검증 오류의 반환 순서는 내부 구현에 따라 달라질 수 있다.
+    # 따라서 첫 오류만 비교하지 않고 전체 오류 필드 집합을 검사한다.
+    assert "body.file_type" in invalid_fields
 
 
 def test_file_processing_request_normalizes_uppercase_pdf_type(

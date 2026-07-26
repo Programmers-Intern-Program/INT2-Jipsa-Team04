@@ -247,10 +247,7 @@ class HttpFileDownloader:
 
                         # Content-Length는 누락되거나 실제보다 작게 전달될 수 있으므로
                         # 실제 수신 누적 바이트를 기준으로 최대 크기를 다시 확인한다.
-                        if (
-                            size_bytes
-                            > self._settings.file_download_max_size_bytes
-                        ):
+                        if size_bytes > self._settings.file_download_max_size_bytes:
                             raise AppException(
                                 ErrorCode.FILE_TOO_LARGE,
                                 log_context={
@@ -265,13 +262,9 @@ class HttpFileDownloader:
 
                         # 처음 FORMAT_SNIFF_BYTES까지만 별도 메모리에 보관한다. 마지막
                         # chunk가 한도를 넘으면 필요한 앞부분만 slice한다.
-                        remaining_sniff_bytes = (
-                            FORMAT_SNIFF_BYTES - len(leading_bytes)
-                        )
+                        remaining_sniff_bytes = FORMAT_SNIFF_BYTES - len(leading_bytes)
                         if remaining_sniff_bytes > 0:
-                            leading_bytes.extend(
-                                chunk[:remaining_sniff_bytes]
-                            )
+                            leading_bytes.extend(chunk[:remaining_sniff_bytes])
 
                         # 다운로드와 동시에 해시를 계산하여 완료 후 파일 전체를 다시
                         # 읽는 추가 I/O를 피한다.
@@ -430,17 +423,14 @@ class HttpFileDownloader:
             )
 
         normalized_hostname = hostname.lower()
-        allowed_suffixes = (
-            self._settings.parsed_file_download_allowed_host_suffixes
-        )
+        allowed_suffixes = self._settings.parsed_file_download_allowed_host_suffixes
 
         # suffix가 ".amazonaws.com"이면 정확한 amazonaws.com 자체와
         # bucket.s3.ap-northeast-2.amazonaws.com 같은 점 경계 하위 도메인을 허용한다.
         # malicious-amazonaws.com은 점 경계가 없어 endswith(".amazonaws.com")가
         # 거짓이므로 허용되지 않는다.
         is_allowed_host = any(
-            normalized_hostname == suffix.removeprefix(".")
-            or normalized_hostname.endswith(suffix)
+            normalized_hostname == suffix.removeprefix(".") or normalized_hostname.endswith(suffix)
             for suffix in allowed_suffixes
         )
 
@@ -499,10 +489,7 @@ class HttpFileDownloader:
                     },
                 )
 
-            if (
-                content_length
-                > self._settings.file_download_max_size_bytes
-            ):
+            if content_length > self._settings.file_download_max_size_bytes:
                 # 본문을 읽기 전에 명백한 초과 파일을 조기 거부한다. 스트리밍 중에도
                 # 실제 바이트 수를 별도로 검사하므로 잘못된 작은 헤더로 우회할 수 없다.
                 raise AppException(
@@ -511,16 +498,18 @@ class HttpFileDownloader:
                         "users_idx": users_idx,
                         "file_idx": file_idx,
                         "content_length": content_length,
-                        "maximum_size_bytes": (
-                            self._settings.file_download_max_size_bytes
-                        ),
+                        "maximum_size_bytes": (self._settings.file_download_max_size_bytes),
                     },
                 )
 
-        content_encoding = response.headers.get(
-            "content-encoding",
-            "identity",
-        ).strip().lower()
+        content_encoding = (
+            response.headers.get(
+                "content-encoding",
+                "identity",
+            )
+            .strip()
+            .lower()
+        )
 
         if content_encoding not in {"", "identity"}:
             # gzip 등의 전송 인코딩을 허용하면 원본 S3 바이트와 다운로드 후 바이트가

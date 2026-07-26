@@ -65,9 +65,7 @@ _DOCX_CONTENT_TYPE: Final[str] = (
 _PPTX_CONTENT_TYPE: Final[str] = (
     "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 )
-_XLSX_CONTENT_TYPE: Final[str] = (
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+_XLSX_CONTENT_TYPE: Final[str] = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 _OOXML_CONTENT_TYPES: Final[frozenset[str]] = frozenset(
     {
@@ -97,10 +95,7 @@ _TXT_CONTENT_TYPES: Final[frozenset[str]] = frozenset(
 )
 
 _ALLOWED_CONTENT_TYPES: Final[frozenset[str]] = (
-    _GENERIC_BINARY_CONTENT_TYPES
-    | _PDF_CONTENT_TYPES
-    | _OOXML_CONTENT_TYPES
-    | _TXT_CONTENT_TYPES
+    _GENERIC_BINARY_CONTENT_TYPES | _PDF_CONTENT_TYPES | _OOXML_CONTENT_TYPES | _TXT_CONTENT_TYPES
 )
 
 # 다운로드 선두 바이트를 넓은 형식 계열로만 분류한다. OOXML의 구체 형식은 ZIP
@@ -152,9 +147,7 @@ def validate_content_type_and_magic(
         # 로그에 남기지 않고 검증 종류만 기록한다.
         raise AppException(
             ErrorCode.INVALID_FILE,
-            public_message=(
-                "The downloaded file does not match a supported document format."
-            ),
+            public_message=("The downloaded file does not match a supported document format."),
             log_context={
                 "users_idx": users_idx,
                 "file_idx": file_idx,
@@ -164,30 +157,21 @@ def validate_content_type_and_magic(
 
     # 구체 MIME Type이 제공된 경우에만 계열 일치를 강제한다. 일반 binary MIME은
     # 실제 파일 형식 정보를 주지 않으므로 아래 분기에 포함하지 않는다.
-    if (
-        normalized_content_type in _PDF_CONTENT_TYPES
-        and detected_family != "PDF"
-    ):
+    if normalized_content_type in _PDF_CONTENT_TYPES and detected_family != "PDF":
         _raise_invalid_magic(
             users_idx,
             file_idx,
             normalized_content_type,
         )
 
-    if (
-        normalized_content_type in _OOXML_CONTENT_TYPES
-        and detected_family != "OOXML"
-    ):
+    if normalized_content_type in _OOXML_CONTENT_TYPES and detected_family != "OOXML":
         _raise_invalid_magic(
             users_idx,
             file_idx,
             normalized_content_type,
         )
 
-    if (
-        normalized_content_type in _TXT_CONTENT_TYPES
-        and detected_family != "TEXT"
-    ):
+    if normalized_content_type in _TXT_CONTENT_TYPES and detected_family != "TEXT":
         # text/plain으로 선언된 파일이 PDF/ZIP처럼 다른 지원 형식인 경우에도
         # 선언과 실제 내용이 일치하지 않으므로 미디어 타입 오류로 거부한다.
         _raise_unsupported_media_type(
@@ -296,17 +280,13 @@ def validate_ooxml_package_and_mime(
     detected_root = next(iter(detected_roots))
 
     if normalized_content_type in _OOXML_CONTENT_TYPES:
-        expected_root = _OOXML_ROOT_MEMBER_BY_CONTENT_TYPE[
-            normalized_content_type
-        ]
+        expected_root = _OOXML_ROOT_MEMBER_BY_CONTENT_TYPE[normalized_content_type]
 
         if detected_root != expected_root:
             # 예: MIME은 DOCX지만 실제 ZIP 루트가 xl/workbook.xml인 경우다.
             raise AppException(
                 ErrorCode.INVALID_FILE,
-                public_message=(
-                    "The OOXML file content does not match its MIME type."
-                ),
+                public_message=("The OOXML file content does not match its MIME type."),
                 log_context={
                     "users_idx": users_idx,
                     "file_idx": file_idx,
@@ -330,10 +310,7 @@ def detect_magic_family(leading_bytes: bytes) -> DetectedMagicFamily:
     if leading_bytes.startswith(PDF_MAGIC_BYTES):
         return "PDF"
 
-    if any(
-        leading_bytes.startswith(signature)
-        for signature in ZIP_MAGIC_BYTES
-    ):
+    if any(leading_bytes.startswith(signature) for signature in ZIP_MAGIC_BYTES):
         return "OOXML"
 
     if _looks_like_text(leading_bytes):
@@ -392,9 +369,7 @@ def _looks_like_text(payload: bytes) -> bool:
     # 단일 바이트 후보에서는 원본 바이트의 C0 제어 문자 비율을 직접 검사한다.
     # 백스페이스, 탭, LF, 폼 피드와 CR은 일반 텍스트에서 허용한다.
     disallowed_controls = sum(
-        1
-        for value in payload
-        if value < 32 and value not in {8, 9, 10, 12, 13}
+        1 for value in payload if value < 32 and value not in {8, 9, 10, 12, 13}
     )
 
     return disallowed_controls / len(payload) <= 0.05
@@ -409,10 +384,7 @@ def _has_text_control_ratio(text: str) -> bool:
     disallowed_controls = sum(
         1
         for character in text
-        if (
-            ord(character) < 32
-            and character not in {"\n", "\r", "\t", "\f", "\b"}
-        )
+        if (ord(character) < 32 and character not in {"\n", "\r", "\t", "\f", "\b"})
     )
 
     return disallowed_controls / len(text) <= 0.05

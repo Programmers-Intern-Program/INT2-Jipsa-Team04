@@ -34,7 +34,7 @@ async def test_docx_extracts_heading_paragraph_list_and_table(tmp_path: Path) ->
     table.cell(0, 1).text = "값"
     table.cell(1, 0).text = "GPU"
     table.cell(1, 1).text = "CUDA 12.9"
-    document.save(path)
+    document.save(str(path))
 
     parsed = await DocxDocumentParser().parse(path)
 
@@ -53,7 +53,7 @@ async def test_docx_increments_section_metadata_after_section_break(tmp_path: Pa
     document.add_paragraph("첫 번째 섹션")
     document.add_section(WD_SECTION.NEW_PAGE)
     document.add_paragraph("두 번째 섹션")
-    document.save(path)
+    document.save(str(path))
 
     parsed = await DocxDocumentParser().parse(path)
     text_units = [unit for unit in parsed.units if unit.text]
@@ -82,7 +82,7 @@ async def test_docx_resolves_heading_and_list_from_base_styles(tmp_path: Path) -
 
     document.add_paragraph("상속 제목", style=custom_heading)
     document.add_paragraph("상속 목록", style=custom_list)
-    document.save(path)
+    document.save(str(path))
 
     parsed = await DocxDocumentParser().parse(path)
     units_by_text = {unit.text: unit for unit in parsed.units if unit.text}
@@ -107,7 +107,7 @@ async def test_pptx_extracts_title_shape_table_and_notes(tmp_path: Path) -> None
     table_shape.table.cell(1, 0).text = "PPTX"
     table_shape.table.cell(1, 1).text = "예"
     slide.notes_slide.notes_text_frame.text = "발표자 노트"
-    presentation.save(path)
+    presentation.save(str(path))
 
     parsed = await PptxDocumentParser().parse(path)
 
@@ -142,10 +142,18 @@ async def test_xlsx_extracts_rows_merged_ranges_tables_and_formula_metadata(tmp_
 
     assert parsed.file_type is DocumentType.XLSX
     assert parsed.document_metadata["sheet_names"] == ("요약",)
-    assert "SummaryTable" in parsed.document_metadata["table_names"]
+    table_names = parsed.document_metadata["table_names"]
+    assert isinstance(table_names, tuple)
+    assert "SummaryTable" in table_names
+
     formula_unit = next(unit for unit in parsed.units if unit.source_metadata["formula_cells"])
     assert formula_unit.source_metadata["formula_cells"] == ("B3",)
-    assert any("A4:B4" in unit.source_metadata["merged_ranges"] for unit in parsed.units)
+
+    merged_range_values = (unit.source_metadata["merged_ranges"] for unit in parsed.units)
+    assert any(
+        isinstance(merged_ranges, tuple) and "A4:B4" in merged_ranges
+        for merged_ranges in merged_range_values
+    )
 
 
 @pytest.mark.asyncio
@@ -153,7 +161,7 @@ async def test_ooxml_parser_rejects_another_ooxml_package_type(tmp_path: Path) -
     path = tmp_path / "renamed.pptx"
     document = Document()
     document.add_paragraph("확장자만 바꾼 DOCX")
-    document.save(path)
+    document.save(str(path))
 
     # DOCX, PPTX, XLSX는 모두 ZIP Magic Byte를 사용한다. 선택된 파서가
     # 패키지 내부의 형식별 필수 경로까지 확인해야 위장 파일을 차단할 수 있다.
@@ -181,7 +189,9 @@ async def test_txt_detects_utf16_without_bom(tmp_path: Path) -> None:
 
     parsed = await TxtDocumentParser().parse(path)
 
-    assert parsed.document_metadata["encoding"].replace("-", "_").lower() == "utf_16_le"
+    encoding = parsed.document_metadata["encoding"]
+    assert isinstance(encoding, str)
+    assert encoding.replace("-", "_").lower() == "utf_16_le"
     assert parsed.text == "첫 줄\n\n둘째 줄"
 
 
@@ -194,7 +204,9 @@ async def test_txt_prefers_cp949_when_generic_detector_misreads_short_korean(
 
     parsed = await TxtDocumentParser().parse(path)
 
-    assert parsed.document_metadata["encoding"].lower() == "cp949"
+    encoding = parsed.document_metadata["encoding"]
+    assert isinstance(encoding, str)
+    assert encoding.lower() == "cp949"
     assert parsed.text == "첫 줄\n\n둘째 줄"
 
 

@@ -20,20 +20,23 @@ OOXML ZIP 패키지다. 이 파서는 ``python-docx``를 이용하여 본문 XML
 
 import asyncio
 import re
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 from docx import Document
 from docx.document import Document as DocxDocument
 from docx.oxml.ns import qn
 from docx.oxml.table import CT_Tbl
 from docx.oxml.text.paragraph import CT_P
+from docx.oxml.xmlchemy import BaseOxmlElement
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
 from jipsa_rag.infrastructure.document.exceptions import (
     DocumentParserError,
     DocumentReadError,
+    DocumentSourceMetadataValue,
     DocumentTextExtractionError,
     DocumentTextNotFoundError,
     InvalidDocumentError,
@@ -74,6 +77,49 @@ _HEADING_STYLE_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"^(?:heading|제목)\s*([1-9]\d*)$",
     re.IGNORECASE,
 )
+
+
+def _find_numbering_properties(
+    paragraph_properties: BaseOxmlElement | None,
+) -> BaseOxmlElement | None:
+    """문단 속성에서 ``w:numPr`` 자식을 타입 안전하게 반환한다.
+
+    python-docx의 ``numPr`` descriptor는 런타임에서는 XML 요소를 반환하지만
+    정적 타입 정의에서는 ``ZeroOrOne`` descriptor로 노출될 수 있다. 이 함수는
+    OOXML QName 기반 ``find()``를 사용하여 descriptor 타입에 의존하지 않는다.
+    """
+
+    if paragraph_properties is None:
+        return None
+
+    return cast(
+        BaseOxmlElement | None,
+        paragraph_properties.find(qn("w:numPr")),
+    )
+
+
+def _read_numbering_integer(
+    numbering_properties: BaseOxmlElement,
+    *,
+    child_name: str,
+) -> int | None:
+    """``w:numPr`` 아래 정수 속성을 읽고 누락 값은 ``None``으로 반환한다.
+
+    ``numId``와 ``ilvl``은 모두 자식 요소의 ``w:val`` 속성에 저장된다. 손상된
+    문서에서 요소나 속성이 누락되면 호출자가 목록 없음 또는 기본 레벨로 처리할
+    수 있도록 예외 대신 ``None``을 반환한다. 숫자가 아닌 값은 상위 파서 경계에서
+    손상 문서 예외로 변환되도록 ``int()``의 ``ValueError``를 그대로 유지한다.
+    """
+
+    child = numbering_properties.find(qn(child_name))
+    if child is None:
+        return None
+
+    raw_value = child.get(qn("w:val"))
+    if raw_value is None:
+        return None
+
+    return int(raw_value)
 
 
 class DocxDocumentParser:
@@ -134,7 +180,7 @@ class DocxDocumentParser:
         try:
             # Document()가 반환하는 객체는 열린 파일 경로에 계속 의존하지 않도록
             # _parse_body() 실행 안에서 필요한 문자열과 메타데이터로 모두 변환한다.
-            document = Document(file_path)
+            document = Document(str(file_path))
 
             # 목록 유형을 정확히 구분하려면 본문 문단의 numId뿐 아니라
             # numbering.xml의 abstractNum/level별 numFmt를 함께 해석해야 한다.
@@ -211,7 +257,10 @@ class DocxDocumentParser:
             document.element.body.iterchildren(),
             start=1,
         ):
-            base_metadata: dict[str, SourceMetadataValue] = {
+            # 오류 예외에는 JSON scalar만 허용된다. 이 기본 위치 정보는 정수만
+            # 저장하므로 DocumentTextExtractionError의 메타데이터 계약을 정확히
+            # 만족하도록 더 좁은 값 타입으로 선언한다.
+            base_metadata: dict[str, DocumentSourceMetadataValue] = {
                 "section_index": section_index,
                 "block_index": block_index,
             }
@@ -237,10 +286,7 @@ class DocxDocumentParser:
                     # 끝난다"는 의미다. 따라서 현재 문단에는 기존 section_index를
                     # 기록하고, 다음 본문 블록부터 번호를 증가시킨다.
                     paragraph_properties = paragraph._p.pPr
-                    if (
-                        paragraph_properties is not None
-                        and paragraph_properties.sectPr is not None
-                    ):
+                    if paragraph_properties is not None and paragraph_properties.sectPr is not None:
                         section_index += 1
 
                 elif isinstance(child, CT_Tbl):
@@ -276,7 +322,7 @@ class DocxDocumentParser:
         *,
         paragraph_index: int,
         numbering_formats: dict[tuple[int, int], str],
-        base_metadata: dict[str, SourceMetadataValue],
+        base_metadata: Mapping[str, SourceMetadataValue],
     ) -> ParsedDocumentUnit:
         """단일 문단 텍스트와 제목·목록 분류 메타데이터를 생성한다."""
 
@@ -309,11 +355,7 @@ class DocxDocumentParser:
                     # Word의 ilvl은 0부터 시작하는 내부 목록 깊이다. 원본 XML 값과
                     # 일치하도록 그대로 보존한다.
                     "list_level": list_level,
-                    "list_type": (
-                        "bullet"
-                        if list_format == "bullet"
-                        else "numbered"
-                    ),
+                    "list_type": ("bullet" if list_format == "bullet" else "numbered"),
                     # decimal, lowerLetter, upperRoman 등 실제 numFmt 값도 함께 남긴다.
                     "list_format": list_format,
                 }
@@ -331,7 +373,7 @@ class DocxDocumentParser:
         table: Table,
         *,
         table_index: int,
-        base_metadata: dict[str, SourceMetadataValue],
+        base_metadata: Mapping[str, SourceMetadataValue],
     ) -> ParsedDocumentUnit:
         """DOCX 표를 탭 구분 행 문자열과 위치 메타데이터로 변환한다.
 
@@ -412,11 +454,7 @@ class DocxDocumentParser:
         """
 
         paragraph_properties = paragraph._p.pPr
-        numbering_properties = (
-            paragraph_properties.numPr
-            if paragraph_properties is not None
-            else None
-        )
+        numbering_properties = _find_numbering_properties(paragraph_properties)
 
         if numbering_properties is None:
             style = paragraph.style
@@ -425,11 +463,12 @@ class DocxDocumentParser:
             while style is not None and style.style_id not in visited_style_ids:
                 visited_style_ids.add(style.style_id)
 
-                style_properties = style.element.pPr
-                numbering_properties = (
-                    style_properties.numPr
-                    if style_properties is not None
-                    else None
+                # python-docx의 xmlchemy descriptor 타입은 Mypy에서 실제 XML
+                # 자식 속성(numId, ilvl)을 충분히 표현하지 못한다. descriptor에
+                # 직접 접근하지 않고 표준 OOXML 자식 경로를 조회하면 런타임 동작과
+                # 정적 타입 계약을 동시에 유지할 수 있다.
+                numbering_properties = _find_numbering_properties(
+                    style.element.pPr,
                 )
 
                 if numbering_properties is not None:
@@ -437,19 +476,24 @@ class DocxDocumentParser:
 
                 style = style.base_style
 
-        if numbering_properties is None or numbering_properties.numId is None:
+        if numbering_properties is None:
             return None
 
-        num_id = int(numbering_properties.numId.val)
+        num_id = _read_numbering_integer(
+            numbering_properties,
+            child_name="w:numId",
+        )
 
         # Word는 numId=0을 목록 번호 제거 또는 목록 없음 값으로 사용할 수 있다.
-        if num_id == 0:
+        if num_id is None or num_id == 0:
             return None
 
         list_level = (
-            int(numbering_properties.ilvl.val)
-            if numbering_properties.ilvl is not None
-            else 0
+            _read_numbering_integer(
+                numbering_properties,
+                child_name="w:ilvl",
+            )
+            or 0
         )
 
         # numbering.xml에 구체 형식이 없거나 손상된 경우에도 목록 위치는 보존한다.
@@ -512,9 +556,7 @@ class DocxDocumentParser:
 
                 format_value = number_format.get(qn("w:val"))
                 if format_value is not None:
-                    format_by_abstract_level[
-                        (abstract_id, int(level_value))
-                    ] = format_value
+                    format_by_abstract_level[(abstract_id, int(level_value))] = format_value
 
         # 실제 numId마다 참조하는 abstractNum의 모든 level 형식을 펼쳐 최종 맵을 만든다.
         return {
