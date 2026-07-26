@@ -47,7 +47,7 @@ class AutoMetadataServiceTest {
     }
 
     private void stubClaim() {
-        when(fileMetadataRepository.claimForGeneration(eq(1L), any())).thenReturn(1);
+        when(fileMetadataRepository.claimForGeneration(eq(1L), any(), any())).thenReturn(1);
         Chunk chunk = mock(Chunk.class);
         lenient().when(chunk.getContent()).thenReturn("문서 앞부분 본문입니다.");
         lenient().when(chunkRepository.findByFileIdOrderByChunkIndexAsc(eq(1L), any())).thenReturn(List.of(chunk));
@@ -66,7 +66,21 @@ class AutoMetadataServiceTest {
 
         service.process(1L);
 
-        verify(fileMetadataRepository).completeGeneration(eq(1L), eq("요약입니다."), any(), any(), eq(0.9), eq("보고서"), any());
+        verify(fileMetadataRepository).completeGeneration(eq(1L), any(), eq("요약입니다."), any(), any(), eq(0.9), eq("보고서"), any());
+    }
+
+    @Test
+    void usesSameTokenForClaimAndComplete() {
+        stubClaim();
+        when(autoMetadataClient.generate(any())).thenReturn(result("요약", List.of("k"), "보고서", 0.9));
+        ArgumentCaptor<String> claimToken = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> completeToken = ArgumentCaptor.forClass(String.class);
+
+        service.process(1L);
+
+        verify(fileMetadataRepository).claimForGeneration(eq(1L), claimToken.capture(), any());
+        verify(fileMetadataRepository).completeGeneration(eq(1L), completeToken.capture(), any(), any(), any(), any(), any(), any());
+        assertThat(completeToken.getValue()).isEqualTo(claimToken.getValue());
     }
 
     @Test
@@ -77,7 +91,7 @@ class AutoMetadataServiceTest {
 
         service.process(1L);
 
-        verify(fileMetadataRepository).completeGeneration(eq(1L), any(), any(), entities.capture(), any(), any(), any());
+        verify(fileMetadataRepository).completeGeneration(eq(1L), any(), any(), any(), entities.capture(), any(), any(), any());
         FileDetailResponse.Entities parsed = objectMapper.readValue(entities.getValue(), FileDetailResponse.Entities.class);
         assertThat(parsed.dates()).containsExactly("2026-01-01");
         assertThat(parsed.people()).containsExactly("김철수");
@@ -91,7 +105,7 @@ class AutoMetadataServiceTest {
 
         service.process(1L);
 
-        verify(fileMetadataRepository).completeGeneration(eq(1L), any(), any(), any(), any(), isNull(), any());
+        verify(fileMetadataRepository).completeGeneration(eq(1L), any(), any(), any(), any(), any(), isNull(), any());
     }
 
     @Test
@@ -101,7 +115,7 @@ class AutoMetadataServiceTest {
 
         service.process(1L);
 
-        verify(fileMetadataRepository).completeGeneration(eq(1L), any(), any(), any(), eq(1.0), any(), any());
+        verify(fileMetadataRepository).completeGeneration(eq(1L), any(), any(), any(), any(), eq(1.0), any(), any());
     }
 
     @Test
@@ -113,7 +127,7 @@ class AutoMetadataServiceTest {
 
         service.process(1L);
 
-        verify(fileMetadataRepository).completeGeneration(eq(1L), any(), keywords.capture(), any(), any(), any(), any());
+        verify(fileMetadataRepository).completeGeneration(eq(1L), any(), any(), keywords.capture(), any(), any(), any(), any());
         assertThat(objectMapper.readValue(keywords.getValue(), List.class)).hasSize(5);
     }
 
@@ -124,8 +138,8 @@ class AutoMetadataServiceTest {
 
         service.process(1L);
 
-        verify(fileMetadataRepository).failGeneration(eq(1L), any());
-        verify(fileMetadataRepository, never()).completeGeneration(any(), any(), any(), any(), any(), any(), any());
+        verify(fileMetadataRepository).failGeneration(eq(1L), any(), any());
+        verify(fileMetadataRepository, never()).completeGeneration(any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -135,16 +149,16 @@ class AutoMetadataServiceTest {
 
         service.process(1L);
 
-        verify(fileMetadataRepository).failGeneration(eq(1L), any());
+        verify(fileMetadataRepository).failGeneration(eq(1L), any(), any());
     }
 
     @Test
     void skipsWhenClaimNotWon() {
-        when(fileMetadataRepository.claimForGeneration(eq(1L), any())).thenReturn(0);
+        when(fileMetadataRepository.claimForGeneration(eq(1L), any(), any())).thenReturn(0);
 
         service.process(1L);
 
         verify(autoMetadataClient, never()).generate(any());
-        verify(fileMetadataRepository, never()).completeGeneration(any(), any(), any(), any(), any(), any(), any());
+        verify(fileMetadataRepository, never()).completeGeneration(any(), any(), any(), any(), any(), any(), any(), any());
     }
 }

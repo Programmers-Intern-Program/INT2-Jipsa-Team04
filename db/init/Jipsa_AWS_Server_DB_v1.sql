@@ -350,6 +350,7 @@ CREATE TABLE `File_Metadata` (
     `Extraction_Confidence` DECIMAL(4,3) NULL COMMENT '추출 신뢰도 0.000~1.000',
     `Extracted_Entities` JSON NULL COMMENT '추출된 일반 엔티티(dates/people/amounts/org 등)',
     `Extraction_Index_Version` INT UNSIGNED NULL COMMENT 'AI 메타데이터가 생성된 색인 버전. 오래된 콜백 무시용',
+    `Claim_Token` VARCHAR(36) NULL COMMENT 'AI 메타데이터 생성 작업 소유권 토큰(claim마다 갱신)',
     `Created_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성 일시',
     `Updated_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '수정 일시',
 

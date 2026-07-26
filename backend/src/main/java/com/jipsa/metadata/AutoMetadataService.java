@@ -16,6 +16,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 public class AutoMetadataService {
@@ -57,15 +58,16 @@ public class AutoMetadataService {
     }
 
     public void process(Long fileId) {
+        String token = UUID.randomUUID().toString();
         Integer claimed = transactionTemplate.execute(status ->
-                fileMetadataRepository.claimForGeneration(fileId, LocalDateTime.now()));
+                fileMetadataRepository.claimForGeneration(fileId, token, LocalDateTime.now()));
         if (claimed == null || claimed == 0) {
             return;
         }
         String sample = buildSample(fileId);
         if (sample.isBlank()) {
             transactionTemplate.executeWithoutResult(status ->
-                    fileMetadataRepository.failGeneration(fileId, LocalDateTime.now()));
+                    fileMetadataRepository.failGeneration(fileId, token, LocalDateTime.now()));
             return;
         }
         AutoMetadataResult result;
@@ -74,11 +76,11 @@ public class AutoMetadataService {
         } catch (RuntimeException e) {
             log.warn("AI 메타데이터 생성 실패 (file {}): {}", fileId, e.getMessage());
             transactionTemplate.executeWithoutResult(status ->
-                    fileMetadataRepository.failGeneration(fileId, LocalDateTime.now()));
+                    fileMetadataRepository.failGeneration(fileId, token, LocalDateTime.now()));
             return;
         }
         try {
-            transactionTemplate.executeWithoutResult(status -> persist(fileId, result));
+            transactionTemplate.executeWithoutResult(status -> persist(fileId, token, result));
         } catch (RuntimeException e) {
             log.warn("AI 메타데이터 저장 실패 (file {}): {}", fileId, e.getMessage());
         }
@@ -117,22 +119,21 @@ public class AutoMetadataService {
         return builder.toString();
     }
 
-    private void persist(Long fileId, AutoMetadataResult result) {
+    private void persist(Long fileId, String token, AutoMetadataResult result) {
         String summary = truncate(result == null ? null : result.summary(), maxSummaryChars);
         if (summary == null || summary.isBlank()) {
-            fileMetadataRepository.failGeneration(fileId, LocalDateTime.now());
+            fileMetadataRepository.failGeneration(fileId, token, LocalDateTime.now());
             return;
         }
         int updated = fileMetadataRepository.completeGeneration(
-                fileId,
-                summary,
+                fileId, token, summary,
                 writeJson(limit(result.keywords())),
                 writeJson(normalizeEntities(result.entities())),
                 clampConfidence(result.confidence()),
                 validateDocumentType(result.documentType()),
                 LocalDateTime.now());
         if (updated == 0) {
-            log.info("AI 메타데이터 저장 건너뜀(상태 변경됨) file {}", fileId);
+            log.info("AI 메타데이터 저장 건너뜀(다른 작업이 선점) file {}", fileId);
         }
     }
 

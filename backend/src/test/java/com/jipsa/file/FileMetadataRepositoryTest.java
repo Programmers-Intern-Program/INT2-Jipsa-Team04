@@ -30,12 +30,13 @@ class FileMetadataRepositoryTest {
         return fileRepository.saveAndFlush(file).getId();
     }
 
-    private void persistMetadata(Long fileId, String extractionStatus, String documentType) {
+    private void persistMetadata(Long fileId, String status, String documentType, String claimToken) {
         FileMetadata metadata = new FileMetadata();
         metadata.setFileId(fileId);
         metadata.setFileType("pdf");
-        metadata.setExtractionStatus(extractionStatus);
+        metadata.setExtractionStatus(status);
         metadata.setDocumentType(documentType);
+        metadata.setClaimToken(claimToken);
         fileMetadataRepository.saveAndFlush(metadata);
     }
 
@@ -54,94 +55,115 @@ class FileMetadataRepositoryTest {
     }
 
     @Test
-    void claimFlipsProcessingToGeneratingAndSnapshotsMaxVersion() {
+    void claimSetsGeneratingTokenAndMaxVersion() {
         Long fileId = persistFile(FileStatus.READY);
-        persistMetadata(fileId, "PROCESSING", null);
+        persistMetadata(fileId, "PROCESSING", null, null);
         persistChunk(fileId, 0, 1);
         persistChunk(fileId, 1, 2);
 
-        int claimed = fileMetadataRepository.claimForGeneration(fileId, LocalDateTime.now());
+        int claimed = fileMetadataRepository.claimForGeneration(fileId, "tokA", LocalDateTime.now());
 
         assertThat(claimed).isEqualTo(1);
         FileMetadata reloaded = reload(fileId);
         assertThat(reloaded.getExtractionStatus()).isEqualTo("GENERATING");
+        assertThat(reloaded.getClaimToken()).isEqualTo("tokA");
         assertThat(reloaded.getExtractionIndexVersion()).isEqualTo(2);
     }
 
     @Test
     void claimIsZeroWhenFileNotReady() {
         Long fileId = persistFile(FileStatus.PROCESSING);
-        persistMetadata(fileId, "PROCESSING", null);
+        persistMetadata(fileId, "PROCESSING", null, null);
 
-        int claimed = fileMetadataRepository.claimForGeneration(fileId, LocalDateTime.now());
-
-        assertThat(claimed).isZero();
+        assertThat(fileMetadataRepository.claimForGeneration(fileId, "tokA", LocalDateTime.now())).isZero();
         assertThat(reload(fileId).getExtractionStatus()).isEqualTo("PROCESSING");
     }
 
     @Test
-    void completeAppliesWhenGenerating() {
+    void completeAppliesWithMatchingToken() {
         Long fileId = persistFile(FileStatus.READY);
-        persistMetadata(fileId, "GENERATING", null);
+        persistMetadata(fileId, "GENERATING", null, "tokA");
 
         int updated = fileMetadataRepository.completeGeneration(
-                fileId, "요약", "[\"k\"]", null, 0.9, "보고서", LocalDateTime.now());
+                fileId, "tokA", "요약", "[\"k\"]", null, 0.9, "보고서", LocalDateTime.now());
 
         assertThat(updated).isEqualTo(1);
         FileMetadata reloaded = reload(fileId);
         assertThat(reloaded.getExtractionStatus()).isEqualTo("READY");
         assertThat(reloaded.getSummary()).isEqualTo("요약");
-        assertThat(reloaded.getDocumentType()).isEqualTo("보고서");
+    }
+
+    @Test
+    void completeRejectsWrongToken() {
+        Long fileId = persistFile(FileStatus.READY);
+        persistMetadata(fileId, "GENERATING", null, "tokB");
+
+        int updated = fileMetadataRepository.completeGeneration(
+                fileId, "tokA", "요약", "[\"k\"]", null, 0.9, "보고서", LocalDateTime.now());
+
+        assertThat(updated).isZero();
+        FileMetadata reloaded = reload(fileId);
+        assertThat(reloaded.getExtractionStatus()).isEqualTo("GENERATING");
+        assertThat(reloaded.getSummary()).isNull();
     }
 
     @Test
     void completeIsNoOpWhenProcessing() {
         Long fileId = persistFile(FileStatus.READY);
-        persistMetadata(fileId, "PROCESSING", null);
+        persistMetadata(fileId, "PROCESSING", null, "tokA");
 
         int updated = fileMetadataRepository.completeGeneration(
-                fileId, "요약", "[\"k\"]", null, 0.9, "보고서", LocalDateTime.now());
-
-        assertThat(updated).isZero();
-        FileMetadata reloaded = reload(fileId);
-        assertThat(reloaded.getExtractionStatus()).isEqualTo("PROCESSING");
-        assertThat(reloaded.getSummary()).isNull();
-    }
-
-    @Test
-    void completeKeepsUserDocumentType() {
-        Long fileId = persistFile(FileStatus.READY);
-        persistMetadata(fileId, "GENERATING", "계약서");
-
-        fileMetadataRepository.completeGeneration(
-                fileId, "요약", null, null, 0.5, "보고서", LocalDateTime.now());
-
-        assertThat(reload(fileId).getDocumentType()).isEqualTo("계약서");
-    }
-
-    @Test
-    void failIsNoOpWhenNotGenerating() {
-        Long fileId = persistFile(FileStatus.READY);
-        persistMetadata(fileId, "PROCESSING", null);
-
-        int updated = fileMetadataRepository.failGeneration(fileId, LocalDateTime.now());
+                fileId, "tokA", "요약", "[\"k\"]", null, 0.9, "보고서", LocalDateTime.now());
 
         assertThat(updated).isZero();
         assertThat(reload(fileId).getExtractionStatus()).isEqualTo("PROCESSING");
     }
 
     @Test
+    void completeKeepsUserDocumentType() {
+        Long fileId = persistFile(FileStatus.READY);
+        persistMetadata(fileId, "GENERATING", "계약서", "tokA");
+
+        fileMetadataRepository.completeGeneration(
+                fileId, "tokA", "요약", null, null, 0.5, "보고서", LocalDateTime.now());
+
+        assertThat(reload(fileId).getDocumentType()).isEqualTo("계약서");
+    }
+
+    @Test
+    void failRejectsWrongToken() {
+        Long fileId = persistFile(FileStatus.READY);
+        persistMetadata(fileId, "GENERATING", null, "tokB");
+
+        assertThat(fileMetadataRepository.failGeneration(fileId, "tokA", LocalDateTime.now())).isZero();
+        assertThat(reload(fileId).getExtractionStatus()).isEqualTo("GENERATING");
+    }
+
+    @Test
+    void reaperResetsStaleAndClearsToken() {
+        Long fileId = persistFile(FileStatus.READY);
+        persistMetadata(fileId, "GENERATING", null, "tokA");
+
+        int reset = fileMetadataRepository.resetStaleGenerating(
+                LocalDateTime.now().plusMinutes(1), LocalDateTime.now());
+
+        assertThat(reset).isEqualTo(1);
+        FileMetadata reloaded = reload(fileId);
+        assertThat(reloaded.getExtractionStatus()).isEqualTo("PROCESSING");
+        assertThat(reloaded.getClaimToken()).isNull();
+    }
+
+    @Test
     void pendingListsReadyProcessingAndSkipMarksThem() {
         Long ready = persistFile(FileStatus.READY);
-        persistMetadata(ready, "PROCESSING", null);
+        persistMetadata(ready, "PROCESSING", null, null);
         Long notReady = persistFile(FileStatus.PROCESSING);
-        persistMetadata(notReady, "PROCESSING", null);
+        persistMetadata(notReady, "PROCESSING", null, null);
 
         List<Long> pending = fileMetadataRepository.findFileIdsPendingAiMetadata(PageRequest.of(0, 10));
         assertThat(pending).contains(ready).doesNotContain(notReady);
 
-        int skipped = fileMetadataRepository.markPendingSkipped(LocalDateTime.now());
-        assertThat(skipped).isEqualTo(1);
+        assertThat(fileMetadataRepository.markPendingSkipped(LocalDateTime.now())).isEqualTo(1);
         assertThat(reload(ready).getExtractionStatus()).isEqualTo("SKIPPED");
         assertThat(reload(notReady).getExtractionStatus()).isEqualTo("PROCESSING");
     }

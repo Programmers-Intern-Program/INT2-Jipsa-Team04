@@ -18,13 +18,13 @@ public interface FileMetadataRepository extends JpaRepository<FileMetadata, Long
     List<Long> findFileIdsPendingAiMetadata(Pageable pageable);
 
     @Modifying(clearAutomatically = true)
-    @Query("update FileMetadata m set m.extractionStatus = 'GENERATING', "
+    @Query("update FileMetadata m set m.extractionStatus = 'GENERATING', m.claimToken = :token, "
             + "m.extractionIndexVersion = (select max(c.indexVersion) from Chunk c where c.fileId = m.fileId), "
             + "m.updatedAt = :now "
             + "where m.fileId = :id and m.extractionStatus = 'PROCESSING' "
             + "and exists (select f.id from File f where f.id = m.fileId "
             + "and f.status = com.jipsa.file.FileStatus.READY and f.deletedAt is null)")
-    int claimForGeneration(@Param("id") Long id, @Param("now") LocalDateTime now);
+    int claimForGeneration(@Param("id") Long id, @Param("token") String token, @Param("now") LocalDateTime now);
 
     @Modifying(clearAutomatically = true)
     @Query("update FileMetadata m set m.summary = :summary, m.keywords = :keywords, "
@@ -32,19 +32,19 @@ public interface FileMetadataRepository extends JpaRepository<FileMetadata, Long
             + "m.documentType = case when m.documentType is null or m.documentType = '' "
             + "then :documentType else m.documentType end, "
             + "m.extractionStatus = 'READY', m.updatedAt = :now "
-            + "where m.fileId = :id and m.extractionStatus = 'GENERATING'")
-    int completeGeneration(@Param("id") Long id, @Param("summary") String summary,
-                           @Param("keywords") String keywords, @Param("entities") String entities,
-                           @Param("confidence") Double confidence, @Param("documentType") String documentType,
-                           @Param("now") LocalDateTime now);
+            + "where m.fileId = :id and m.extractionStatus = 'GENERATING' and m.claimToken = :token")
+    int completeGeneration(@Param("id") Long id, @Param("token") String token,
+                           @Param("summary") String summary, @Param("keywords") String keywords,
+                           @Param("entities") String entities, @Param("confidence") Double confidence,
+                           @Param("documentType") String documentType, @Param("now") LocalDateTime now);
 
     @Modifying(clearAutomatically = true)
     @Query("update FileMetadata m set m.extractionStatus = 'FAILED', m.updatedAt = :now "
-            + "where m.fileId = :id and m.extractionStatus = 'GENERATING'")
-    int failGeneration(@Param("id") Long id, @Param("now") LocalDateTime now);
+            + "where m.fileId = :id and m.extractionStatus = 'GENERATING' and m.claimToken = :token")
+    int failGeneration(@Param("id") Long id, @Param("token") String token, @Param("now") LocalDateTime now);
 
     @Modifying(clearAutomatically = true)
-    @Query("update FileMetadata m set m.extractionStatus = 'PROCESSING', m.updatedAt = :now "
+    @Query("update FileMetadata m set m.extractionStatus = 'PROCESSING', m.claimToken = null, m.updatedAt = :now "
             + "where m.extractionStatus = 'GENERATING' and m.updatedAt < :threshold")
     int resetStaleGenerating(@Param("threshold") LocalDateTime threshold, @Param("now") LocalDateTime now);
 
