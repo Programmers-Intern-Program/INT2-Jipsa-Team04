@@ -334,9 +334,7 @@ def _convert_message_to_result(
         # 노출하지 않는다.
         raise InvalidGenerationResponseError(
             provider=_ANTHROPIC_PROVIDER,
-            reason=(
-                "response does not satisfy the internal generation result contract"
-            ),
+            reason=("response does not satisfy the internal generation result contract"),
         ) from error
 
 
@@ -370,9 +368,7 @@ def _parse_structured_output(
     if stop_reason in _STRUCTURED_OUTPUT_INVALID_STOP_REASONS:
         raise InvalidGenerationResponseError(
             provider=_ANTHROPIC_PROVIDER,
-            reason=(
-                "structured output did not complete with a schema-valid response"
-            ),
+            reason=("structured output did not complete with a schema-valid response"),
         )
 
     try:

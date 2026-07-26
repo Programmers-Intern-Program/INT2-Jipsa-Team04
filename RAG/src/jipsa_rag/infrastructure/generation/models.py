@@ -84,21 +84,14 @@ class GenerationRequest:
                 field_name="system_prompt",
             )
 
-        if (
-            self.max_output_tokens is not None
-            and self.max_output_tokens <= 0
-        ):
-            raise ValueError(
-                "max_output_tokens must be greater than zero when provided."
-            )
+        if self.max_output_tokens is not None and self.max_output_tokens <= 0:
+            raise ValueError("max_output_tokens must be greater than zero when provided.")
 
         if self.output_schema is None:
             return
 
         if not self.output_schema:
-            raise ValueError(
-                "output_schema must not be empty when provided."
-            )
+            raise ValueError("output_schema must not be empty when provided.")
 
         object.__setattr__(
             self,
@@ -120,14 +113,10 @@ class GenerationUsage:
         """토큰 사용량이 음수가 아닌지 검증한다."""
 
         if self.input_tokens < 0:
-            raise ValueError(
-                "input_tokens must be greater than or equal to zero."
-            )
+            raise ValueError("input_tokens must be greater than or equal to zero.")
 
         if self.output_tokens < 0:
-            raise ValueError(
-                "output_tokens must be greater than or equal to zero."
-            )
+            raise ValueError("output_tokens must be greater than or equal to zero.")
 
     @property
     def total_tokens(self) -> int:
@@ -183,9 +172,7 @@ class GenerationResult:
             normalized_stop_reason = self.stop_reason.strip()
 
             if not normalized_stop_reason:
-                raise ValueError(
-                    "stop_reason must not be empty when provided."
-                )
+                raise ValueError("stop_reason must not be empty when provided.")
 
             object.__setattr__(
                 self,

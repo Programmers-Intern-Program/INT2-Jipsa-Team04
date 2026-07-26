@@ -210,9 +210,7 @@ class GenerationSettings(BaseSettings):
             raise ValueError("Anthropic API Key에는 공백 문자를 포함할 수 없습니다.")
 
         if normalized_value.casefold() in _ANTHROPIC_API_KEY_PLACEHOLDERS:
-            raise ValueError(
-                "Anthropic API Key에 예시용 placeholder를 사용할 수 없습니다."
-            )
+            raise ValueError("Anthropic API Key에 예시용 placeholder를 사용할 수 없습니다.")
 
         return normalized_value
 

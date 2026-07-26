@@ -153,6 +153,46 @@ _SYNTHESIS_SYSTEM_PROMPT: Final[str] = """당신은 Jipsa의 다중 PDF 종합 �
 11. 구조화 출력 스키마에 정의되지 않은 필드는 추가하지 않습니다.
 """
 
+# PDF별 부분 생성은 전체 다문서 질문을 한 PDF만으로 모두 해결하는 단계가
+# 아니다. 현재 PDF가 전체 질문의 일부 하위 항목만 뒷받침하더라도 그 근거를
+# 보존해야 최종 종합 단계에서 다른 PDF의 부분 결과와 결합할 수 있다.
+#
+# 기존 RagPromptBuilder의 보안·인용·구조화 출력 규칙은 그대로 유지하면서
+# 아래 시스템 규칙을 추가하여 부분 단계의 ``insufficient_evidence`` 판정을
+# "전체 질문을 모두 답할 수 있는가"가 아니라
+# "현재 PDF가 질문의 하위 항목 하나라도 직접 뒷받침하는가"로 명확히 한다.
+_PARTIAL_SYNTHESIS_SYSTEM_PROMPT_APPENDIX: Final[
+    str
+] = """현재 호출은 다중 PDF 최종 답변을 만들기 전의 PDF별 부분 근거 추출 단계입니다.
+
+반드시 다음 부분 생성 규칙을 추가로 지키세요.
+
+1. 현재 document_sources_json에는 선택된 PDF 중 정확히 한 PDF의 근거만 들어 있습니다.
+2. 사용자 질문을 여러 개의 사실 요청 또는 하위 항목으로 나누어 판단합니다.
+3. 현재 PDF가 질문의 하위 항목 하나 이상을 직접 뒷받침하면 status를 answered로 설정합니다.
+4. 다른 PDF가 있어야 나머지 하위 항목을 답할 수 있다는 이유만으로 현재 부분 답변 전체를
+   insufficient_evidence로 처리하지 않습니다.
+5. answered인 경우 현재 PDF에서 직접 확인되는 하위 항목만 답하고, 확인되지 않는 항목은
+   추측하거나 다른 PDF의 내용인 것처럼 작성하지 않습니다.
+6. 현재 PDF가 사용자 질문의 어떤 하위 항목도 직접 뒷받침하지 못할 때만
+   insufficient_evidence를 반환합니다.
+7. 이 단계의 답변은 최종 사용자 답변이 아니라 검증된 중간 결과이며,
+   이후 최종 종합 단계가 다른 PDF의 부분 결과와 결합합니다.
+"""
+
+# 동일한 계약을 사용자 프롬프트 끝에도 짧게 반복한다.
+#
+# 시스템 프롬프트가 최우선 규칙이지만, 문서 JSON 바로 뒤에서 현재 작업의
+# 목적을 다시 명시하면 모델이 전체 질문 완결성을 부분 단계의 성공 조건으로
+# 오해할 가능성을 줄일 수 있다.
+_PARTIAL_SYNTHESIS_USER_PROMPT_SUFFIX: Final[str] = """<partial_synthesis_stage>
+현재 PDF에서 직접 확인되는 사용자 질문의 하위 항목만 부분 답변으로 추출하세요.
+현재 PDF가 하위 항목 하나 이상을 뒷받침하면 answered를 반환하고,
+다른 PDF가 필요한 나머지 항목 때문에 전체를 insufficient_evidence로 처리하지 마세요.
+현재 PDF가 어떤 하위 항목도 뒷받침하지 못할 때만 insufficient_evidence를 반환하세요.
+</partial_synthesis_stage>
+"""
+
 
 class RagQueryType(StrEnum):
     """RAG 답변 처리 전략을 선택하는 질의 유형."""
@@ -488,14 +528,17 @@ class SynthesisContextPolicy:
         if not groups:
             return ()
 
-        selected_by_file_idx: dict[int, list[ChunkSearchResult]] = {
-            group.file_idx: [] for group in groups
-        }
+        selected_by_file_idx: dict[
+            int,
+            list[ChunkSearchResult],
+        ] = {group.file_idx: [] for group in groups}
         remaining_context_chars = self.max_total_context_chars
 
         # 각 PDF에서 같은 순번의 청크를 한 번씩 선택한 뒤 다음 순번으로
         # 넘어가므로 가능한 범위에서 모든 선택 PDF에 근거를 배분한다.
-        for chunk_position in range(self.max_chunks_per_pdf):
+        for chunk_position in range(
+            self.max_chunks_per_pdf,
+        ):
             if remaining_context_chars <= 0:
                 break
 
@@ -503,7 +546,9 @@ class SynthesisContextPolicy:
                 if remaining_context_chars <= 0:
                     break
 
-                if chunk_position >= len(group.chunks):
+                if chunk_position >= len(
+                    group.chunks,
+                ):
                     continue
 
                 chunk = group.chunks[chunk_position]
@@ -541,7 +586,9 @@ class SynthesisContextPolicy:
                 selected_by_file_idx[group.file_idx].append(
                     selected_chunk,
                 )
-                remaining_context_chars -= len(limited_content)
+                remaining_context_chars -= len(
+                    limited_content,
+                )
 
         return tuple(
             PdfChunkGroup(
@@ -588,10 +635,14 @@ class RagPartialAnswer:
         source_ids = tuple(source.source_id for source in self.sources)
         chunk_ids = tuple(source.chunk_id for source in self.sources)
 
-        if len(source_ids) != len(set(source_ids)):
+        if len(source_ids) != len(
+            set(source_ids),
+        ):
             raise ValueError("Partial answer source IDs must be unique.")
 
-        if len(chunk_ids) != len(set(chunk_ids)):
+        if len(chunk_ids) != len(
+            set(chunk_ids),
+        ):
             raise ValueError("Partial answer chunk IDs must be unique.")
 
 
@@ -667,7 +718,7 @@ class RoutedRagAnswerService(RagAnswerService):
             _LOGGER.error(
                 "RAG query classification failed.",
                 extra={
-                    "event": "rag_query_classification_failed",
+                    "event": ("rag_query_classification_failed"),
                     "user_idx": request_snapshot.user_idx,
                     "reference_file_count": len(
                         request_snapshot.reference_file_idxs,
@@ -726,9 +777,11 @@ class RoutedRagAnswerService(RagAnswerService):
             _LOGGER.error(
                 "RAG synthesis context limiting failed.",
                 extra={
-                    "event": "rag_synthesis_context_limit_failed",
+                    "event": ("rag_synthesis_context_limit_failed"),
                     "user_idx": request.user_idx,
-                    "pdf_group_count": len(pdf_groups),
+                    "pdf_group_count": len(
+                        pdf_groups,
+                    ),
                 },
             )
 
@@ -746,11 +799,16 @@ class RoutedRagAnswerService(RagAnswerService):
 
         if not partial_answers:
             _LOGGER.info(
-                "RAG synthesis skipped final generation because partial evidence was unavailable.",
+                (
+                    "RAG synthesis skipped final generation because "
+                    "partial evidence was unavailable."
+                ),
                 extra={
-                    "event": "rag_synthesis_partial_evidence_unavailable",
+                    "event": ("rag_synthesis_partial_evidence_unavailable"),
                     "user_idx": request.user_idx,
-                    "pdf_group_count": len(limited_groups),
+                    "pdf_group_count": len(
+                        limited_groups,
+                    ),
                     "partial_answer_count": 0,
                 },
             )
@@ -763,7 +821,7 @@ class RoutedRagAnswerService(RagAnswerService):
             selected_file_idxs=selected_file_idxs,
         )
         final_generation_result = await self._generate_answer(
-            request=final_prompt_result.generation_request,
+            request=(final_prompt_result.generation_request),
             user_idx=request.user_idx,
         )
         response = self._build_answer_response(
@@ -781,13 +839,17 @@ class RoutedRagAnswerService(RagAnswerService):
         _LOGGER.info(
             "RAG synthesis generation completed.",
             extra={
-                "event": "rag_synthesis_generation_completed",
+                "event": ("rag_synthesis_generation_completed"),
                 "user_idx": request.user_idx,
                 "reference_file_count": len(
                     request.reference_file_idxs,
                 ),
-                "partial_answer_count": len(partial_answers),
-                "final_source_count": len(response.sources),
+                "partial_answer_count": len(
+                    partial_answers,
+                ),
+                "final_source_count": len(
+                    response.sources,
+                ),
                 "answer_status": response.status.value,
             },
         )
@@ -813,7 +875,7 @@ class RoutedRagAnswerService(RagAnswerService):
                 reference_file_idxs=(file_idx,),
                 query=request.query,
                 top_k=per_pdf_top_k,
-                score_threshold=request.score_threshold,
+                score_threshold=(request.score_threshold),
             )
             search_response = await self._search_chunks(
                 request=search_request,
@@ -838,7 +900,7 @@ class RoutedRagAnswerService(RagAnswerService):
             _LOGGER.info(
                 "RAG synthesis search completed without evidence.",
                 extra={
-                    "event": "rag_synthesis_search_completed",
+                    "event": ("rag_synthesis_search_completed"),
                     "user_idx": request.user_idx,
                     "reference_file_count": len(
                         request.reference_file_idxs,
@@ -852,18 +914,22 @@ class RoutedRagAnswerService(RagAnswerService):
 
         chunk_ids = tuple(chunk.chunk_id for chunk in collected_chunks)
 
-        if len(chunk_ids) != len(set(chunk_ids)):
+        if len(chunk_ids) != len(
+            set(chunk_ids),
+        ):
             _LOGGER.error(
-                "RAG synthesis search returned duplicate chunk IDs.",
+                ("RAG synthesis search returned duplicate chunk IDs."),
                 extra={
-                    "event": "rag_synthesis_search_contract_failed",
+                    "event": ("rag_synthesis_search_contract_failed"),
                     "user_idx": request.user_idx,
-                    "result_count": len(collected_chunks),
+                    "result_count": len(
+                        collected_chunks,
+                    ),
                 },
             )
 
             raise RagAnswerServiceError(
-                operation="synthesis_duplicate_chunk_contract_violation",
+                operation=("synthesis_duplicate_chunk_contract_violation"),
             )
 
         original_chunks = tuple(
@@ -884,9 +950,11 @@ class RoutedRagAnswerService(RagAnswerService):
             _LOGGER.error(
                 "RAG synthesis routing failed.",
                 extra={
-                    "event": "rag_synthesis_routing_failed",
+                    "event": ("rag_synthesis_routing_failed"),
                     "user_idx": request.user_idx,
-                    "result_count": len(original_chunks),
+                    "result_count": len(
+                        original_chunks,
+                    ),
                 },
             )
 
@@ -902,7 +970,9 @@ class RoutedRagAnswerService(RagAnswerService):
                 "reference_file_count": len(
                     request.reference_file_idxs,
                 ),
-                "result_count": len(original_chunks),
+                "result_count": len(
+                    original_chunks,
+                ),
                 "pdf_group_count": len(
                     routing_plan.pdf_groups,
                 ),
@@ -923,12 +993,22 @@ class RoutedRagAnswerService(RagAnswerService):
         next_global_source_number = 1
 
         for group in groups:
-            prompt_result = self._build_prompt(
+            base_prompt_result = self._build_prompt(
                 request=request,
                 chunks=group.chunks,
             )
+
+            # 기존 RagPromptBuilder가 제공하는 문서 격리, 프롬프트 주입 방어,
+            # SOURCE-N 및 구조화 출력 계약은 그대로 사용한다.
+            #
+            # 여기에 PDF별 부분 생성의 성공 기준만 추가하여, 현재 PDF가 전체
+            # 다문서 질문의 일부 하위 항목을 뒷받침하는 경우 그 근거가 최종
+            # 종합 단계까지 보존되도록 한다.
+            prompt_result = _build_partial_synthesis_prompt(
+                base_prompt_result,
+            )
             generation_result = await self._generate_answer(
-                request=prompt_result.generation_request,
+                request=(prompt_result.generation_request),
                 user_idx=request.user_idx,
             )
             partial_response = self._build_answer_response(
@@ -939,9 +1019,9 @@ class RoutedRagAnswerService(RagAnswerService):
 
             if partial_response.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE:
                 _LOGGER.info(
-                    "RAG synthesis PDF partial answer lacked evidence.",
+                    ("RAG synthesis PDF partial answer lacked evidence."),
                     extra={
-                        "event": "rag_synthesis_partial_insufficient_evidence",
+                        "event": ("rag_synthesis_partial_insufficient_evidence"),
                         "user_idx": request.user_idx,
                         "partial_source_count": 0,
                     },
@@ -952,7 +1032,7 @@ class RoutedRagAnswerService(RagAnswerService):
             partial_answer = _remap_partial_answer_sources(
                 group=group,
                 response=partial_response,
-                first_global_source_number=next_global_source_number,
+                first_global_source_number=(next_global_source_number),
             )
             next_global_source_number += len(
                 partial_answer.sources,
@@ -962,9 +1042,9 @@ class RoutedRagAnswerService(RagAnswerService):
             )
 
             _LOGGER.info(
-                "RAG synthesis PDF partial answer completed.",
+                ("RAG synthesis PDF partial answer completed."),
                 extra={
-                    "event": "rag_synthesis_partial_completed",
+                    "event": ("rag_synthesis_partial_completed"),
                     "user_idx": request.user_idx,
                     "partial_source_count": len(
                         partial_answer.sources,
@@ -972,7 +1052,9 @@ class RoutedRagAnswerService(RagAnswerService):
                 },
             )
 
-        return tuple(partial_answers)
+        return tuple(
+            partial_answers,
+        )
 
     def _build_final_synthesis_prompt(
         self,
@@ -993,14 +1075,16 @@ class RoutedRagAnswerService(RagAnswerService):
             _LOGGER.error(
                 "RAG synthesis final prompt build failed.",
                 extra={
-                    "event": "rag_synthesis_final_prompt_build_failed",
+                    "event": ("rag_synthesis_final_prompt_build_failed"),
                     "user_idx": request.user_idx,
-                    "partial_answer_count": len(partial_answers),
+                    "partial_answer_count": len(
+                        partial_answers,
+                    ),
                 },
             )
 
             raise RagAnswerServiceError(
-                operation="synthesis_final_prompt_build_failed",
+                operation=("synthesis_final_prompt_build_failed"),
             ) from None
 
     def _validate_final_source_scope(
@@ -1020,18 +1104,22 @@ class RoutedRagAnswerService(RagAnswerService):
             return
 
         _LOGGER.error(
-            "RAG synthesis final source scope contract failed.",
+            ("RAG synthesis final source scope contract failed."),
             extra={
-                "event": "rag_synthesis_final_source_scope_failed",
+                "event": ("rag_synthesis_final_source_scope_failed"),
                 "user_idx": user_idx,
-                "selected_file_count": len(selected_file_idxs),
-                "source_count": len(response.sources),
-                "out_of_scope_source_count": out_of_scope_source_count,
+                "selected_file_count": len(
+                    selected_file_idxs,
+                ),
+                "source_count": len(
+                    response.sources,
+                ),
+                "out_of_scope_source_count": (out_of_scope_source_count),
             },
         )
 
         raise RagAnswerServiceError(
-            operation="synthesis_final_source_scope_contract_violation",
+            operation=("synthesis_final_source_scope_contract_violation"),
         )
 
 
@@ -1052,8 +1140,14 @@ def group_chunks_by_pdf(
     if not chunks:
         raise ValueError("At least one chunk is required for PDF grouping.")
 
-    grouped_chunks: dict[int, list[ChunkSearchResult]] = {}
-    group_metadata: dict[int, tuple[int, str]] = {}
+    grouped_chunks: dict[
+        int,
+        list[ChunkSearchResult],
+    ] = {}
+    group_metadata: dict[
+        int,
+        tuple[int, str],
+    ] = {}
 
     for chunk in chunks:
         if chunk.file_type != SupportedFileType.PDF:
@@ -1068,7 +1162,7 @@ def group_chunks_by_pdf(
         )
 
         if existing_metadata is not None and existing_metadata != metadata:
-            raise ValueError("Chunks for one file_idx must share document metadata.")
+            raise ValueError(("Chunks for one file_idx must share document metadata."))
 
         if existing_metadata is None:
             group_metadata[chunk.file_idx] = metadata
@@ -1081,9 +1175,11 @@ def group_chunks_by_pdf(
     return tuple(
         PdfChunkGroup(
             file_idx=file_idx,
-            rag_document_idx=group_metadata[file_idx][0],
-            file_name=group_metadata[file_idx][1],
-            chunks=tuple(file_chunks),
+            rag_document_idx=(group_metadata[file_idx][0]),
+            file_name=(group_metadata[file_idx][1]),
+            chunks=tuple(
+                file_chunks,
+            ),
         )
         for file_idx, file_chunks in grouped_chunks.items()
     )
@@ -1110,19 +1206,23 @@ def _validate_routing_plan(
     """라우터가 검색 청크를 추가·누락하거나 lookup 순서를 바꾸지 못하게 한다."""
 
     if routing_plan.query_type is not query_type:
-        raise ValueError("Routing plan query type does not match classification.")
+        raise ValueError(("Routing plan query type does not match classification."))
 
     original_chunk_ids = tuple(chunk.chunk_id for chunk in original_chunks)
     routed_chunk_ids = tuple(chunk.chunk_id for chunk in routing_plan.prompt_chunks)
 
-    if len(original_chunk_ids) != len(routed_chunk_ids):
-        raise ValueError("Routing plan must preserve the search result count.")
+    if len(original_chunk_ids) != len(
+        routed_chunk_ids,
+    ):
+        raise ValueError(("Routing plan must preserve the search result count."))
 
-    if sorted(original_chunk_ids) != sorted(routed_chunk_ids):
-        raise ValueError("Routing plan must preserve the search result chunk IDs.")
+    if sorted(original_chunk_ids) != sorted(
+        routed_chunk_ids,
+    ):
+        raise ValueError(("Routing plan must preserve the search result chunk IDs."))
 
     if query_type is RagQueryType.LOOKUP and routing_plan.prompt_chunks != original_chunks:
-        raise ValueError("Lookup routing must preserve the original chunk order.")
+        raise ValueError(("Lookup routing must preserve the original chunk order."))
 
 
 def _to_chunk_search_request(
@@ -1132,7 +1232,7 @@ def _to_chunk_search_request(
 
     return ChunkSearchRequest(
         user_idx=request.user_idx,
-        reference_file_idxs=request.reference_file_idxs,
+        reference_file_idxs=(request.reference_file_idxs),
         query=request.query,
         top_k=request.top_k,
         score_threshold=request.score_threshold,
@@ -1152,10 +1252,14 @@ def _truncate_context(
     if len(value) <= max_chars:
         return value
 
-    if max_chars <= len(_TRUNCATION_MARKER):
+    if max_chars <= len(
+        _TRUNCATION_MARKER,
+    ):
         return _TRUNCATION_MARKER[:max_chars]
 
-    content_limit = max_chars - len(_TRUNCATION_MARKER)
+    content_limit = max_chars - len(
+        _TRUNCATION_MARKER,
+    )
 
     return f"{value[:content_limit].rstrip()}{_TRUNCATION_MARKER}"
 
@@ -1169,16 +1273,19 @@ def _remap_partial_answer_sources(
     """PDF 로컬 SOURCE-N을 요청 전체에서 유일한 전역 SOURCE-N으로 변환한다."""
 
     if response.status is not RagAnswerStatus.ANSWERED:
-        raise ValueError("Only answered partial responses can be remapped.")
+        raise ValueError(("Only answered partial responses can be remapped."))
 
-    source_id_mapping: dict[str, str] = {}
+    source_id_mapping: dict[
+        str,
+        str,
+    ] = {}
     remapped_sources: list[RagAnswerSource] = []
 
     for source_offset, source in enumerate(
         response.sources,
     ):
         if source.file_idx != group.file_idx:
-            raise ValueError("Partial response source escaped its PDF group.")
+            raise ValueError(("Partial response source escaped its PDF group."))
 
         global_source_id = f"SOURCE-{first_global_source_number + source_offset}"
         source_id_mapping[source.source_id] = global_source_id
@@ -1200,7 +1307,9 @@ def _remap_partial_answer_sources(
         rag_document_idx=group.rag_document_idx,
         file_name=group.file_name,
         answer=remapped_answer,
-        sources=tuple(remapped_sources),
+        sources=tuple(
+            remapped_sources,
+        ),
     )
 
 
@@ -1222,13 +1331,54 @@ def _replace_answer_source_ids(
         )
 
         if global_source_id is None:
-            raise ValueError("Partial answer contained an unmapped source ID.")
+            raise ValueError(("Partial answer contained an unmapped source ID."))
 
         return f"[{global_source_id}]"
 
     return _SOURCE_CITATION_PATTERN.sub(
         replace_match,
         answer,
+    )
+
+
+def _build_partial_synthesis_prompt(
+    prompt_result: RagPromptBuildResult,
+) -> RagPromptBuildResult:
+    """기존 단일 PDF 프롬프트에 부분 생성 전용 판정 규칙을 추가한다.
+
+    ``RagPromptBuilder``가 생성한 출처 후보와 JSON Schema는 변경하지 않는다.
+    시스템·사용자 프롬프트에 부분 단계의 역할만 추가하고 요청 단위 출력 토큰
+    제한도 그대로 전달한다.
+
+    이 변환이 필요한 이유는 전체 다문서 질문을 각 PDF에 그대로 전달하면
+    개별 PDF가 질문의 모든 하위 항목을 포함하지 않는다는 이유로 모델이
+    ``insufficient_evidence``를 반환할 수 있기 때문이다. 현재 PDF가 질문의
+    일부를 직접 뒷받침한다면 ``answered``로 보존해야 최종 종합 단계가 다른
+    PDF의 부분 결과와 결합할 수 있다.
+    """
+
+    generation_request = prompt_result.generation_request
+    base_system_prompt = generation_request.system_prompt
+
+    if base_system_prompt is None:
+        partial_system_prompt = _PARTIAL_SYNTHESIS_SYSTEM_PROMPT_APPENDIX
+    else:
+        partial_system_prompt = (
+            f"{base_system_prompt.rstrip()}\n\n{_PARTIAL_SYNTHESIS_SYSTEM_PROMPT_APPENDIX}"
+        )
+
+    partial_user_prompt = (
+        f"{generation_request.user_prompt.rstrip()}\n\n{_PARTIAL_SYNTHESIS_USER_PROMPT_SUFFIX}"
+    )
+
+    return RagPromptBuildResult(
+        generation_request=GenerationRequest(
+            system_prompt=partial_system_prompt,
+            user_prompt=partial_user_prompt,
+            output_schema=(generation_request.output_schema),
+            max_output_tokens=(generation_request.max_output_tokens),
+        ),
+        sources=prompt_result.sources,
     )
 
 
@@ -1241,7 +1391,7 @@ def _build_synthesis_prompt(
     """검증된 부분 답변과 전역 출처 메타데이터를 최종 생성 요청으로 만든다."""
 
     if not partial_answers:
-        raise ValueError("At least one partial answer is required for synthesis.")
+        raise ValueError(("At least one partial answer is required for synthesis."))
 
     prompt_partial_answers: list[dict[str, object]] = []
     final_sources: list[RagAnswerSource] = []
@@ -1250,19 +1400,19 @@ def _build_synthesis_prompt(
 
     for partial_answer in partial_answers:
         if partial_answer.file_idx not in selected_file_idxs:
-            raise ValueError("Partial answer belongs to an unselected PDF.")
+            raise ValueError(("Partial answer belongs to an unselected PDF."))
 
         prompt_sources: list[dict[str, object]] = []
 
         for source in partial_answer.sources:
             if source.file_idx not in selected_file_idxs:
-                raise ValueError("Partial answer source belongs to an unselected PDF.")
+                raise ValueError(("Partial answer source belongs to an unselected PDF."))
 
             if source.source_id in seen_source_ids:
-                raise ValueError("Synthesis source IDs must be unique.")
+                raise ValueError(("Synthesis source IDs must be unique."))
 
             if source.chunk_id in seen_chunk_ids:
-                raise ValueError("Synthesis source chunk IDs must be unique.")
+                raise ValueError(("Synthesis source chunk IDs must be unique."))
 
             seen_source_ids.add(
                 source.source_id,
@@ -1281,17 +1431,17 @@ def _build_synthesis_prompt(
 
         prompt_partial_answers.append(
             {
-                "file_idx": partial_answer.file_idx,
-                "rag_document_idx": partial_answer.rag_document_idx,
-                "file_name": partial_answer.file_name,
-                "partial_answer": partial_answer.answer,
+                "file_idx": (partial_answer.file_idx),
+                "rag_document_idx": (partial_answer.rag_document_idx),
+                "file_name": (partial_answer.file_name),
+                "partial_answer": (partial_answer.answer),
                 "cited_source_ids": [source.source_id for source in partial_answer.sources],
-                "source_metadata": prompt_sources,
+                "source_metadata": (prompt_sources),
             }
         )
 
     if not final_sources:
-        raise ValueError("Synthesis prompt must contain at least one actual source.")
+        raise ValueError(("Synthesis prompt must contain at least one actual source."))
 
     question_json = _serialize_untrusted_json(
         {
@@ -1323,11 +1473,13 @@ def _build_synthesis_prompt(
 
     return RagPromptBuildResult(
         generation_request=GenerationRequest(
-            system_prompt=_SYNTHESIS_SYSTEM_PROMPT,
+            system_prompt=(_SYNTHESIS_SYSTEM_PROMPT),
             user_prompt=user_prompt,
-            output_schema=_SYNTHESIS_OUTPUT_SCHEMA,
+            output_schema=(_SYNTHESIS_OUTPUT_SCHEMA),
         ),
-        sources=tuple(final_sources),
+        sources=tuple(
+            final_sources,
+        ),
     )
 
 
@@ -1336,14 +1488,17 @@ def _to_synthesis_source_metadata(
 ) -> dict[str, object]:
     """최종 종합 모델에 원문 없이 인용 식별 및 위치 메타데이터만 제공한다."""
 
-    metadata: dict[str, object] = {
+    metadata: dict[
+        str,
+        object,
+    ] = {
         "source_id": source.source_id,
         "chunk_id": source.chunk_id,
-        "rag_document_idx": source.rag_document_idx,
+        "rag_document_idx": (source.rag_document_idx),
         "file_idx": source.file_idx,
         "file_name": source.file_name,
-        "file_type": source.file_type.value,
-        "chunk_index": source.chunk_index,
+        "file_type": (source.file_type.value),
+        "chunk_index": (source.chunk_index),
     }
 
     if source.folder_idx is not None:
@@ -1366,10 +1521,26 @@ def _serialize_untrusted_json(
     serialized = json.dumps(
         value,
         ensure_ascii=False,
-        separators=(",", ":"),
+        separators=(
+            ",",
+            ":",
+        ),
     )
 
-    return serialized.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
+    return (
+        serialized.replace(
+            "&",
+            "\\u0026",
+        )
+        .replace(
+            "<",
+            "\\u003c",
+        )
+        .replace(
+            ">",
+            "\\u003e",
+        )
+    )
 
 
 def _build_insufficient_evidence_response() -> RagAnswerResponse:
@@ -1377,5 +1548,5 @@ def _build_insufficient_evidence_response() -> RagAnswerResponse:
 
     return RagAnswerResponse(
         answer=_INSUFFICIENT_EVIDENCE_ANSWER,
-        status=RagAnswerStatus.INSUFFICIENT_EVIDENCE,
+        status=(RagAnswerStatus.INSUFFICIENT_EVIDENCE),
     )

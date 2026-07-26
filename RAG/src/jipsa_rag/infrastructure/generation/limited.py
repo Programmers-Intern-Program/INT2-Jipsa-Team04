@@ -36,24 +36,16 @@ class GenerationLimitPolicy:
         """모든 예산이 양수인지 검증한다."""
 
         if self.max_calls <= 0:
-            raise ValueError(
-                "max_calls must be greater than zero."
-            )
+            raise ValueError("max_calls must be greater than zero.")
 
         if self.max_input_tokens <= 0:
-            raise ValueError(
-                "max_input_tokens must be greater than zero."
-            )
+            raise ValueError("max_input_tokens must be greater than zero.")
 
         if self.max_output_tokens <= 0:
-            raise ValueError(
-                "max_output_tokens must be greater than zero."
-            )
+            raise ValueError("max_output_tokens must be greater than zero.")
 
         if self.max_output_tokens_per_call <= 0:
-            raise ValueError(
-                "max_output_tokens_per_call must be greater than zero."
-            )
+            raise ValueError("max_output_tokens_per_call must be greater than zero.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,9 +87,7 @@ class GenerationConcurrencyLimiter:
         """프로세스 전역 동시 호출 상한을 초기화한다."""
 
         if max_concurrency <= 0:
-            raise ValueError(
-                "max_concurrency must be greater than zero."
-            )
+            raise ValueError("max_concurrency must be greater than zero.")
 
         self._max_concurrency = max_concurrency
         self._registry_lock = threading.Lock()
@@ -155,9 +145,7 @@ def get_shared_generation_concurrency_limiter(
     """같은 동시성 값에 대해 프로세스 범위 제한기 하나를 재사용한다."""
 
     if max_concurrency <= 0:
-        raise ValueError(
-            "max_concurrency must be greater than zero."
-        )
+        raise ValueError("max_concurrency must be greater than zero.")
 
     with _SHARED_CONCURRENCY_LIMITERS_LOCK:
         limiter = _SHARED_CONCURRENCY_LIMITERS.get(
@@ -273,18 +261,10 @@ class LimitedGenerationClient:
         async with self._budget_lock:
             return GenerationBudgetSnapshot(
                 attempted_calls=self._attempted_calls,
-                committed_input_tokens=(
-                    self._committed_input_tokens
-                ),
-                committed_output_tokens=(
-                    self._committed_output_tokens
-                ),
-                reserved_input_tokens=(
-                    self._reserved_input_tokens
-                ),
-                reserved_output_tokens=(
-                    self._reserved_output_tokens
-                ),
+                committed_input_tokens=(self._committed_input_tokens),
+                committed_output_tokens=(self._committed_output_tokens),
+                reserved_input_tokens=(self._reserved_input_tokens),
+                reserved_output_tokens=(self._reserved_output_tokens),
             )
 
     async def _reserve_budget(
@@ -301,12 +281,8 @@ class LimitedGenerationClient:
                     limit_type="call_count",
                 )
 
-            remaining_input_tokens = (
-                self._policy.max_input_tokens
-                - (
-                    self._committed_input_tokens
-                    + self._reserved_input_tokens
-                )
+            remaining_input_tokens = self._policy.max_input_tokens - (
+                self._committed_input_tokens + self._reserved_input_tokens
             )
 
             if estimated_input_tokens > remaining_input_tokens:
@@ -314,12 +290,8 @@ class LimitedGenerationClient:
                     limit_type="input_tokens",
                 )
 
-            remaining_output_tokens = (
-                self._policy.max_output_tokens
-                - (
-                    self._committed_output_tokens
-                    + self._reserved_output_tokens
-                )
+            remaining_output_tokens = self._policy.max_output_tokens - (
+                self._committed_output_tokens + self._reserved_output_tokens
             )
 
             if remaining_output_tokens <= 0:
@@ -359,12 +331,8 @@ class LimitedGenerationClient:
         """실패한 공급자 호출이 확보했던 입력·출력 예약량을 반환한다."""
 
         async with self._budget_lock:
-            self._reserved_input_tokens -= (
-                reservation.estimated_input_tokens
-            )
-            self._reserved_output_tokens -= (
-                reservation.output_token_limit
-            )
+            self._reserved_input_tokens -= reservation.estimated_input_tokens
+            self._reserved_output_tokens -= reservation.output_token_limit
 
     async def _commit_usage(
         self,
@@ -375,30 +343,17 @@ class LimitedGenerationClient:
         """예약량을 실제 Claude usage로 교체하고 초과 여부를 반환한다."""
 
         async with self._budget_lock:
-            self._reserved_input_tokens -= (
-                reservation.estimated_input_tokens
-            )
-            self._reserved_output_tokens -= (
-                reservation.output_token_limit
-            )
-            self._committed_input_tokens += (
-                result.usage.input_tokens
-            )
-            self._committed_output_tokens += (
-                result.usage.output_tokens
-            )
+            self._reserved_input_tokens -= reservation.estimated_input_tokens
+            self._reserved_output_tokens -= reservation.output_token_limit
+            self._committed_input_tokens += result.usage.input_tokens
+            self._committed_output_tokens += result.usage.output_tokens
 
-            if (
-                self._committed_input_tokens
-                > self._policy.max_input_tokens
-            ):
+            if self._committed_input_tokens > self._policy.max_input_tokens:
                 return "input_tokens"
 
             if (
-                result.usage.output_tokens
-                > reservation.output_token_limit
-                or self._committed_output_tokens
-                > self._policy.max_output_tokens
+                result.usage.output_tokens > reservation.output_token_limit
+                or self._committed_output_tokens > self._policy.max_output_tokens
             ):
                 return "output_tokens"
 

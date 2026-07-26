@@ -67,9 +67,7 @@ class _RecordingGenerationClient:
         if call_index >= len(
             self._results,
         ):
-            raise AssertionError(
-                "Unexpected generation call."
-            )
+            raise AssertionError("Unexpected generation call.")
 
         return self._results[call_index]
 
@@ -148,11 +146,7 @@ def _request(
 async def test_limited_client_blocks_calls_above_request_budget() -> None:
     """허용 호출 횟수를 소비한 뒤에는 공급자를 추가 호출하지 않아야 한다."""
 
-    delegate = _RecordingGenerationClient(
-        (
-            _result(),
-        )
-    )
+    delegate = _RecordingGenerationClient((_result(),))
     client = LimitedGenerationClient(
         delegate=delegate,
         policy=_policy(
@@ -182,11 +176,7 @@ async def test_limited_client_blocks_calls_above_request_budget() -> None:
 async def test_limited_client_blocks_large_prompt_before_provider_call() -> None:
     """입력 예산을 넘는 프롬프트는 Claude 호출 전에 차단해야 한다."""
 
-    delegate = _RecordingGenerationClient(
-        (
-            _result(),
-        )
-    )
+    delegate = _RecordingGenerationClient((_result(),))
     client = LimitedGenerationClient(
         delegate=delegate,
         policy=_policy(
@@ -315,11 +305,7 @@ async def test_budget_error_does_not_expose_prompt_in_logs_or_exception(
     """예산 차단 시 질문과 프롬프트를 로그·예외에 남기지 않아야 한다."""
 
     secret_prompt = "QUESTION-SECRET-DO-NOT-LOG"
-    delegate = _RecordingGenerationClient(
-        (
-            _result(),
-        )
-    )
+    delegate = _RecordingGenerationClient((_result(),))
     client = LimitedGenerationClient(
         delegate=delegate,
         policy=_policy(

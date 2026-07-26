@@ -29,9 +29,7 @@ from jipsa_rag.services.query_routing import (
 _TEST_USER_IDX: Final[int] = 45
 _FIRST_FILE_IDX: Final[int] = 123
 _SECOND_FILE_IDX: Final[int] = 456
-_INSUFFICIENT_ANSWER: Final[str] = (
-    "제공된 문서 근거만으로는 답변할 수 없습니다."
-)
+_INSUFFICIENT_ANSWER: Final[str] = "제공된 문서 근거만으로는 답변할 수 없습니다."
 
 
 class _PerFileChunkSearcher:
@@ -56,16 +54,15 @@ class _PerFileChunkSearcher:
             request,
         )
 
-        if len(
-            request.reference_file_idxs,
-        ) != 1:
-            raise AssertionError(
-                "Synthesis must search one PDF at a time."
+        if (
+            len(
+                request.reference_file_idxs,
             )
+            != 1
+        ):
+            raise AssertionError("Synthesis must search one PDF at a time.")
 
-        return self._responses[
-            request.reference_file_idxs[0]
-        ]
+        return self._responses[request.reference_file_idxs[0]]
 
 
 class _ScriptedGenerationClient:
@@ -97,9 +94,7 @@ class _ScriptedGenerationClient:
         if call_index >= len(
             self._results,
         ):
-            raise AssertionError(
-                "Unexpected final Claude generation call."
-            )
+            raise AssertionError("Unexpected final Claude generation call.")
 
         return self._results[call_index]
 
@@ -128,7 +123,7 @@ def _chunk(
         sheet_name=None,
         section_title="근거 섹션",
         parser_version="1.0.0",
-        embedding_model="Qwen/Qwen3-Embedding-0.6B",
+        embedding_model=("Qwen/Qwen3-Embedding-0.6B"),
         index_version=2,
     )
 
@@ -154,9 +149,7 @@ def _search_response(
     return ChunkSearchResponse(
         user_idx=_TEST_USER_IDX,
         result_count=1,
-        results=(
-            chunk,
-        ),
+        results=(chunk,),
     )
 
 
@@ -167,7 +160,10 @@ def _answered_result(
 ) -> GenerationResult:
     """운영 Claude 구조화 출력과 같은 정상 답변 결과를 만든다."""
 
-    structured_output: dict[str, object] = {
+    structured_output: dict[
+        str,
+        object,
+    ] = {
         "status": "answered",
         "answer": answer,
         "cited_source_ids": list(
@@ -193,7 +189,10 @@ def _answered_result(
 def _insufficient_result() -> GenerationResult:
     """운영 Claude 구조화 출력과 같은 근거 부족 결과를 만든다."""
 
-    structured_output: dict[str, object] = {
+    structured_output: dict[
+        str,
+        object,
+    ] = {
         "status": "insufficient_evidence",
         "answer": _INSUFFICIENT_ANSWER,
         "cited_source_ids": [],
@@ -254,37 +253,33 @@ def _searcher(
 
 
 @pytest.mark.asyncio
-async def test_synthesis_continues_with_supported_pdf_when_one_partial_is_insufficient(
-) -> None:
-    """일부 PDF만 근거가 있으면 해당 부분만 최종 종합에 사용한다."""
+async def test_synthesis_partial_prompt_preserves_each_pdf_supported_subset() -> None:
+    """각 PDF가 전체 질문의 일부만 지원해도 부분 답변을 보존해야 한다."""
 
     searcher = _searcher(
-        first_content=(
-            "첫 번째 문서는 RECOVERY-21 값을 명시합니다."
-        ),
-        second_content=(
-            "두 번째 문서에는 질문의 대상 값이 없습니다."
-        ),
+        first_content=("첫 번째 문서는 exact recovery code가 RECOVERY-21이라고 명시합니다."),
+        second_content=("두 번째 문서는 exact validation code가 VALIDATION-34라고 명시합니다."),
     )
     generation_client = _ScriptedGenerationClient(
         (
             _answered_result(
-                answer=(
-                    "복구 코드는 RECOVERY-21입니다. "
-                    "[SOURCE-1]"
-                ),
-                cited_source_ids=(
-                    "SOURCE-1",
-                ),
+                answer=("복구 코드는 RECOVERY-21입니다. [SOURCE-1]"),
+                cited_source_ids=("SOURCE-1",),
             ),
-            _insufficient_result(),
+            _answered_result(
+                answer=("검증 코드는 VALIDATION-34입니다. [SOURCE-1]"),
+                cited_source_ids=("SOURCE-1",),
+            ),
             _answered_result(
                 answer=(
-                    "확인 가능한 복구 코드는 "
-                    "RECOVERY-21입니다. [SOURCE-1]"
+                    "복구 코드는 RECOVERY-21입니다. "
+                    "[SOURCE-1] "
+                    "검증 코드는 VALIDATION-34입니다. "
+                    "[SOURCE-2]"
                 ),
                 cited_source_ids=(
                     "SOURCE-1",
+                    "SOURCE-2",
                 ),
             ),
         )
@@ -298,49 +293,108 @@ async def test_synthesis_continues_with_supported_pdf_when_one_partial_is_insuff
     response = await service.answer(
         _request(
             query=(
-                "두 PDF를 비교하여 확인 가능한 복구 코드를 "
-                "종합해 주세요."
+                "두 PDF를 함께 사용하여 exact recovery code와 "
+                "exact validation code를 각각 답해 주세요."
             ),
+        )
+    )
+
+    assert (
+        len(
+            generation_client.calls,
+        )
+        == 3
+    )
+
+    # 첫 두 호출은 한 PDF만 보는 부분 생성 단계다. 전체 질문의 모든
+    # 하위 항목을 한 PDF가 지원해야 한다고 오해하지 않도록 전용 시스템
+    # 규칙과 사용자 프롬프트 표식을 모두 포함해야 한다.
+    for partial_request in generation_client.calls[:2]:
+        assert partial_request.system_prompt is not None
+        assert "PDF별 부분 근거 추출 단계" in partial_request.system_prompt
+        assert "하위 항목 하나 이상" in partial_request.system_prompt
+        assert "<partial_synthesis_stage>" in partial_request.user_prompt
+        assert (
+            "다른 PDF가 필요한 나머지 항목 때문에 전체를 insufficient_evidence로 처리하지 마세요."
+        ) in partial_request.user_prompt
+
+    # 세 번째 호출은 검증된 부분 결과만 사용하는 최종 종합 단계다.
+    final_request = generation_client.calls[2]
+
+    assert "<partial_answers_json>" in final_request.user_prompt
+    assert "<partial_synthesis_stage>" not in final_request.user_prompt
+    assert "RECOVERY-21" in final_request.user_prompt
+    assert "VALIDATION-34" in final_request.user_prompt
+
+    assert response.status is RagAnswerStatus.ANSWERED
+    assert tuple(source.file_idx for source in response.sources) == (
+        _FIRST_FILE_IDX,
+        _SECOND_FILE_IDX,
+    )
+    assert tuple(source.source_id for source in response.sources) == (
+        "SOURCE-1",
+        "SOURCE-2",
+    )
+
+
+@pytest.mark.asyncio
+async def test_synthesis_continues_with_supported_pdf_when_one_partial_is_insufficient() -> None:
+    """일부 PDF만 근거가 있으면 해당 부분만 최종 종합에 사용한다."""
+
+    searcher = _searcher(
+        first_content=("첫 번째 문서는 RECOVERY-21 값을 명시합니다."),
+        second_content=("두 번째 문서에는 질문의 대상 값이 없습니다."),
+    )
+    generation_client = _ScriptedGenerationClient(
+        (
+            _answered_result(
+                answer=("복구 코드는 RECOVERY-21입니다. [SOURCE-1]"),
+                cited_source_ids=("SOURCE-1",),
+            ),
+            _insufficient_result(),
+            _answered_result(
+                answer=("확인 가능한 복구 코드는 RECOVERY-21입니다. [SOURCE-1]"),
+                cited_source_ids=("SOURCE-1",),
+            ),
+        )
+    )
+    service = RoutedRagAnswerService(
+        chunk_searcher=searcher,
+        prompt_builder=RagPromptBuilder(),
+        generation_client=generation_client,
+    )
+
+    response = await service.answer(
+        _request(
+            query=("두 PDF를 비교하여 확인 가능한 복구 코드를 종합해 주세요."),
         )
     )
 
     # 두 PDF 부분 호출 뒤, 근거가 있는 첫 번째 부분만 사용하여
     # 최종 호출한다.
-    assert len(
-        generation_client.calls,
-    ) == 3
+    assert (
+        len(
+            generation_client.calls,
+        )
+        == 3
+    )
 
     final_prompt = generation_client.calls[2].user_prompt
 
     assert "RECOVERY-21" in final_prompt
     assert _INSUFFICIENT_ANSWER not in final_prompt
     assert response.status is RagAnswerStatus.ANSWERED
-    assert tuple(
-        source.file_idx
-        for source in response.sources
-    ) == (
-        _FIRST_FILE_IDX,
-    )
-    assert tuple(
-        source.source_id
-        for source in response.sources
-    ) == (
-        "SOURCE-1",
-    )
+    assert tuple(source.file_idx for source in response.sources) == (_FIRST_FILE_IDX,)
+    assert tuple(source.source_id for source in response.sources) == ("SOURCE-1",)
 
 
 @pytest.mark.asyncio
-async def test_synthesis_skips_final_generation_when_all_partials_are_insufficient(
-) -> None:
+async def test_synthesis_skips_final_generation_when_all_partials_are_insufficient() -> None:
     """모든 PDF의 부분 근거가 부족하면 최종 Claude 호출 없이 종료한다."""
 
     searcher = _searcher(
-        first_content=(
-            "질문과 무관한 첫 번째 문서 내용입니다."
-        ),
-        second_content=(
-            "질문과 무관한 두 번째 문서 내용입니다."
-        ),
+        first_content=("질문과 무관한 첫 번째 문서 내용입니다."),
+        second_content=("질문과 무관한 두 번째 문서 내용입니다."),
     )
     generation_client = _ScriptedGenerationClient(
         (
@@ -356,22 +410,19 @@ async def test_synthesis_skips_final_generation_when_all_partials_are_insufficie
 
     response = await service.answer(
         _request(
-            query=(
-                "두 PDF를 비교하여 존재하지 않는 배포 키를 "
-                "종합해 주세요."
-            ),
+            query=("두 PDF를 비교하여 존재하지 않는 배포 키를 종합해 주세요."),
         )
     )
 
     # PDF별 부분 호출 두 번까지만 실행하고 세 번째 최종 종합은
     # 실행하지 않는다.
-    assert len(
-        generation_client.calls,
-    ) == 2
     assert (
-        response.status
-        is RagAnswerStatus.INSUFFICIENT_EVIDENCE
+        len(
+            generation_client.calls,
+        )
+        == 2
     )
+    assert response.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
     assert response.answer == _INSUFFICIENT_ANSWER
     assert response.sources == ()
     assert response.model is None
@@ -410,17 +461,11 @@ async def test_synthesis_logs_do_not_expose_question_chunk_or_prompt(
 
     response = await service.answer(
         _request(
-            query=(
-                f"두 PDF를 비교하여 {question_secret} 값을 "
-                "종합해 주세요."
-            ),
+            query=(f"두 PDF를 비교하여 {question_secret} 값을 종합해 주세요."),
         )
     )
 
-    assert (
-        response.status
-        is RagAnswerStatus.INSUFFICIENT_EVIDENCE
-    )
+    assert response.status is RagAnswerStatus.INSUFFICIENT_EVIDENCE
     assert question_secret not in caplog.text
     assert first_chunk_secret not in caplog.text
     assert second_chunk_secret not in caplog.text

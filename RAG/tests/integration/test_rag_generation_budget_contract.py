@@ -52,9 +52,7 @@ def test_generation_budget_exceeded_returns_429_without_sensitive_text(
     """예산 초과를 429로 변환하고 질문을 노출하지 않아야 한다."""
 
     question_secret = "HTTP-QUESTION-SECRET-91AF"
-    app.dependency_overrides[
-        get_rag_answer_service
-    ] = _override_rag_answer_service
+    app.dependency_overrides[get_rag_answer_service] = _override_rag_answer_service
     caplog.set_level(
         logging.INFO,
     )
@@ -68,10 +66,7 @@ def test_generation_budget_exceeded_returns_429_without_sensitive_text(
                     123,
                     456,
                 ],
-                "query": (
-                    f"두 PDF를 비교하여 {question_secret} "
-                    "값을 알려줘"
-                ),
+                "query": (f"두 PDF를 비교하여 {question_secret} 값을 알려줘"),
                 "top_k": 5,
                 "score_threshold": None,
             },
@@ -89,9 +84,6 @@ def test_generation_budget_exceeded_returns_429_without_sensitive_text(
 
     assert body["success"] is False
     assert body["code"] == "GENERATION_BUDGET_EXCEEDED"
-    assert (
-        body["message"]
-        == "The generation budget for this answer was exceeded."
-    )
+    assert body["message"] == "The generation budget for this answer was exceeded."
     assert question_secret not in response.text
     assert question_secret not in caplog.text

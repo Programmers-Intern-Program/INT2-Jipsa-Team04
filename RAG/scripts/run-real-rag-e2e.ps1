@@ -4,7 +4,7 @@
 param(
     # Ruff, Mypy 및 전체 Pytest 선행 검사를 생략합니다.
     #
-    # 이미 동일한 Commit 상태에서 verify-rag-quality.ps1이 통과한 경우에만
+    # 동일한 Commit 상태에서 verify-rag-quality.ps1이 이미 통과한 경우에만
     # 제한적으로 사용합니다.
     [switch] $SkipQualityGate,
 
@@ -33,6 +33,8 @@ $ErrorActionPreference = 'Stop'
 # - 실제 Anthropic Claude API
 # - 단일·복수 참조문서 답변
 # - [SOURCE-N], cited_source_ids, sources 일치
+# - 일부·전체 근거 부족 처리
+# - Claude 호출 횟수·토큰·동시성 제한
 #
 # Mock 범위:
 #
@@ -94,9 +96,32 @@ $DatabaseConnectionTest = Join-Path `
     -Path $ProjectRoot `
     -ChildPath 'tests/integration/test_database_connection.py'
 
-$RealE2eTest = Join-Path `
-    -Path $ProjectRoot `
-    -ChildPath 'tests/e2e/test_real_pdf_rag_e2e.py'
+# 실제 Local RAG 인프라를 사용하는 E2E 테스트 목록입니다.
+#
+# RelativePath는 Pytest 인수로 사용하고, AbsolutePath는 실행 전 파일 존재
+# 검증에 사용합니다.
+$RealE2eTests = @(
+    @{
+        RelativePath = 'tests/e2e/test_real_pdf_rag_e2e.py'
+        AbsolutePath = Join-Path `
+            -Path $ProjectRoot `
+            -ChildPath 'tests/e2e/test_real_pdf_rag_e2e.py'
+        Description = '실제 PDF 및 Claude RAG E2E 테스트'
+    },
+    @{
+        RelativePath = (
+            'tests/e2e/' +
+            'test_rag_answer_limits_real_pdf_e2e.py'
+        )
+        AbsolutePath = Join-Path `
+            -Path $ProjectRoot `
+            -ChildPath (
+                'tests/e2e/' +
+                'test_rag_answer_limits_real_pdf_e2e.py'
+            )
+        Description = '실제 PDF 생성 제한 RAG E2E 테스트'
+    }
+)
 
 # Docker Compose도 애플리케이션과 동일한 .env.local의 임베딩 모델 설정을
 # 사용해야 합니다.
@@ -346,7 +371,7 @@ function Import-DotEnvFile {
         throw '.env.local에서 환경 변수를 한 개도 읽지 못했습니다.'
     }
 
-    # 비밀값은 출력하지 않고 로드한 키의 개수만 알립니다.
+    # 비밀값은 출력하지 않고 로드한 Key 개수만 알립니다.
     Write-Host (
         "실제 Local RAG 환경 변수 로드 완료: $ImportedCount 개"
     ) -ForegroundColor Green
@@ -467,7 +492,7 @@ function Assert-RealE2eEnvironment {
 
     # 실제 인프라 연결에 필요한 값은 존재 여부만 확인합니다.
     #
-    # 비밀번호, 내부 토큰, API Key의 원문은 절대 출력하지 않습니다.
+    # 비밀번호, 내부 토큰, API Key 원문은 절대 출력하지 않습니다.
     $RequiredEnvironmentNames = @(
         'INTERNAL_TOKEN',
         'RAG_INGEST_TOKEN',
@@ -477,7 +502,11 @@ function Assert-RealE2eEnvironment {
         'JIPSA_RAG_DATABASE_USER',
         'JIPSA_RAG_DATABASE_PASSWORD',
         'JIPSA_RAG_QDRANT_COLLECTION',
-        'JIPSA_RAG_ANTHROPIC_MODEL'
+        'JIPSA_RAG_ANTHROPIC_MODEL',
+        'JIPSA_RAG_ANTHROPIC_MAX_CALLS_PER_ANSWER',
+        'JIPSA_RAG_ANTHROPIC_MAX_INPUT_TOKENS_PER_ANSWER',
+        'JIPSA_RAG_ANTHROPIC_MAX_OUTPUT_TOKENS_PER_ANSWER',
+        'JIPSA_RAG_ANTHROPIC_MAX_CONCURRENT_REQUESTS'
     )
 
     foreach ($EnvironmentName in $RequiredEnvironmentNames) {
@@ -643,8 +672,10 @@ function Invoke-NativeCommandForOutput {
 
         if (-not [string]::IsNullOrWhiteSpace($OutputText)) {
             Write-Host ''
-            Write-Host '[외부 명령 오류 출력]' -ForegroundColor DarkYellow
-            Write-Host $OutputText -ForegroundColor DarkYellow
+            Write-Host '[외부 명령 오류 출력]' `
+                -ForegroundColor DarkYellow
+            Write-Host $OutputText `
+                -ForegroundColor DarkYellow
         }
 
         throw "$FailureMessage 종료 코드: $ExitCode"
@@ -689,7 +720,9 @@ function Get-RunningComposeServices {
                     'running'
                 )
             ) `
-            -FailureMessage 'Docker Compose 실행 서비스 조회에 실패했습니다.'
+            -FailureMessage (
+                'Docker Compose 실행 서비스 조회에 실패했습니다.'
+            )
     )
 
     return @(
@@ -729,12 +762,14 @@ function Wait-QdrantReady {
                 -TimeoutSec 5
 
             if ($Response.StatusCode -eq 200) {
-                Write-Host 'Qdrant /readyz 확인 성공' -ForegroundColor Green
+                Write-Host 'Qdrant /readyz 확인 성공' `
+                    -ForegroundColor Green
                 return
             }
 
             $LastErrorMessage = (
-                "예상하지 못한 HTTP 상태 코드: $($Response.StatusCode)"
+                "예상하지 못한 HTTP 상태 코드: " +
+                "$($Response.StatusCode)"
             )
         }
         catch {
@@ -888,9 +923,13 @@ Docker Engine을 실행한 후 다시 시도해 주세요.
         -Path $DatabaseConnectionTest `
         -Description 'Local RAG DB 연결 테스트'
 
-    Assert-RequiredFile `
-        -Path $RealE2eTest `
-        -Description '실제 PDF RAG E2E 테스트'
+    # 기존 실제 Claude E2E와 신규 생성 제한 E2E가 모두 존재하는지
+    # Docker 인프라를 실행하기 전에 확인합니다.
+    foreach ($RealE2eTest in $RealE2eTests) {
+        Assert-RequiredFile `
+            -Path ([string] $RealE2eTest.AbsolutePath) `
+            -Description ([string] $RealE2eTest.Description)
+    }
 
     Write-Host "프로젝트 루트: $ProjectRoot"
     Write-Host "실제 인프라 환경 파일: $LocalEnvironmentFile"
@@ -1054,11 +1093,8 @@ Docker Engine을 실행한 후 다시 시도해 주세요.
         }
     }
 
-    # Windows PowerShell 5.1에서는 if 문을 일반 그룹 연산자 (...) 안에
-    # 직접 넣어 표현식처럼 사용할 수 없습니다.
-    #
-    # 먼저 문자열을 계산한 뒤 Write-Host에 전달하여 PowerShell 5.1과
-    # PowerShell 7에서 모두 동일하게 파싱되도록 합니다.
+    # Windows PowerShell 5.1에서는 if 문을 그룹 연산자 안에서 직접
+    # 표현식처럼 사용할 수 없으므로 문자열을 먼저 계산합니다.
     if ($StartedServices.Count -gt 0) {
         $StartedServicesText = $StartedServices -join ', '
     }
@@ -1107,46 +1143,58 @@ Docker Engine을 실행한 후 다시 시도해 주세요.
         ) `
         -FailureMessage 'Local RAG DB 연결 검증에 실패했습니다.'
 
-    Write-Host 'Local RAG DB 연결 검증 통과' -ForegroundColor Green
+    Write-Host 'Local RAG DB 연결 검증 통과' `
+        -ForegroundColor Green
 
 
     # ============================================================
     # 9. 실제 PDF RAG E2E 활성화
     # ============================================================
 
-    # 이 환경 변수는 실제 Claude API와 Local 인프라를 사용하는
-    # tests/e2e/test_real_pdf_rag_e2e.py의 명시적 실행 동의입니다.
+    # 이 환경 변수는 아래 두 실제 E2E 파일이 Local RAG DB, Qdrant,
+    # CUDA TEI 및 실제 Claude 설정을 사용하는 것에 대한 명시적 동의입니다.
     Set-ManagedProcessEnvironmentValue `
         -Name 'JIPSA_RAG_RUN_E2E' `
         -Value '1'
 
 
     # ============================================================
-    # 10. 실제 PDF 인제스트 및 Claude E2E 실행
+    # 10. 실제 PDF 및 생성 제한 RAG E2E 실행
     # ============================================================
 
-    Write-Step -Message '실제 PDF 인제스트 및 Claude RAG E2E 실행'
+    Write-Step -Message (
+        '실제 PDF 인제스트, Claude 및 생성 제한 RAG E2E 실행'
+    )
+
+    $RealE2eArguments = @(
+        'run',
+        'pytest'
+    )
+
+    foreach ($RealE2eTest in $RealE2eTests) {
+        $RealE2eArguments += [string] $RealE2eTest.RelativePath
+    }
+
+    $RealE2eArguments += @(
+        '-vv',
+        '-s'
+    )
 
     Invoke-NativeCommand `
         -FilePath 'uv' `
-        -ArgumentList @(
-            'run',
-            'pytest',
-            'tests/e2e/test_real_pdf_rag_e2e.py',
-            '-vv'
-        ) `
+        -ArgumentList $RealE2eArguments `
         -FailureMessage '실제 PDF RAG E2E 테스트에 실패했습니다.'
 
     if ($SkipQualityGate) {
         $SuccessMessage = (
-            '실제 PDF RAG E2E가 통과했습니다. ' +
+            '실제 PDF·Claude·생성 제한 RAG E2E가 통과했습니다. ' +
             '이번 실행에서는 품질 게이트를 생략했습니다.'
         )
     }
     else {
         $SuccessMessage = (
-            'Ruff, Mypy, 전체 Pytest 및 실제 PDF RAG E2E가 모두 ' +
-            '통과했습니다.'
+            'Ruff, Mypy, 전체 Pytest 및 실제 PDF·Claude·생성 제한 ' +
+            'RAG E2E가 모두 통과했습니다.'
         )
     }
 

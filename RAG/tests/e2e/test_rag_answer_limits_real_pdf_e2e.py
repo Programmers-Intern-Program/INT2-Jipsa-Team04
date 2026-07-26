@@ -86,9 +86,8 @@ _BACKEND_PATH_PATTERN: Final[re.Pattern[str]] = re.compile(
 _DOWNLOAD_PATH_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"^/files/(?P<file_idx>[1-9][0-9]*)\.pdf$"
 )
-_INSUFFICIENT_EVIDENCE_ANSWER: Final[str] = (
-    "제공된 문서 근거만으로는 답변할 수 없습니다."
-)
+
+_INSUFFICIENT_EVIDENCE_ANSWER: Final[str] = "제공된 문서 근거만으로는 답변할 수 없습니다."
 
 
 # ============================================================
@@ -109,9 +108,7 @@ class PdfCase:
     def pdf_bytes(self) -> bytes:
         """pypdf 운영 파서가 읽을 수 있는 실제 PDF 바이트를 반환한다."""
 
-        return _build_text_pdf(
-            self.lines,
-        )
+        return _build_text_pdf(self.lines)
 
     @property
     def download_url(self) -> str:
@@ -167,9 +164,7 @@ _PDFS: Final[tuple[PdfCase, PdfCase]] = (
 )
 
 
-def _build_text_pdf(
-    lines: Sequence[str],
-) -> bytes:
+def _build_text_pdf(lines: Sequence[str]) -> bytes:
     """텍스트 레이어가 있는 결정적인 단일 페이지 PDF를 생성한다.
 
     별도 바이너리 Fixture 없이 운영 ``PdfDocumentParser``와 같은 pypdf
@@ -177,29 +172,18 @@ def _build_text_pdf(
     xref 및 Trailer를 모두 포함한 실제 PDF 구조를 만든다.
     """
 
-    normalized_lines = tuple(
-        lines,
-    )
+    normalized_lines = tuple(lines)
 
     if not normalized_lines:
-        raise ValueError(
-            "E2E PDF requires at least one text line."
-        )
+        raise ValueError("E2E PDF requires at least one text line.")
 
-    if any(
-        not line.strip()
-        for line in normalized_lines
-    ):
-        raise ValueError(
-            "E2E PDF text lines must not be empty."
-        )
+    if any(not line.strip() for line in normalized_lines):
+        raise ValueError("E2E PDF text lines must not be empty.")
 
     # Built-in Helvetica에서 결정적으로 추출되도록 Fixture 원문은 ASCII만
     # 허용한다.
     for line in normalized_lines:
-        line.encode(
-            "ascii",
-        )
+        line.encode("ascii")
 
     content_commands: list[bytes] = [
         b"BT",
@@ -208,40 +192,15 @@ def _build_text_pdf(
         b"16 TL",
     ]
 
-    for line_index, line in enumerate(
-        normalized_lines,
-    ):
+    for line_index, line in enumerate(normalized_lines):
         if line_index > 0:
-            content_commands.append(
-                b"T*",
-            )
+            content_commands.append(b"T*")
 
-        escaped_line = (
-            line.replace(
-                "\\",
-                "\\\\",
-            )
-            .replace(
-                "(",
-                "\\(",
-            )
-            .replace(
-                ")",
-                "\\)",
-            )
-        )
-        content_commands.append(
-            f"({escaped_line}) Tj".encode(
-                "ascii",
-            )
-        )
+        escaped_line = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+        content_commands.append(f"({escaped_line}) Tj".encode("ascii"))
 
-    content_commands.append(
-        b"ET",
-    )
-    content_stream = b"\n".join(
-        content_commands,
-    ) + b"\n"
+    content_commands.append(b"ET")
+    content_stream = b"\n".join(content_commands) + b"\n"
 
     objects: list[bytes] = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -255,65 +214,28 @@ def _build_text_pdf(
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         (
             b"<< /Length "
-            + str(
-                len(
-                    content_stream,
-                )
-            ).encode(
-                "ascii",
-            )
+            + str(len(content_stream)).encode("ascii")
             + b" >>\nstream\n"
             + content_stream
             + b"endstream"
         ),
     ]
 
-    pdf = bytearray(
-        b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n",
-    )
-    object_offsets: list[int] = [
-        0,
-    ]
+    pdf = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    object_offsets: list[int] = [0]
 
-    for object_number, object_body in enumerate(
-        objects,
-        start=1,
-    ):
-        object_offsets.append(
-            len(
-                pdf,
-            )
-        )
-        pdf.extend(
-            f"{object_number} 0 obj\n".encode(
-                "ascii",
-            )
-        )
-        pdf.extend(
-            object_body,
-        )
-        pdf.extend(
-            b"\nendobj\n",
-        )
+    for object_number, object_body in enumerate(objects, start=1):
+        object_offsets.append(len(pdf))
+        pdf.extend(f"{object_number} 0 obj\n".encode("ascii"))
+        pdf.extend(object_body)
+        pdf.extend(b"\nendobj\n")
 
-    xref_offset = len(
-        pdf,
-    )
-    pdf.extend(
-        f"xref\n0 {len(objects) + 1}\n".encode(
-            "ascii",
-        )
-    )
-    pdf.extend(
-        b"0000000000 65535 f \n",
-    )
+    xref_offset = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    pdf.extend(b"0000000000 65535 f \n")
 
     for object_offset in object_offsets[1:]:
-        pdf.extend(
-            f"{object_offset:010d} 00000 n \n".encode(
-                "ascii",
-            )
-        )
+        pdf.extend(f"{object_offset:010d} 00000 n \n".encode("ascii"))
 
     pdf.extend(
         (
@@ -322,14 +244,10 @@ def _build_text_pdf(
             f"startxref\n"
             f"{xref_offset}\n"
             f"%%EOF\n"
-        ).encode(
-            "ascii",
-        )
+        ).encode("ascii")
     )
 
-    return bytes(
-        pdf,
-    )
+    return bytes(pdf)
 
 
 # ============================================================
@@ -343,29 +261,15 @@ def _object(
 ) -> dict[str, object]:
     """동적 JSON 값을 문자열 Key 객체로 좁힌다."""
 
-    if not isinstance(
-        value,
-        dict,
-    ):
-        raise AssertionError(
-            f"{label} must be a JSON object."
-        )
+    if not isinstance(value, dict):
+        raise AssertionError(f"{label} must be a JSON object.")
 
-    if any(
-        not isinstance(
-            key,
-            str,
-        )
-        for key in value
-    ):
-        raise AssertionError(
-            f"{label} must contain only string keys."
-        )
+    if any(not isinstance(key, str) for key in value):
+        raise AssertionError(f"{label} must contain only string keys.")
 
-    return cast(
-        dict[str, object],
-        value,
-    )
+    # 런타임 검증으로 모든 Key가 str임을 확인했으므로 내부 테스트 타입으로
+    # 안전하게 좁힌다.
+    return cast(dict[str, object], value)
 
 
 def _objects(
@@ -374,23 +278,13 @@ def _objects(
 ) -> list[dict[str, object]]:
     """JSON 객체에서 객체 배열을 읽는다."""
 
-    value = mapping.get(
-        key,
-    )
+    value = mapping.get(key)
 
-    if not isinstance(
-        value,
-        list,
-    ):
-        raise AssertionError(
-            f"{key} must be a JSON array."
-        )
+    if not isinstance(value, list):
+        raise AssertionError(f"{key} must be a JSON array.")
 
     return [
-        _object(
-            item,
-            key,
-        )
+        _object(item, key)
         for item in cast(
             list[object],
             value,
@@ -404,17 +298,10 @@ def _str(
 ) -> str:
     """JSON 객체에서 비어 있지 않은 문자열을 읽는다."""
 
-    value = mapping.get(
-        key,
-    )
+    value = mapping.get(key)
 
-    if not isinstance(
-        value,
-        str,
-    ) or not value:
-        raise AssertionError(
-            f"{key} must be a non-empty string."
-        )
+    if not isinstance(value, str) or not value:
+        raise AssertionError(f"{key} must be a non-empty string.")
 
     return value
 
@@ -425,20 +312,10 @@ def _int(
 ) -> int:
     """JSON 객체에서 bool이 아닌 정수를 읽는다."""
 
-    value = mapping.get(
-        key,
-    )
+    value = mapping.get(key)
 
-    if isinstance(
-        value,
-        bool,
-    ) or not isinstance(
-        value,
-        int,
-    ):
-        raise AssertionError(
-            f"{key} must be an integer."
-        )
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise AssertionError(f"{key} must be an integer.")
 
     return value
 
@@ -449,17 +326,10 @@ def _bool(
 ) -> bool:
     """JSON 객체에서 boolean 값을 읽는다."""
 
-    value = mapping.get(
-        key,
-    )
+    value = mapping.get(key)
 
-    if not isinstance(
-        value,
-        bool,
-    ):
-        raise AssertionError(
-            f"{key} must be a boolean."
-        )
+    if not isinstance(value, bool):
+        raise AssertionError(f"{key} must be a boolean.")
 
     return value
 
@@ -485,42 +355,24 @@ class BackendRecorder:
     ) -> httpx2.Response:
         """허용된 Backend 내부 API 경로만 처리한다."""
 
-        path_match = _BACKEND_PATH_PATTERN.fullmatch(
-            request.url.path,
-        )
+        path_match = _BACKEND_PATH_PATTERN.fullmatch(request.url.path)
 
         if path_match is None:
-            return httpx2.Response(
-                status_code=404,
-            )
+            return httpx2.Response(status_code=404)
 
-        file_idx = int(
-            path_match.group(
-                "file_idx",
-            )
-        )
-        operation = path_match.group(
-            "operation",
-        )
-        case = self.cases.get(
-            file_idx,
-        )
+        file_idx = int(path_match.group("file_idx"))
+        operation = path_match.group("operation")
+        case = self.cases.get(file_idx)
 
         if case is None:
-            return httpx2.Response(
-                status_code=404,
-            )
+            return httpx2.Response(status_code=404)
 
         internal_token = self.settings.internal_token
 
         if internal_token is None:
-            raise AssertionError(
-                "INTERNAL_TOKEN must be configured for E2E."
-            )
+            raise AssertionError("INTERNAL_TOKEN must be configured for E2E.")
 
-        assert request.headers[
-            "X-Internal-Token"
-        ] == internal_token.get_secret_value()
+        assert request.headers["X-Internal-Token"] == internal_token.get_secret_value()
 
         if operation == "manifest":
             assert request.method == "GET"
@@ -534,23 +386,12 @@ class BackendRecorder:
         assert request.method == "POST"
 
         payload = _object(
-            json.loads(
-                request.content.decode(
-                    "utf-8",
-                )
-            ),
+            json.loads(request.content.decode("utf-8")),
             "ingest-complete payload",
         )
-        self.callbacks.setdefault(
-            file_idx,
-            [],
-        ).append(
-            payload,
-        )
+        self.callbacks.setdefault(file_idx, []).append(payload)
 
-        return httpx2.Response(
-            status_code=204,
-        )
+        return httpx2.Response(status_code=204)
 
 
 @dataclass(frozen=True, slots=True)
@@ -565,33 +406,19 @@ class DownloadContract:
     ) -> httpx2.Response:
         """E2E Fixture PDF에 대한 GET 요청만 처리한다."""
 
-        path_match = _DOWNLOAD_PATH_PATTERN.fullmatch(
-            request.url.path,
-        )
+        path_match = _DOWNLOAD_PATH_PATTERN.fullmatch(request.url.path)
 
         if path_match is None:
-            return httpx2.Response(
-                status_code=404,
-            )
+            return httpx2.Response(status_code=404)
 
-        file_idx = int(
-            path_match.group(
-                "file_idx",
-            )
-        )
-        case = self.cases.get(
-            file_idx,
-        )
+        file_idx = int(path_match.group("file_idx"))
+        case = self.cases.get(file_idx)
 
         if case is None:
-            return httpx2.Response(
-                status_code=404,
-            )
+            return httpx2.Response(status_code=404)
 
         assert request.method == "GET"
-        assert request.headers[
-            "accept-encoding"
-        ] == "identity"
+        assert request.headers["accept-encoding"] == "identity"
 
         pdf_bytes = case.pdf_bytes
 
@@ -599,15 +426,9 @@ class DownloadContract:
             status_code=200,
             headers={
                 "Content-Type": "application/pdf",
-                "Content-Length": str(
-                    len(
-                        pdf_bytes,
-                    )
-                ),
+                "Content-Length": str(len(pdf_bytes)),
             },
-            stream=httpx2.ByteStream(
-                pdf_bytes,
-            ),
+            stream=httpx2.ByteStream(pdf_bytes),
         )
 
 
@@ -616,9 +437,7 @@ class DownloadContract:
 # ============================================================
 
 
-def _db_engine(
-    settings: Settings,
-) -> AsyncEngine:
+def _db_engine(settings: Settings) -> AsyncEngine:
     """테스트 정리에 사용할 독립적인 비동기 DB 엔진을 생성한다."""
 
     return create_async_engine(
@@ -627,14 +446,10 @@ def _db_engine(
     )
 
 
-async def _cleanup_database(
-    settings: Settings,
-) -> None:
+async def _cleanup_database(settings: Settings) -> None:
     """이 파일의 E2E 전용 DB 데이터를 FK 역순으로 삭제한다."""
 
-    engine = _db_engine(
-        settings,
-    )
+    engine = _db_engine(settings)
     parameters = {
         "users_idx": _TEST_USER_IDX,
         "file_idx_a": _FIRST_FILE_IDX,
@@ -680,15 +495,11 @@ async def _cleanup_database(
         await engine.dispose()
 
 
-def _qdrant_client(
-    settings: Settings,
-) -> AsyncQdrantClient:
+def _qdrant_client(settings: Settings) -> AsyncQdrantClient:
     """현재 실제 E2E 설정의 Qdrant 클라이언트를 생성한다."""
 
     api_key = (
-        settings.qdrant_api_key.get_secret_value()
-        if settings.qdrant_api_key is not None
-        else None
+        settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key is not None else None
     )
 
     return AsyncQdrantClient(
@@ -698,9 +509,7 @@ def _qdrant_client(
         api_key=api_key,
         timeout=max(
             1,
-            ceil(
-                settings.qdrant_timeout_seconds,
-            ),
+            ceil(settings.qdrant_timeout_seconds),
         ),
     )
 
@@ -719,23 +528,17 @@ def _scope_filter() -> models.Filter:
             models.FieldCondition(
                 key="file_idx",
                 match=models.MatchAny(
-                    any=list(
-                        _FILE_IDXS,
-                    ),
+                    any=list(_FILE_IDXS),
                 ),
             ),
         ]
     )
 
 
-async def _cleanup_qdrant(
-    settings: Settings,
-) -> None:
+async def _cleanup_qdrant(settings: Settings) -> None:
     """이 파일의 E2E 활성·비활성 Point를 모두 삭제한다."""
 
-    client = _qdrant_client(
-        settings,
-    )
+    client = _qdrant_client(settings)
 
     try:
         collection_exists = await client.collection_exists(
@@ -756,17 +559,11 @@ async def _cleanup_qdrant(
         await client.close()
 
 
-async def _cleanup(
-    settings: Settings,
-) -> None:
+async def _cleanup(settings: Settings) -> None:
     """Qdrant 복제 데이터와 Local RAG 원본 데이터를 정리한다."""
 
-    await _cleanup_qdrant(
-        settings,
-    )
-    await _cleanup_database(
-        settings,
-    )
+    await _cleanup_qdrant(settings)
+    await _cleanup_database(settings)
 
 
 # ============================================================
@@ -790,17 +587,11 @@ class E2eRuntime:
 def require_e2e_opt_in() -> None:
     """일반 Pytest에서 실제 Local RAG 인프라 접근을 차단한다."""
 
-    if os.getenv(
-        _RUN_ENV,
-    ) != "1":
-        pytest.skip(
-            f"Set {_RUN_ENV}=1 to run real PDF RAG E2E tests."
-        )
+    if os.getenv(_RUN_ENV) != "1":
+        pytest.skip(f"Set {_RUN_ENV}=1 to run real PDF RAG E2E tests.")
 
 
-@pytest.fixture(
-    scope="module",
-)
+@pytest.fixture(scope="module")
 def e2e_runtime(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[E2eRuntime]:
@@ -808,22 +599,26 @@ def e2e_runtime(
 
     settings = get_settings()
 
+    # E2E Fixture는 테스트 전후로 DB 행과 Qdrant Point를 삭제한다.
+    # 따라서 local 또는 development 프로필에서 실수로 실행하지 못하도록
+    # 반드시 test 프로필인지 확인한다.
     if settings.app_env != "test":
         pytest.fail(
             "Real E2E cleanup is allowed only when JIPSA_RAG_APP_ENV=test.",
             pytrace=False,
         )
 
+    # 앞선 테스트 또는 애플리케이션 import 과정에서 캐시된 생성 설정을
+    # 제거하고 현재 프로세스 환경의 실제 설정을 다시 읽는다.
     get_generation_settings.cache_clear()
 
     try:
         get_generation_settings()
     except ValidationError as error:
-        # API Key 원문이 ValidationError 입력에 포함될 수 있으므로 전체 오류
-        # 문자열은 출력하지 않는다.
+        # ValidationError 입력에는 API Key 원문이 포함될 가능성이 있으므로
+        # 전체 오류 문자열을 테스트 출력에 기록하지 않는다.
         pytest.fail(
-            "A valid generation configuration is required for real E2E: "
-            f"{type(error).__name__}",
+            f"A valid generation configuration is required for real E2E: {type(error).__name__}",
             pytrace=False,
         )
 
@@ -841,6 +636,17 @@ def e2e_runtime(
             pytrace=False,
         )
 
+    # Backend manifest·callback 및 PDF 다운로드 경계만 Mock으로 고정한다.
+    #
+    # 다음 설정은 model_copy에서 변경하지 않으므로 실제 Local 인프라를
+    # 사용한다.
+    #
+    # - database_url
+    # - embedding_base_url
+    # - embedding_model
+    # - embedding_dim
+    # - qdrant_url
+    # - qdrant_collection
     http_settings = settings.model_copy(
         update={
             "app_server_base_url": "https://backend.e2e.invalid",
@@ -850,28 +656,21 @@ def e2e_runtime(
             "file_download_allowed_host_suffixes": ".e2e.invalid",
         }
     )
-    cases = {
-        case.file_idx: case
-        for case in _PDFS
-    }
+
+    cases = {case.file_idx: case for case in _PDFS}
     recorder = BackendRecorder(
         settings=http_settings,
         cases=cases,
     )
-    download_contract = DownloadContract(
-        cases=cases,
-    )
+    download_contract = DownloadContract(cases=cases)
+
     backend_client = ApplicationServerIngestClient(
         http_settings,
-        transport=httpx2.MockTransport(
-            recorder.handle,
-        ),
+        transport=httpx2.MockTransport(recorder.handle),
     )
     downloader = HttpFileDownloader(
         http_settings,
-        transport=httpx2.MockTransport(
-            download_contract.handle,
-        ),
+        transport=httpx2.MockTransport(download_contract.handle),
         temp_directory=Path(
             tmp_path_factory.mktemp(
                 "rag-answer-limits-real-pdf-e2e",
@@ -889,26 +688,15 @@ def e2e_runtime(
 
         return downloader
 
-    app.dependency_overrides[
-        get_application_server_ingest_client
-    ] = backend_dependency
-    app.dependency_overrides[
-        get_file_downloader
-    ] = downloader_dependency
+    app.dependency_overrides[get_application_server_ingest_client] = backend_dependency
+    app.dependency_overrides[get_file_downloader] = downloader_dependency
 
     try:
-        asyncio.run(
-            _cleanup(
-                settings,
-            )
-        )
+        # 이전 실행이 중단되어 남은 전용 데이터를 제거한다.
+        asyncio.run(_cleanup(settings))
 
-        with TestClient(
-            app,
-        ) as client:
-            client.headers[
-                "X-Internal-Token"
-            ] = ingest_token.get_secret_value()
+        with TestClient(app) as client:
+            client.headers["X-Internal-Token"] = ingest_token.get_secret_value()
 
             for case in _PDFS:
                 response = client.post(
@@ -927,14 +715,8 @@ def e2e_runtime(
                     "POST /ingest response",
                 )
 
-                assert _bool(
-                    body,
-                    "success",
-                ) is True
-                assert _str(
-                    body,
-                    "code",
-                ) == "FILE_INDEXING_COMPLETED"
+                assert _bool(body, "success") is True
+                assert _str(body, "code") == "FILE_INDEXING_COMPLETED"
 
             yield E2eRuntime(
                 client=client,
@@ -943,11 +725,9 @@ def e2e_runtime(
             )
     finally:
         try:
-            asyncio.run(
-                _cleanup(
-                    settings,
-                )
-            )
+            # Assertion 실패나 Fixture 구성 실패가 발생해도 E2E 전용 범위는
+            # 반드시 정리한다.
+            asyncio.run(_cleanup(settings))
         finally:
             app.dependency_overrides.pop(
                 get_application_server_ingest_client,
@@ -988,23 +768,13 @@ class ScriptedGenerationClient:
     ) -> GenerationResult:
         """요청을 기록하고 같은 순번의 결과를 반환한다."""
 
-        call_index = len(
-            self.calls,
-        )
-        self.calls.append(
-            request,
-        )
+        call_index = len(self.calls)
+        self.calls.append(request)
 
-        if call_index >= len(
-            self._results,
-        ):
-            raise AssertionError(
-                "Generation client received an unexpected extra call."
-            )
+        if call_index >= len(self._results):
+            raise AssertionError("Generation client received an unexpected extra call.")
 
-        return self._results[
-            call_index
-        ]
+        return self._results[call_index]
 
 
 def _answered_result(
@@ -1019,9 +789,7 @@ def _answered_result(
     structured_output: dict[str, object] = {
         "status": "answered",
         "answer": answer,
-        "cited_source_ids": list(
-            cited_source_ids,
-        ),
+        "cited_source_ids": list(cited_source_ids),
     }
 
     return GenerationResult(
@@ -1082,23 +850,24 @@ def _post_synthesis_question(
     reference_file_idxs: Sequence[int],
     query: str,
 ) -> httpx2.Response:
-    """실제 TEI·Qdrant 검색을 사용하는 synthesis 요청을 전송한다."""
+    """실제 TEI·Qdrant 검색을 사용하는 synthesis 요청을 전송한다.
 
-    # TestClient의 Response는 httpx2.Response와 동일한 공개 계약을 사용한다.
-    return cast(
-        httpx2.Response,
-        runtime.client.post(
-            "/api/v1/rag/answers",
-            json={
-                "user_idx": _TEST_USER_IDX,
-                "reference_file_idxs": list(
-                    reference_file_idxs,
-                ),
-                "query": query,
-                "top_k": 10,
-                "score_threshold": None,
-            },
-        ),
+    FastAPI TestClient의 ``post`` 반환값은 현재 프로젝트의 타입 환경에서
+    이미 ``httpx2.Response``으로 추론된다.
+
+    불필요한 ``cast``를 사용하면 Mypy의 ``redundant-cast`` 검사가
+    실패하므로 응답 객체를 그대로 반환한다.
+    """
+
+    return runtime.client.post(
+        "/api/v1/rag/answers",
+        json={
+            "user_idx": _TEST_USER_IDX,
+            "reference_file_idxs": list(reference_file_idxs),
+            "query": query,
+            "top_k": 10,
+            "score_threshold": None,
+        },
     )
 
 
@@ -1116,30 +885,18 @@ def test_partial_evidence_uses_only_the_indexed_pdf(
         (
             # 실제 첫 번째 PDF 검색 결과의 부분 답변이다.
             _answered_result(
-                answer=(
-                    "정확한 복구 코드는 "
-                    f"{_FIRST_PDF.answer_token}입니다. [SOURCE-1]"
-                ),
-                cited_source_ids=(
-                    "SOURCE-1",
-                ),
+                answer=(f"정확한 복구 코드는 {_FIRST_PDF.answer_token}입니다. [SOURCE-1]"),
+                cited_source_ids=("SOURCE-1",),
             ),
             # 검색 결과가 없는 두 번째 File_IDX에는 부분 Claude 호출이
             # 발생하지 않는다. 두 번째 호출은 바로 최종 종합이다.
             _answered_result(
-                answer=(
-                    "확인 가능한 복구 코드는 "
-                    f"{_FIRST_PDF.answer_token}입니다. [SOURCE-1]"
-                ),
-                cited_source_ids=(
-                    "SOURCE-1",
-                ),
+                answer=(f"확인 가능한 복구 코드는 {_FIRST_PDF.answer_token}입니다. [SOURCE-1]"),
+                cited_source_ids=("SOURCE-1",),
             ),
         )
     )
-    app.dependency_overrides[
-        get_generation_client
-    ] = _scripted_generation_dependency(
+    app.dependency_overrides[get_generation_client] = _scripted_generation_dependency(
         generation_client,
     )
 
@@ -1168,9 +925,7 @@ def test_partial_evidence_uses_only_the_indexed_pdf(
         "partial evidence response",
     )
     data = _object(
-        body.get(
-            "data",
-        ),
+        body.get("data"),
         "partial evidence response data",
     )
     sources = _objects(
@@ -1178,38 +933,15 @@ def test_partial_evidence_uses_only_the_indexed_pdf(
         "sources",
     )
 
-    assert _bool(
-        body,
-        "success",
-    ) is True
-    assert _str(
-        data,
-        "status",
-    ) == "answered"
-    assert _FIRST_PDF.answer_token in _str(
-        data,
-        "answer",
-    )
-    assert len(
-        generation_client.calls,
-    ) == 2
-    assert {
-        _int(
-            source,
-            "file_idx",
-        )
-        for source in sources
-    } == {
+    assert _bool(body, "success") is True
+    assert _str(data, "status") == "answered"
+    assert _FIRST_PDF.answer_token in _str(data, "answer")
+    assert len(generation_client.calls) == 2
+
+    assert {_int(source, "file_idx") for source in sources} == {
         _FIRST_FILE_IDX,
     }
-    assert all(
-        _int(
-            source,
-            "file_idx",
-        )
-        != _MISSING_FILE_IDX
-        for source in sources
-    )
+    assert all(_int(source, "file_idx") != _MISSING_FILE_IDX for source in sources)
 
 
 def test_all_partial_answers_insufficient_skip_final_generation(
@@ -1223,9 +955,7 @@ def test_all_partial_answers_insufficient_skip_final_generation(
             _insufficient_result(),
         )
     )
-    app.dependency_overrides[
-        get_generation_client
-    ] = _scripted_generation_dependency(
+    app.dependency_overrides[get_generation_client] = _scripted_generation_dependency(
         generation_client,
     )
 
@@ -1251,38 +981,19 @@ def test_all_partial_answers_insufficient_skip_final_generation(
         "all insufficient response",
     )
     data = _object(
-        body.get(
-            "data",
-        ),
+        body.get("data"),
         "all insufficient response data",
     )
 
     # 실제 두 PDF 검색과 부분 생성 두 번까지만 실행한다. 세 번째 최종
     # 종합 호출이 발생하면 ScriptedGenerationClient가 테스트를 실패시킨다.
-    assert len(
-        generation_client.calls,
-    ) == 2
-    assert _str(
-        data,
-        "status",
-    ) == "insufficient_evidence"
-    assert _str(
-        data,
-        "answer",
-    ) == _INSUFFICIENT_EVIDENCE_ANSWER
-    assert _objects(
-        data,
-        "sources",
-    ) == []
-    assert data.get(
-        "model",
-    ) is None
-    assert data.get(
-        "usage",
-    ) is None
-    assert data.get(
-        "stop_reason",
-    ) is None
+    assert len(generation_client.calls) == 2
+    assert _str(data, "status") == "insufficient_evidence"
+    assert _str(data, "answer") == _INSUFFICIENT_EVIDENCE_ANSWER
+    assert _objects(data, "sources") == []
+    assert data.get("model") is None
+    assert data.get("usage") is None
+    assert data.get("stop_reason") is None
 
 
 def test_synthesis_call_budget_blocks_final_generation(
@@ -1291,25 +1002,16 @@ def test_synthesis_call_budget_blocks_final_generation(
     """두 PDF 부분 호출 후 호출 예산이 소진되면 최종 종합을 429로 차단한다."""
 
     query_secret = "E2E-QUESTION-SECRET-DO-NOT-EXPOSE"
+
     delegate = ScriptedGenerationClient(
         (
             _answered_result(
-                answer=(
-                    f"첫 PDF 코드는 {_FIRST_PDF.answer_token}입니다. "
-                    "[SOURCE-1]"
-                ),
-                cited_source_ids=(
-                    "SOURCE-1",
-                ),
+                answer=(f"첫 PDF 코드는 {_FIRST_PDF.answer_token}입니다. [SOURCE-1]"),
+                cited_source_ids=("SOURCE-1",),
             ),
             _answered_result(
-                answer=(
-                    f"두 번째 PDF 코드는 {_SECOND_PDF.answer_token}입니다. "
-                    "[SOURCE-1]"
-                ),
-                cited_source_ids=(
-                    "SOURCE-1",
-                ),
+                answer=(f"두 번째 PDF 코드는 {_SECOND_PDF.answer_token}입니다. [SOURCE-1]"),
+                cited_source_ids=("SOURCE-1",),
             ),
             # max_calls=2이므로 이 결과는 절대 소비되면 안 된다.
             _answered_result(
@@ -1325,6 +1027,7 @@ def test_synthesis_call_budget_blocks_final_generation(
             ),
         )
     )
+
     limited_client = LimitedGenerationClient(
         delegate=delegate,
         policy=GenerationLimitPolicy(
@@ -1337,9 +1040,7 @@ def test_synthesis_call_budget_blocks_final_generation(
             max_concurrency=1,
         ),
     )
-    app.dependency_overrides[
-        get_generation_client
-    ] = _scripted_generation_dependency(
+    app.dependency_overrides[get_generation_client] = _scripted_generation_dependency(
         limited_client,
     )
 
@@ -1365,15 +1066,7 @@ def test_synthesis_call_budget_blocks_final_generation(
         "generation budget response",
     )
 
-    assert _bool(
-        body,
-        "success",
-    ) is False
-    assert _str(
-        body,
-        "code",
-    ) == "GENERATION_BUDGET_EXCEEDED"
-    assert len(
-        delegate.calls,
-    ) == 2
+    assert _bool(body, "success") is False
+    assert _str(body, "code") == "GENERATION_BUDGET_EXCEEDED"
+    assert len(delegate.calls) == 2
     assert query_secret not in response.text

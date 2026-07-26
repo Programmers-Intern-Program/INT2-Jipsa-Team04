@@ -126,15 +126,9 @@ async def get_generation_client(
         delegate=delegate,
         policy=GenerationLimitPolicy(
             max_calls=settings.anthropic_max_calls_per_answer,
-            max_input_tokens=(
-                settings.anthropic_max_input_tokens_per_answer
-            ),
-            max_output_tokens=(
-                settings.anthropic_max_output_tokens_per_answer
-            ),
-            max_output_tokens_per_call=(
-                settings.anthropic_max_output_tokens
-            ),
+            max_input_tokens=(settings.anthropic_max_input_tokens_per_answer),
+            max_output_tokens=(settings.anthropic_max_output_tokens_per_answer),
+            max_output_tokens_per_call=(settings.anthropic_max_output_tokens),
         ),
         concurrency_limiter=concurrency_limiter,
     )
@@ -435,10 +429,7 @@ def _convert_rag_answer_service_error(
         },
         HTTPStatus.TOO_MANY_REQUESTS: {
             "model": ApiResponse[None],
-            "description": (
-                "답변별 Claude 호출 횟수 또는 누적 입력·출력 "
-                "토큰 예산 초과"
-            ),
+            "description": ("답변별 Claude 호출 횟수 또는 누적 입력·출력 토큰 예산 초과"),
         },
         HTTPStatus.BAD_GATEWAY: {
             "model": ApiResponse[None],
@@ -449,9 +440,7 @@ def _convert_rag_answer_service_error(
         },
         HTTPStatus.SERVICE_UNAVAILABLE: {
             "model": ApiResponse[None],
-            "description": (
-                "TEI, Qdrant 또는 Claude 생성 공급자의 일시적 사용 불가"
-            ),
+            "description": ("TEI, Qdrant 또는 Claude 생성 공급자의 일시적 사용 불가"),
         },
         HTTPStatus.GATEWAY_TIMEOUT: {
             "model": ApiResponse[None],
