@@ -49,8 +49,7 @@ class FileProcessingRequest(BaseModel):
     user_idx: int = Field(
         gt=0,
         description=(
-            "AWS 서버 DB Users.Users_IDX 외부 참조값이며 "
-            "사용자별 검색 스코프 제한에 사용한다."
+            "AWS 서버 DB Users.Users_IDX 외부 참조값이며 사용자별 검색 스코프 제한에 사용한다."
         ),
         examples=[45],
     )
@@ -96,8 +95,7 @@ class FileProcessingRequest(BaseModel):
     url_expires_in: int = Field(
         gt=0,
         description=(
-            "애플리케이션 서버가 Presigned GET URL을 발급할 때 설정한 "
-            "유효 시간이며 단위는 초다."
+            "애플리케이션 서버가 Presigned GET URL을 발급할 때 설정한 유효 시간이며 단위는 초다."
         ),
         examples=[900],
     )
@@ -133,19 +131,13 @@ class FileProcessingRequest(BaseModel):
             raise ValueError("Download URL must contain a hostname.")
 
         if parsed.username is not None or parsed.password is not None:
-            raise ValueError(
-                "Download URL must not contain user information."
-            )
+            raise ValueError("Download URL must not contain user information.")
 
         if parsed.fragment:
-            raise ValueError(
-                "Download URL must not contain a fragment."
-            )
+            raise ValueError("Download URL must not contain a fragment.")
 
         if parsed_port is not None and parsed_port != 443:
-            raise ValueError(
-                "Download URL must use the default HTTPS port."
-            )
+            raise ValueError("Download URL must use the default HTTPS port.")
 
         # Presigned URL은 서명 계산에 사용된 path와 query를 임의로
         # 정규화하거나 재구성하지 않고 전달받은 원문을 유지한다.
@@ -163,9 +155,7 @@ class FileProcessingRequest(BaseModel):
         # 허용한다. 경로 구분자를 허용하면 임시 파일 또는 후속 저장
         # 과정에서 의도하지 않은 경로를 참조할 가능성이 있다.
         if "/" in value or "\\" in value:
-            raise ValueError(
-                "File name must not contain path separators."
-            )
+            raise ValueError("File name must not contain path separators.")
 
         return value
 
@@ -193,9 +183,7 @@ class FileProcessingRequest(BaseModel):
         # 교차 검증하여 "file_type=pdf, file_name=document.txt" 같은
         # 모순된 manifest가 다운로드 단계로 진행되지 않게 한다.
         if not self.file_name.lower().endswith(".pdf"):
-            raise ValueError(
-                "PDF file type requires a .pdf file extension."
-            )
+            raise ValueError("PDF file type requires a .pdf file extension.")
 
         return self
 

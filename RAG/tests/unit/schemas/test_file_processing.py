@@ -10,7 +10,6 @@ from jipsa_rag.schemas.file_processing import (
     SupportedFileType,
 )
 
-
 _VALID_FILE_PROCESSING_REQUEST: Mapping[str, object] = {
     "file_idx": 123,
     "user_idx": 45,
@@ -95,9 +94,7 @@ def test_file_processing_request_rejects_unsupported_file_types(
     # 파일 다운로드나 파서 선택 단계까지 진입한 뒤 실패하는 것이 아니라
     # FastAPI 요청 본문 검증 시점에 422 응답으로 차단하기 위한 계약이다.
     assert any(
-        error["loc"] == ("file_type",)
-        and error["type"] == "enum"
-        for error in validation_errors
+        error["loc"] == ("file_type",) and error["type"] == "enum" for error in validation_errors
     )
 
 
@@ -136,8 +133,4 @@ def test_file_processing_request_rejects_non_pdf_extension(
 
     validation_errors = exception_info.value.errors()
 
-    assert any(
-        error["loc"] == ()
-        and error["type"] == "value_error"
-        for error in validation_errors
-    )
+    assert any(error["loc"] == () and error["type"] == "value_error" for error in validation_errors)

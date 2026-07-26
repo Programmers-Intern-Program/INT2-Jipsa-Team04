@@ -45,9 +45,7 @@ def _serialize_pdf_objects(
     ``PdfReader``가 실제 객체 그래프와 content stream을 읽도록 한다.
     """
 
-    pdf_body = bytearray(
-        b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
-    )
+    pdf_body = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
 
     # xref의 0번 객체는 free entry이므로 실제 객체 offset 앞에
     # 예약된 0 값을 둔다.
@@ -59,40 +57,18 @@ def _serialize_pdf_objects(
         objects,
         start=1,
     ):
-        object_offsets.append(
-            len(pdf_body)
-        )
-        pdf_body.extend(
-            f"{object_number} 0 obj\n".encode(
-                "ascii"
-            )
-        )
-        pdf_body.extend(
-            object_content
-        )
-        pdf_body.extend(
-            b"\nendobj\n"
-        )
+        object_offsets.append(len(pdf_body))
+        pdf_body.extend(f"{object_number} 0 obj\n".encode("ascii"))
+        pdf_body.extend(object_content)
+        pdf_body.extend(b"\nendobj\n")
 
-    xref_offset = len(
-        pdf_body
-    )
+    xref_offset = len(pdf_body)
 
-    pdf_body.extend(
-        f"xref\n0 {len(objects) + 1}\n".encode(
-            "ascii"
-        )
-    )
-    pdf_body.extend(
-        b"0000000000 65535 f \n"
-    )
+    pdf_body.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    pdf_body.extend(b"0000000000 65535 f \n")
 
     for object_offset in object_offsets[1:]:
-        pdf_body.extend(
-            f"{object_offset:010d} 00000 n \n".encode(
-                "ascii"
-            )
-        )
+        pdf_body.extend(f"{object_offset:010d} 00000 n \n".encode("ascii"))
 
     pdf_body.extend(
         (
@@ -101,14 +77,10 @@ def _serialize_pdf_objects(
             f"startxref\n"
             f"{xref_offset}\n"
             f"%%EOF\n"
-        ).encode(
-            "ascii"
-        )
+        ).encode("ascii")
     )
 
-    return bytes(
-        pdf_body
-    )
+    return bytes(pdf_body)
 
 
 def _build_text_pdf(
@@ -122,63 +94,30 @@ def _build_text_pdf(
     #
     # 그 이후에는 페이지 객체와 해당 페이지의 content stream을
     # 번갈아 배치하고 마지막 객체를 공통 Helvetica 폰트로 사용한다.
-    page_object_numbers = [
-        3 + page_index * 2
-        for page_index in range(
-            len(page_texts)
-        )
-    ]
-    content_object_numbers = [
-        4 + page_index * 2
-        for page_index in range(
-            len(page_texts)
-        )
-    ]
-    font_object_number = 3 + len(
-        page_texts
-    ) * 2
+    page_object_numbers = [3 + page_index * 2 for page_index in range(len(page_texts))]
+    content_object_numbers = [4 + page_index * 2 for page_index in range(len(page_texts))]
+    font_object_number = 3 + len(page_texts) * 2
+
+    objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
+
+    page_references = " ".join(f"{object_number} 0 R" for object_number in page_object_numbers)
 
     objects.append(
-        b"<< /Type /Catalog /Pages 2 0 R >>"
+        (f"<< /Type /Pages /Kids [{page_references}] /Count {len(page_texts)} >>").encode("ascii")
     )
 
-    page_references = " ".join(
-        f"{object_number} 0 R"
-        for object_number in page_object_numbers
-    )
-
-    objects.append(
-        (
-            "<< /Type /Pages "
-            f"/Kids [{page_references}] "
-            f"/Count {len(page_texts)} >>"
-        ).encode(
-            "ascii"
-        )
-    )
-
-    for page_index, text in enumerate(
-        page_texts
-    ):
+    for page_index, text in enumerate(page_texts):
         objects.append(
             (
                 "<< /Type /Page /Parent 2 0 R "
                 "/MediaBox [0 0 612 792] "
                 f"/Resources << /Font << /F1 {font_object_number} 0 R >> >> "
                 f"/Contents {content_object_numbers[page_index]} 0 R >>"
-            ).encode(
-                "ascii"
-            )
+            ).encode("ascii")
         )
 
         if text:
-            content = (
-                "BT\n"
-                "/F1 12 Tf\n"
-                "72 720 Td\n"
-                f"({_escape_pdf_text(text)}) Tj\n"
-                "ET\n"
-            ).encode(
+            content = (f"BT\n/F1 12 Tf\n72 720 Td\n({_escape_pdf_text(text)}) Tj\nET\n").encode(
                 "latin-1"
             )
         else:
@@ -188,28 +127,15 @@ def _build_text_pdf(
 
         objects.append(
             b"<< /Length "
-            + str(
-                len(content)
-            ).encode(
-                "ascii"
-            )
+            + str(len(content)).encode("ascii")
             + b" >>\nstream\n"
             + content
             + b"endstream"
         )
 
-    objects.append(
-        (
-            b"<< /Type /Font /Subtype /Type1 "
-            b"/BaseFont /Helvetica >>"
-        )
-    )
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
 
-    return _serialize_pdf_objects(
-        tuple(
-            objects
-        )
-    )
+    return _serialize_pdf_objects(tuple(objects))
 
 
 def _build_image_only_scanned_pdf() -> bytes:
@@ -219,17 +145,12 @@ def _build_image_only_scanned_pdf() -> bytes:
     포함한다. 따라서 테스트가 OCR 미지원 스캔 문서 경로를 명확히 재현한다.
     """
 
-    # 1×1 검은색 RGB 픽셀이다.
+    # 1x1 검은색 RGB 픽셀이다.
     image_bytes = b"\x00\x00\x00"
 
     # 이미지 XObject를 페이지 대부분 크기로 그리지만 BT/Tj 같은
     # 텍스트 연산자는 포함하지 않는다.
-    page_content = (
-        b"q\n"
-        b"500 0 0 700 56 46 cm\n"
-        b"/Im1 Do\n"
-        b"Q\n"
-    )
+    page_content = b"q\n500 0 0 700 56 46 cm\n/Im1 Do\nQ\n"
 
     objects = (
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -246,26 +167,18 @@ def _build_image_only_scanned_pdf() -> bytes:
             b"/ColorSpace /DeviceRGB "
             b"/BitsPerComponent 8 "
             b"/Length 3 >>\n"
-            b"stream\n"
-            + image_bytes
-            + b"\nendstream"
+            b"stream\n" + image_bytes + b"\nendstream"
         ),
         (
             b"<< /Length "
-            + str(
-                len(page_content)
-            ).encode(
-                "ascii"
-            )
+            + str(len(page_content)).encode("ascii")
             + b" >>\nstream\n"
             + page_content
             + b"endstream"
         ),
     )
 
-    return _serialize_pdf_objects(
-        objects
-    )
+    return _serialize_pdf_objects(objects)
 
 
 @pytest.mark.asyncio
@@ -286,32 +199,20 @@ async def test_extracts_pdf_text_by_page(
         )
     )
 
-    parsed_document = await PdfDocumentParser().parse(
-        file_path
-    )
+    parsed_document = await PdfDocumentParser().parse(file_path)
 
     assert parsed_document.file_type is DocumentType.PDF
-    assert parsed_document.document_metadata[
-        "page_count"
-    ] == 3
+    assert parsed_document.document_metadata["page_count"] == 3
     assert parsed_document.unit_count == 3
     assert parsed_document.text_unit_count == 2
 
-    assert [
-        unit.text
-        for unit in parsed_document.units
-    ] == [
+    assert [unit.text for unit in parsed_document.units] == [
         "First page",
         "",
         "Third page",
     ]
 
-    assert [
-        unit.source_metadata[
-            "page_number"
-        ]
-        for unit in parsed_document.units
-    ] == [
+    assert [unit.source_metadata["page_number"] for unit in parsed_document.units] == [
         1,
         2,
         3,
@@ -326,16 +227,10 @@ async def test_rejects_zero_byte_pdf_file(
 
     file_path = tmp_path / "empty.pdf"
 
-    file_path.write_bytes(
-        b""
-    )
+    file_path.write_bytes(b"")
 
-    with pytest.raises(
-        InvalidDocumentError
-    ) as exception_info:
-        await PdfDocumentParser().parse(
-            file_path
-        )
+    with pytest.raises(InvalidDocumentError) as exception_info:
+        await PdfDocumentParser().parse(file_path)
 
     assert exception_info.value.file_type is DocumentType.PDF
 
@@ -350,19 +245,11 @@ async def test_rejects_pdf_without_pages(
 
     writer = PdfWriter()
 
-    with file_path.open(
-        "wb"
-    ) as file_stream:
-        writer.write(
-            file_stream
-        )
+    with file_path.open("wb") as file_stream:
+        writer.write(file_stream)
 
-    with pytest.raises(
-        InvalidDocumentError
-    ) as exception_info:
-        await PdfDocumentParser().parse(
-            file_path
-        )
+    with pytest.raises(InvalidDocumentError) as exception_info:
+        await PdfDocumentParser().parse(file_path)
 
     assert exception_info.value.file_type is DocumentType.PDF
 
@@ -384,12 +271,8 @@ async def test_rejects_pdf_without_extractable_text(
         )
     )
 
-    with pytest.raises(
-        DocumentTextNotFoundError
-    ) as exception_info:
-        await PdfDocumentParser().parse(
-            file_path
-        )
+    with pytest.raises(DocumentTextNotFoundError) as exception_info:
+        await PdfDocumentParser().parse(file_path)
 
     assert exception_info.value.file_type is DocumentType.PDF
 
@@ -402,16 +285,10 @@ async def test_rejects_image_only_scanned_pdf_without_ocr(
 
     file_path = tmp_path / "scanned-image-only.pdf"
 
-    file_path.write_bytes(
-        _build_image_only_scanned_pdf()
-    )
+    file_path.write_bytes(_build_image_only_scanned_pdf())
 
-    with pytest.raises(
-        DocumentTextNotFoundError
-    ) as exception_info:
-        await PdfDocumentParser().parse(
-            file_path
-        )
+    with pytest.raises(DocumentTextNotFoundError) as exception_info:
+        await PdfDocumentParser().parse(file_path)
 
     assert exception_info.value.file_type is DocumentType.PDF
 
@@ -429,23 +306,13 @@ async def test_rejects_encrypted_pdf(
         width=612,
         height=792,
     )
-    writer.encrypt(
-        "test-password"
-    )
+    writer.encrypt("test-password")
 
-    with file_path.open(
-        "wb"
-    ) as file_stream:
-        writer.write(
-            file_stream
-        )
+    with file_path.open("wb") as file_stream:
+        writer.write(file_stream)
 
-    with pytest.raises(
-        EncryptedDocumentError
-    ) as exception_info:
-        await PdfDocumentParser().parse(
-            file_path
-        )
+    with pytest.raises(EncryptedDocumentError) as exception_info:
+        await PdfDocumentParser().parse(file_path)
 
     assert exception_info.value.file_type is DocumentType.PDF
 
@@ -458,16 +325,10 @@ async def test_rejects_invalid_pdf_structure(
 
     file_path = tmp_path / "invalid.pdf"
 
-    file_path.write_bytes(
-        b"%PDF-1.7\nThis is not a complete PDF file."
-    )
+    file_path.write_bytes(b"%PDF-1.7\nThis is not a complete PDF file.")
 
-    with pytest.raises(
-        InvalidDocumentError
-    ) as exception_info:
-        await PdfDocumentParser().parse(
-            file_path
-        )
+    with pytest.raises(InvalidDocumentError) as exception_info:
+        await PdfDocumentParser().parse(file_path)
 
     assert exception_info.value.file_type is DocumentType.PDF
 
@@ -480,11 +341,7 @@ async def test_rejects_missing_pdf_file(
 
     file_path = tmp_path / "missing.pdf"
 
-    with pytest.raises(
-        DocumentFileNotFoundError
-    ) as exception_info:
-        await PdfDocumentParser().parse(
-            file_path
-        )
+    with pytest.raises(DocumentFileNotFoundError) as exception_info:
+        await PdfDocumentParser().parse(file_path)
 
     assert exception_info.value.file_path == file_path

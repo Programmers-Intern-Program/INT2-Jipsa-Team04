@@ -115,17 +115,10 @@ def _build_text_pdf(
         b"<< /Type /Catalog /Pages 2 0 R >>",
     )
 
-    page_references = " ".join(
-        f"{object_number} 0 R"
-        for object_number in page_object_numbers
-    )
+    page_references = " ".join(f"{object_number} 0 R" for object_number in page_object_numbers)
 
     objects.append(
-        (
-            "<< /Type /Pages "
-            f"/Kids [{page_references}] "
-            f"/Count {len(page_texts)} >>"
-        ).encode("ascii")
+        (f"<< /Type /Pages /Kids [{page_references}] /Count {len(page_texts)} >>").encode("ascii")
     )
 
     for page_index, text in enumerate(page_texts):
@@ -141,13 +134,9 @@ def _build_text_pdf(
         if text:
             # PDF 텍스트 연산자 BT/ET 사이에서 Helvetica 12pt로
             # 테스트 문자열을 페이지 좌표 (72, 720)에 출력한다.
-            content = (
-                "BT\n"
-                "/F1 12 Tf\n"
-                "72 720 Td\n"
-                f"({_escape_pdf_text(text)}) Tj\n"
-                "ET\n"
-            ).encode("latin-1")
+            content = (f"BT\n/F1 12 Tf\n72 720 Td\n({_escape_pdf_text(text)}) Tj\nET\n").encode(
+                "latin-1"
+            )
         else:
             # 빈 페이지는 길이가 0인 콘텐츠 스트림으로 구성한다.
             content = b""
@@ -181,7 +170,7 @@ def _build_scanned_pdf() -> bytes:
     이 구조는 OCR이 필요한 이미지 기반 스캔 PDF를 재현한다.
     """
 
-    # 1×1 Gray 이미지 한 픽셀이다.
+    # 1x1 Gray 이미지 한 픽셀이다.
     #
     # 테스트 목적은 이미지 내용이 아니라 PDF 페이지가 실제 이미지
     # XObject를 포함하면서 텍스트 레이어는 갖지 않는 상황을 만드는 것이다.
@@ -191,12 +180,7 @@ def _build_scanned_pdf() -> bytes:
     #
     # q와 Q는 그래픽 상태를 저장하고 복원하며,
     # cm은 이미지의 크기와 위치를 지정한다.
-    drawing_commands = (
-        b"q\n"
-        b"100 0 0 100 72 600 cm\n"
-        b"/Im0 Do\n"
-        b"Q\n"
-    )
+    drawing_commands = b"q\n100 0 0 100 72 600 cm\n/Im0 Do\nQ\n"
 
     objects = (
         # 1: Catalog
@@ -270,10 +254,7 @@ async def test_extracts_pdf_text_by_page(
         "Third page",
     ]
 
-    assert [
-        unit.source_metadata["page_number"]
-        for unit in parsed_document.units
-    ] == [
+    assert [unit.source_metadata["page_number"] for unit in parsed_document.units] == [
         1,
         2,
         3,

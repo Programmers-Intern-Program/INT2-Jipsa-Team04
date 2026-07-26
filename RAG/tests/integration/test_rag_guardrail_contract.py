@@ -35,15 +35,9 @@ from jipsa_rag.infrastructure.document.exceptions import (
     InvalidDocumentError,
     UnsupportedDocumentTypeError,
 )
-from jipsa_rag.infrastructure.document.models import (
-    DocumentType,
-)
-from jipsa_rag.infrastructure.document.parser_factory import (
-    DocumentParserFactory,
-)
-from jipsa_rag.infrastructure.document.parsers.pdf import (
-    PdfDocumentParser,
-)
+from jipsa_rag.infrastructure.document.models import DocumentType
+from jipsa_rag.infrastructure.document.parser_factory import DocumentParserFactory
+from jipsa_rag.infrastructure.document.parsers.pdf import PdfDocumentParser
 from jipsa_rag.infrastructure.generation.models import (
     GenerationRequest,
     GenerationResult,
@@ -59,14 +53,13 @@ from jipsa_rag.schemas.rag_answer import (
     RagAnswerStatus,
 )
 from jipsa_rag.services.prompt_builder import (
-    RagPromptBuildResult,
     RagPromptBuilder,
+    RagPromptBuildResult,
 )
 from jipsa_rag.services.rag_answer import (
     RagAnswerService,
     RagAnswerServiceError,
 )
-
 
 # ============================================================
 # 공통 테스트 식별자
@@ -84,40 +77,25 @@ _FILE_IDXS: Final[tuple[int, int]] = (
 )
 
 # 운영 RagAnswerService의 고정 근거 부족 응답과 동일한 문구다.
-_INSUFFICIENT_EVIDENCE_ANSWER: Final[str] = (
-    "제공된 문서 근거만으로는 답변할 수 없습니다."
-)
+_INSUFFICIENT_EVIDENCE_ANSWER: Final[str] = "제공된 문서 근거만으로는 답변할 수 없습니다."
 
 # 답변 본문의 SOURCE-N 인용을 왼쪽에서 오른쪽으로 추출한다.
-_SOURCE_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"\[(SOURCE-[1-9][0-9]*)\]"
-)
+_SOURCE_PATTERN: Final[re.Pattern[str]] = re.compile(r"\[(SOURCE-[1-9][0-9]*)\]")
 
 # caplog에서 RagAnswerService 로그만 명확하게 수집하기 위한 logger 이름이다.
-_RAG_ANSWER_LOGGER_NAME: Final[str] = (
-    "jipsa_rag.services.rag_answer"
-)
+_RAG_ANSWER_LOGGER_NAME: Final[str] = "jipsa_rag.services.rag_answer"
 
 # 민감정보 로그 비노출 검증용 테스트 전용 Sentinel이다.
 #
 # 실제 API Key, 사용자 질문, Presigned URL 또는 문서 원문을 테스트 코드에
 # 작성하지 않는다. 로그에 실수로 포함되면 문자열 비교로 즉시 탐지할 수
 # 있는 고유한 가짜 값을 사용한다.
-_SECRET_QUERY: Final[str] = (
-    "JIPSA-SECRET-QUERY-94 사용자 개인 질의"
-)
-_SECRET_CHUNK: Final[str] = (
-    "JIPSA-SECRET-CHUNK-94 문서 내부 비공개 원문"
-)
-_SECRET_GENERATED_ANSWER: Final[str] = (
-    "JIPSA-SECRET-CLAUDE-ANSWER-94"
-)
-_SECRET_API_KEY: Final[str] = (
-    "sk-ant-test-secret-94-not-a-real-key"
-)
+_SECRET_QUERY: Final[str] = "JIPSA-SECRET-QUERY-94 사용자 개인 질의"
+_SECRET_CHUNK: Final[str] = "JIPSA-SECRET-CHUNK-94 문서 내부 비공개 원문"
+_SECRET_GENERATED_ANSWER: Final[str] = "JIPSA-SECRET-CLAUDE-ANSWER-94"
+_SECRET_API_KEY: Final[str] = "sk-ant-test-secret-94-not-a-real-key"
 _SECRET_PRESIGNED_URL: Final[str] = (
-    "https://private-bucket.invalid/private.pdf"
-    "?X-Amz-Signature=JIPSA-SECRET-SIGNATURE-94"
+    "https://private-bucket.invalid/private.pdf?X-Amz-Signature=JIPSA-SECRET-SIGNATURE-94"
 )
 
 
@@ -179,9 +157,7 @@ class RecordingGenerationClient:
         )
 
         if self._result is None:
-            raise AssertionError(
-                "근거가 없는 요청에서 Claude 생성 클라이언트가 호출되었습니다."
-            )
+            raise AssertionError("근거가 없는 요청에서 Claude 생성 클라이언트가 호출되었습니다.")
 
         return self._result
 
@@ -200,9 +176,7 @@ class FailIfCalledPromptBuilder:
         del request
         del chunks
 
-        raise AssertionError(
-            "근거가 없는 요청에서 프롬프트 구성기가 호출되었습니다."
-        )
+        raise AssertionError("근거가 없는 요청에서 프롬프트 구성기가 호출되었습니다.")
 
 
 # ============================================================
@@ -220,9 +194,7 @@ def _chunk(
     """유효한 PDF 청크 검색 결과를 생성한다."""
 
     return ChunkSearchResult(
-        chunk_id=(
-            f"guardrail-chunk-{file_idx}-{chunk_index}"
-        ),
+        chunk_id=(f"guardrail-chunk-{file_idx}-{chunk_index}"),
         score=score,
         rag_document_idx=file_idx,
         file_idx=file_idx,
@@ -397,10 +369,7 @@ def test_source_markers_declared_ids_and_response_sources_match() -> None:
     )
 
     # 외부 응답 sources의 source_id 순서를 추출한다.
-    response_source_ids = tuple(
-        source.source_id
-        for source in response.sources
-    )
+    response_source_ids = tuple(source.source_id for source in response.sources)
 
     # 세 계약이 정확하게 일치해야 한다.
     #
@@ -412,10 +381,7 @@ def test_source_markers_declared_ids_and_response_sources_match() -> None:
 
     # sources는 프롬프트 검색 순서가 아니라 답변에서 실제로 처음
     # 인용된 순서로 반환되어야 한다.
-    assert tuple(
-        source.file_idx
-        for source in response.sources
-    ) == (
+    assert tuple(source.file_idx for source in response.sources) == (
         _SECOND_FILE_IDX,
         _FIRST_FILE_IDX,
     )
@@ -423,9 +389,12 @@ def test_source_markers_declared_ids_and_response_sources_match() -> None:
     # 같은 SOURCE-2가 두 번 인용되었더라도 외부 출처에는 한 번만
     # 포함되어야 한다.
     assert len(response.sources) == 2
-    assert len(
-        set(response_source_ids),
-    ) == 2
+    assert (
+        len(
+            set(response_source_ids),
+        )
+        == 2
+    )
 
     assert len(searcher.requests) == 1
     assert len(generation_client.requests) == 1
@@ -443,16 +412,12 @@ def test_source_markers_declared_ids_and_response_sources_match() -> None:
     [
         pytest.param(
             "본문은 SOURCE-1을 인용합니다. [SOURCE-1]",
-            (
-                "SOURCE-2",
-            ),
+            ("SOURCE-2",),
             id="answer-and-declared-ids-mismatch",
         ),
         pytest.param(
             "프롬프트에 존재하지 않는 출처입니다. [SOURCE-999]",
-            (
-                "SOURCE-999",
-            ),
+            ("SOURCE-999",),
             id="unknown-source-id",
         ),
     ],
@@ -492,18 +457,14 @@ def test_mismatched_or_unknown_structured_citations_are_rejected(
         asyncio.run(
             service.answer(
                 _answer_request(
-                    reference_file_idxs=(
-                        _FIRST_FILE_IDX,
-                    ),
+                    reference_file_idxs=(_FIRST_FILE_IDX,),
                 )
             )
         )
 
     # API 계층이 INVALID_GENERATION_RESPONSE로 변환하는 기존 작업
     # 식별자가 유지되어야 한다.
-    assert exception_info.value.operation == (
-        "answer_citation_validation_failed"
-    )
+    assert exception_info.value.operation == ("answer_citation_validation_failed")
 
     assert len(searcher.requests) == 1
     assert len(generation_client.requests) == 1
@@ -540,22 +501,14 @@ def test_insufficient_evidence_skips_prompt_and_claude() -> None:
     response = asyncio.run(
         service.answer(
             _answer_request(
-                reference_file_idxs=(
-                    _FIRST_FILE_IDX,
-                ),
-                query=(
-                    "선택 문서에 존재하지 않는 정보를 질문합니다."
-                ),
+                reference_file_idxs=(_FIRST_FILE_IDX,),
+                query=("선택 문서에 존재하지 않는 정보를 질문합니다."),
             )
         )
     )
 
-    assert response.status is (
-        RagAnswerStatus.INSUFFICIENT_EVIDENCE
-    )
-    assert response.answer == (
-        _INSUFFICIENT_EVIDENCE_ANSWER
-    )
+    assert response.status is (RagAnswerStatus.INSUFFICIENT_EVIDENCE)
+    assert response.answer == (_INSUFFICIENT_EVIDENCE_ANSWER)
 
     # 근거 부족 응답에는 인용 출처와 Claude 생성 메타데이터가
     # 존재해서는 안 된다.
@@ -587,10 +540,7 @@ def _write_pdf_failure_fixture(
     if case_name == "corrupted":
         # PDF Magic Byte는 존재하지만 xref, trailer, page tree가 없는
         # 손상 파일이다.
-        file_path.write_bytes(
-            b"%PDF-1.7\n"
-            b"this-is-not-a-valid-pdf-structure\n"
-        )
+        file_path.write_bytes(b"%PDF-1.7\nthis-is-not-a-valid-pdf-structure\n")
         return
 
     writer = PdfWriter()
@@ -627,9 +577,7 @@ def _write_pdf_failure_fixture(
             )
         return
 
-    raise ValueError(
-        f"Unknown PDF failure fixture: {case_name}"
-    )
+    raise ValueError(f"Unknown PDF failure fixture: {case_name}")
 
 
 @pytest.mark.parametrize(
@@ -735,10 +683,7 @@ def test_non_pdf_file_processing_requests_are_rejected(
             "folder_idx": None,
             "file_name": file_name,
             "file_type": file_type,
-            "download_url": (
-                "https://files.invalid/"
-                f"{file_name}?X-Amz-Signature=test-only"
-            ),
+            "download_url": (f"https://files.invalid/{file_name}?X-Amz-Signature=test-only"),
             "url_expires_in": 900,
         },
     )
@@ -752,10 +697,7 @@ def test_non_pdf_file_processing_requests_are_rejected(
     assert body["code"] == "REQUEST_VALIDATION_FAILED"
     assert body["message"] == "Request validation failed."
 
-    invalid_fields = {
-        error["field"]
-        for error in body["data"]["errors"]
-    }
+    invalid_fields = {error["field"] for error in body["data"]["errors"]}
 
     assert "body.file_type" in invalid_fields
 
@@ -763,9 +705,12 @@ def test_non_pdf_file_processing_requests_are_rejected(
     # Parser Factory는 등록되지 않은 형식을 거부해야 한다.
     factory = DocumentParserFactory()
 
-    assert factory.supports(
-        document_type,
-    ) is False
+    assert (
+        factory.supports(
+            document_type,
+        )
+        is False
+    )
 
     with pytest.raises(
         UnsupportedDocumentTypeError,
@@ -805,16 +750,12 @@ def test_sensitive_values_are_not_exposed_in_logs_or_exception(
 
     # 답변 본문은 SOURCE-1을 인용하지만 구조화 선언은 SOURCE-2로
     # 설정하여 의도적으로 declared_citation_mismatch를 발생시킨다.
-    generated_answer = (
-        f"{_SECRET_GENERATED_ANSWER} [SOURCE-1]"
-    )
+    generated_answer = f"{_SECRET_GENERATED_ANSWER} [SOURCE-1]"
 
     generation_client = RecordingGenerationClient(
         _generation_result(
             answer=generated_answer,
-            cited_source_ids=(
-                "SOURCE-2",
-            ),
+            cited_source_ids=("SOURCE-2",),
         )
     )
 
@@ -835,9 +776,7 @@ def test_sensitive_values_are_not_exposed_in_logs_or_exception(
         asyncio.run(
             service.answer(
                 _answer_request(
-                    reference_file_idxs=(
-                        _FIRST_FILE_IDX,
-                    ),
+                    reference_file_idxs=(_FIRST_FILE_IDX,),
                     query=sensitive_query,
                 )
             )
@@ -860,11 +799,7 @@ def test_sensitive_values_are_not_exposed_in_logs_or_exception(
     # LogRecord의 메시지뿐 아니라 structured logging extra 필드까지
     # 문자열로 직렬화하여 검사한다.
     rendered_logs = "\n".join(
-        (
-            f"{record.getMessage()} "
-            f"{record.__dict__!r}"
-        )
-        for record in caplog.records
+        (f"{record.getMessage()} {record.__dict__!r}") for record in caplog.records
     )
 
     rendered_exception = str(
@@ -884,9 +819,7 @@ def test_sensitive_values_are_not_exposed_in_logs_or_exception(
         generation_result_text
         if (
             generation_result_text := (
-                generation_client._result.text
-                if generation_client._result is not None
-                else ""
+                generation_client._result.text if generation_client._result is not None else ""
             )
         )
         else "",
@@ -901,20 +834,11 @@ def test_sensitive_values_are_not_exposed_in_logs_or_exception(
         assert sensitive_value not in rendered_exception
 
     # 운영 진단에 필요한 안전한 분류 정보는 유지되어야 한다.
-    assert (
-        "rag_answer_citation_validation_failed"
-        in rendered_logs
-    )
-    assert (
-        "declared_citation_mismatch"
-        in rendered_logs
-    )
+    assert "rag_answer_citation_validation_failed" in rendered_logs
+    assert "declared_citation_mismatch" in rendered_logs
 
     # 예외에는 민감한 생성 결과 대신 고정 작업 식별자만 존재해야 한다.
-    assert exception_info.value.operation == (
-        "answer_citation_validation_failed"
-    )
+    assert exception_info.value.operation == ("answer_citation_validation_failed")
     assert rendered_exception == (
-        "RAG answer service operation failed: "
-        "answer_citation_validation_failed"
+        "RAG answer service operation failed: answer_citation_validation_failed"
     )

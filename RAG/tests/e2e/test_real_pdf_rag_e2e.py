@@ -71,14 +71,10 @@ _PARSER_TYPE: Final[str] = "PDF_TEXT"
 _PARSER_VERSION: Final[str] = "1.0.0"
 
 # Claude 답변 본문에 포함되는 SOURCE-N 형식의 인용을 추출한다.
-_SOURCE_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"\[(SOURCE-[1-9][0-9]*)\]"
-)
+_SOURCE_PATTERN: Final[re.Pattern[str]] = re.compile(r"\[(SOURCE-[1-9][0-9]*)\]")
 
 # 문서 및 청크 SHA-256 값의 저장 형식을 검증한다.
-_SHA256_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"^[0-9a-f]{64}$"
-)
+_SHA256_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9a-f]{64}$")
 
 # Mock Backend가 허용할 내부 API 경로를 정확히 제한한다.
 _BACKEND_PATH_PATTERN: Final[re.Pattern[str]] = re.compile(
@@ -175,10 +171,7 @@ _ORCHID: Final[PdfCase] = PdfCase(
         "The recovery window is exactly 21 minutes.",
         "The owning team is Platform Reliability.",
     ),
-    sha256=(
-        "c00ddc76c4f9a2ff3c9ff80bb309689"
-        "c893186008cfb143c951ca2db7839a441"
-    ),
+    sha256=("c00ddc76c4f9a2ff3c9ff80bb309689c893186008cfb143c951ca2db7839a441"),
     answer_token="ORCHID-ALPHA-21",
 )
 
@@ -191,10 +184,7 @@ _COBALT: Final[PdfCase] = PdfCase(
         "The validation interval is exactly 34 minutes.",
         "The owning team is Data Operations.",
     ),
-    sha256=(
-        "014d79eb7b1b4997c61c07de8ff6c0"
-        "aa437f735763d5da2ec88eaed9e2fead43"
-    ),
+    sha256=("014d79eb7b1b4997c61c07de8ff6c0aa437f735763d5da2ec88eaed9e2fead43"),
     answer_token="COBALT-BETA-34",
 )
 
@@ -207,15 +197,10 @@ _QUESTIONS: Final[tuple[QuestionCase, QuestionCase]] = (
     QuestionCase(
         name="single-reference",
         query=(
-            "선택한 문서의 exact recovery code를 원문 그대로 답하고 "
-            "해당 문서 출처를 인용해 주세요."
+            "선택한 문서의 exact recovery code를 원문 그대로 답하고 해당 문서 출처를 인용해 주세요."
         ),
-        reference_file_idxs=(
-            _ORCHID_FILE_IDX,
-        ),
-        answer_tokens=(
-            _ORCHID.answer_token,
-        ),
+        reference_file_idxs=(_ORCHID_FILE_IDX,),
+        answer_tokens=(_ORCHID.answer_token,),
         expected_source_file_idxs=frozenset(
             {
                 _ORCHID_FILE_IDX,
@@ -234,9 +219,7 @@ _QUESTIONS: Final[tuple[QuestionCase, QuestionCase]] = (
             _ORCHID.answer_token,
             _COBALT.answer_token,
         ),
-        expected_source_file_idxs=frozenset(
-            _FILE_IDXS
-        ),
+        expected_source_file_idxs=frozenset(_FILE_IDXS),
     ),
 )
 
@@ -272,14 +255,10 @@ def _build_text_pdf(
     normalized = tuple(lines)
 
     if not normalized:
-        raise ValueError(
-            "E2E PDF requires at least one text line."
-        )
+        raise ValueError("E2E PDF requires at least one text line.")
 
     if any(not line.strip() for line in normalized):
-        raise ValueError(
-            "E2E PDF text lines must not be empty."
-        )
+        raise ValueError("E2E PDF text lines must not be empty.")
 
     # Built-in Helvetica에서 결정적으로 추출되도록 fixture 원문은
     # ASCII 문자만 허용한다.
@@ -296,9 +275,7 @@ def _build_text_pdf(
     for line_index, line in enumerate(normalized):
         if line_index > 0:
             # 다음 텍스트 줄로 이동한다.
-            content_commands.append(
-                b"T*"
-            )
+            content_commands.append(b"T*")
 
         # PDF literal string에서 역슬래시와 괄호는 문법 문자이므로
         # 원문 데이터로 유지되도록 이스케이프한다.
@@ -317,20 +294,11 @@ def _build_text_pdf(
             )
         )
 
-        content_commands.append(
-            f"({escaped_line}) Tj".encode(
-                "ascii"
-            )
-        )
+        content_commands.append(f"({escaped_line}) Tj".encode("ascii"))
 
-    content_commands.append(
-        b"ET"
-    )
+    content_commands.append(b"ET")
 
-    content_stream = (
-        b"\n".join(content_commands)
-        + b"\n"
-    )
+    content_stream = b"\n".join(content_commands) + b"\n"
 
     # Object 번호는 아래 순서로 고정한다.
     #
@@ -348,15 +316,10 @@ def _build_text_pdf(
             b"/Resources << /Font << /F1 4 0 R >> >> "
             b"/Contents 5 0 R >>"
         ),
-        (
-            b"<< /Type /Font /Subtype /Type1 "
-            b"/BaseFont /Helvetica >>"
-        ),
+        (b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
         (
             b"<< /Length "
-            + str(len(content_stream)).encode(
-                "ascii"
-            )
+            + str(len(content_stream)).encode("ascii")
             + b" >>\nstream\n"
             + content_stream
             + b"endstream"
@@ -365,9 +328,7 @@ def _build_text_pdf(
 
     # 두 번째 줄의 binary comment는 PDF reader가 파일을 binary PDF로
     # 정상 식별할 수 있도록 한다.
-    pdf = bytearray(
-        b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
-    )
+    pdf = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
 
     # xref의 0번 Object는 free entry이므로 실제 Object offset 목록에서도
     # 0번 위치를 예약한다.
@@ -379,41 +340,21 @@ def _build_text_pdf(
         objects,
         start=1,
     ):
-        object_offsets.append(
-            len(pdf)
-        )
+        object_offsets.append(len(pdf))
 
-        pdf.extend(
-            f"{object_number} 0 obj\n".encode(
-                "ascii"
-            )
-        )
-        pdf.extend(
-            object_body
-        )
-        pdf.extend(
-            b"\nendobj\n"
-        )
+        pdf.extend(f"{object_number} 0 obj\n".encode("ascii"))
+        pdf.extend(object_body)
+        pdf.extend(b"\nendobj\n")
 
     xref_offset = len(pdf)
 
-    pdf.extend(
-        f"xref\n0 {len(objects) + 1}\n".encode(
-            "ascii"
-        )
-    )
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
 
     # PDF 표준에서 0번 Object는 항상 free entry다.
-    pdf.extend(
-        b"0000000000 65535 f \n"
-    )
+    pdf.extend(b"0000000000 65535 f \n")
 
     for object_offset in object_offsets[1:]:
-        pdf.extend(
-            f"{object_offset:010d} 00000 n \n".encode(
-                "ascii"
-            )
-        )
+        pdf.extend(f"{object_offset:010d} 00000 n \n".encode("ascii"))
 
     pdf.extend(
         (
@@ -422,14 +363,10 @@ def _build_text_pdf(
             f"startxref\n"
             f"{xref_offset}\n"
             f"%%EOF\n"
-        ).encode(
-            "ascii"
-        )
+        ).encode("ascii")
     )
 
-    return bytes(
-        pdf
-    )
+    return bytes(pdf)
 
 
 # ============================================================
@@ -447,17 +384,10 @@ def _object(
         value,
         dict,
     ):
-        raise AssertionError(
-            f"{label} must be a JSON object."
-        )
+        raise AssertionError(f"{label} must be a JSON object.")
 
-    if any(
-        not isinstance(key, str)
-        for key in value
-    ):
-        raise AssertionError(
-            f"{label} must contain only string keys."
-        )
+    if any(not isinstance(key, str) for key in value):
+        raise AssertionError(f"{label} must contain only string keys.")
 
     return cast(
         dict[str, object],
@@ -471,17 +401,13 @@ def _objects(
 ) -> list[dict[str, object]]:
     """매핑에서 JSON 객체 배열을 읽는다."""
 
-    value = mapping.get(
-        key
-    )
+    value = mapping.get(key)
 
     if not isinstance(
         value,
         list,
     ):
-        raise AssertionError(
-            f"{key} must be a JSON array."
-        )
+        raise AssertionError(f"{key} must be a JSON array.")
 
     return [
         _object(
@@ -501,22 +427,16 @@ def _str(
 ) -> str:
     """매핑에서 비어 있지 않은 문자열을 읽는다."""
 
-    value = mapping.get(
-        key
-    )
+    value = mapping.get(key)
 
     if not isinstance(
         value,
         str,
     ):
-        raise AssertionError(
-            f"{key} must be a string."
-        )
+        raise AssertionError(f"{key} must be a string.")
 
     if not value:
-        raise AssertionError(
-            f"{key} must not be empty."
-        )
+        raise AssertionError(f"{key} must not be empty.")
 
     return value
 
@@ -527,9 +447,7 @@ def _int(
 ) -> int:
     """매핑에서 bool이 아닌 정수를 읽는다."""
 
-    value = mapping.get(
-        key
-    )
+    value = mapping.get(key)
 
     # bool은 int의 하위 타입이므로 먼저 제외한다.
     if isinstance(
@@ -539,9 +457,7 @@ def _int(
         value,
         int,
     ):
-        raise AssertionError(
-            f"{key} must be an integer."
-        )
+        raise AssertionError(f"{key} must be an integer.")
 
     return value
 
@@ -552,9 +468,7 @@ def _optional_int(
 ) -> int | None:
     """매핑에서 선택적 정수를 읽는다."""
 
-    value = mapping.get(
-        key
-    )
+    value = mapping.get(key)
 
     if value is None:
         return None
@@ -566,9 +480,7 @@ def _optional_int(
         value,
         int,
     ):
-        raise AssertionError(
-            f"{key} must be an integer or null."
-        )
+        raise AssertionError(f"{key} must be an integer or null.")
 
     return value
 
@@ -579,17 +491,13 @@ def _bool(
 ) -> bool:
     """매핑에서 JSON boolean 값을 읽는다."""
 
-    value = mapping.get(
-        key
-    )
+    value = mapping.get(key)
 
     if not isinstance(
         value,
         bool,
     ):
-        raise AssertionError(
-            f"{key} must be a boolean."
-        )
+        raise AssertionError(f"{key} must be a boolean.")
 
     return value
 
@@ -600,9 +508,7 @@ def _db_bool(
 ) -> bool:
     """MySQL/MariaDB의 bool 또는 0·1 값을 Python bool로 변환한다."""
 
-    value = mapping.get(
-        key
-    )
+    value = mapping.get(key)
 
     if isinstance(
         value,
@@ -617,13 +523,9 @@ def _db_bool(
         0,
         1,
     }:
-        return bool(
-            value
-        )
+        return bool(value)
 
-    raise AssertionError(
-        f"{key} must be a database boolean."
-    )
+    raise AssertionError(f"{key} must be a database boolean.")
 
 
 # ============================================================
@@ -639,14 +541,10 @@ class BackendRecorder:
     cases: Mapping[int, PdfCase]
 
     # RAG 서버가 실제로 manifest를 재조회한 File_IDX 순서를 보관한다.
-    manifest_requests: list[int] = field(
-        default_factory=list
-    )
+    manifest_requests: list[int] = field(default_factory=list)
 
     # File_IDX별 ingest-complete 콜백 본문을 호출 순서대로 보관한다.
-    callbacks: dict[int, list[dict[str, object]]] = field(
-        default_factory=dict
-    )
+    callbacks: dict[int, list[dict[str, object]]] = field(default_factory=dict)
 
     async def handle(
         self,
@@ -654,53 +552,33 @@ class BackendRecorder:
     ) -> httpx2.Response:
         """Backend 내부 API 두 경로만 처리한다."""
 
-        path_match = _BACKEND_PATH_PATTERN.fullmatch(
-            request.url.path
-        )
+        path_match = _BACKEND_PATH_PATTERN.fullmatch(request.url.path)
 
         if path_match is None:
-            return httpx2.Response(
-                status_code=404
-            )
+            return httpx2.Response(status_code=404)
 
-        file_idx = int(
-            path_match.group(
-                "file_idx"
-            )
-        )
+        file_idx = int(path_match.group("file_idx"))
 
-        operation = path_match.group(
-            "operation"
-        )
+        operation = path_match.group("operation")
 
-        case = self.cases.get(
-            file_idx
-        )
+        case = self.cases.get(file_idx)
 
         if case is None:
-            return httpx2.Response(
-                status_code=404
-            )
+            return httpx2.Response(status_code=404)
 
         internal_token = self.settings.internal_token
 
         if internal_token is None:
-            raise AssertionError(
-                "INTERNAL_TOKEN must be configured for E2E."
-            )
+            raise AssertionError("INTERNAL_TOKEN must be configured for E2E.")
 
         # RAG -> Backend 요청에는 서비스 간 내부 인증 토큰이 반드시
         # 포함되어야 한다.
-        assert request.headers["X-Internal-Token"] == (
-            internal_token.get_secret_value()
-        )
+        assert request.headers["X-Internal-Token"] == (internal_token.get_secret_value())
 
         if operation == "manifest":
             assert request.method == "GET"
 
-            self.manifest_requests.append(
-                file_idx
-            )
+            self.manifest_requests.append(file_idx)
 
             return httpx2.Response(
                 status_code=200,
@@ -711,26 +589,18 @@ class BackendRecorder:
         assert request.method == "POST"
 
         payload = _object(
-            json.loads(
-                request.content.decode(
-                    "utf-8"
-                )
-            ),
+            json.loads(request.content.decode("utf-8")),
             "ingest-complete payload",
         )
 
         self.callbacks.setdefault(
             file_idx,
             [],
-        ).append(
-            payload
-        )
+        ).append(payload)
 
         # ApplicationServerIngestClient의 정상 완료 계약과 동일하게
         # response body가 없는 204를 반환한다.
-        return httpx2.Response(
-            status_code=204
-        )
+        return httpx2.Response(status_code=204)
 
     def callback(
         self,
@@ -744,16 +614,18 @@ class BackendRecorder:
         )
 
         assert len(payloads) == 1, (
-            f"file_idx={file_idx} expected one callback, "
-            f"received {len(payloads)}"
+            f"file_idx={file_idx} expected one callback, received {len(payloads)}"
         )
 
         payload = payloads[0]
 
-        assert _bool(
-            payload,
-            "success",
-        ) is True
+        assert (
+            _bool(
+                payload,
+                "success",
+            )
+            is True
+        )
 
         return payload
 
@@ -770,29 +642,17 @@ class DownloadContract:
     ) -> httpx2.Response:
         """허용된 E2E PDF GET 요청만 처리한다."""
 
-        path_match = _DOWNLOAD_PATH_PATTERN.fullmatch(
-            request.url.path
-        )
+        path_match = _DOWNLOAD_PATH_PATTERN.fullmatch(request.url.path)
 
         if path_match is None:
-            return httpx2.Response(
-                status_code=404
-            )
+            return httpx2.Response(status_code=404)
 
-        file_idx = int(
-            path_match.group(
-                "file_idx"
-            )
-        )
+        file_idx = int(path_match.group("file_idx"))
 
-        case = self.cases.get(
-            file_idx
-        )
+        case = self.cases.get(file_idx)
 
         if case is None:
-            return httpx2.Response(
-                status_code=404
-            )
+            return httpx2.Response(status_code=404)
 
         assert request.method == "GET"
 
@@ -806,15 +666,11 @@ class DownloadContract:
             status_code=200,
             headers={
                 "Content-Type": "application/pdf",
-                "Content-Length": str(
-                    len(pdf_bytes)
-                ),
+                "Content-Length": str(len(pdf_bytes)),
             },
             # 실제 downloader의 streaming 경로가 실행되도록 일반 content가
             # 아니라 ByteStream으로 응답한다.
-            stream=httpx2.ByteStream(
-                pdf_bytes
-            ),
+            stream=httpx2.ByteStream(pdf_bytes),
         )
 
 
@@ -865,9 +721,7 @@ async def _database_state(
 ) -> DatabaseState:
     """지정 파일의 실제 Local RAG 저장 상태를 조회한다."""
 
-    engine = _db_engine(
-        settings
-    )
+    engine = _db_engine(settings)
 
     try:
         async with engine.connect() as connection:
@@ -927,8 +781,7 @@ async def _database_state(
             # 테스트 시작 전에 전용 범위를 정리했으므로 현재 활성 문서는
             # 정확히 하나만 존재해야 한다.
             assert len(document_rows) == 1, (
-                f"file_idx={file_idx} expected one active document, "
-                f"received {len(document_rows)}"
+                f"file_idx={file_idx} expected one active document, received {len(document_rows)}"
             )
 
             document = cast(
@@ -1039,8 +892,7 @@ async def _database_state(
             )
 
             assert len(run_rows) == 1, (
-                f"rag_document_idx={rag_document_idx} "
-                "must have one latest index run."
+                f"rag_document_idx={rag_document_idx} must have one latest index run."
             )
 
             latest_run = cast(
@@ -1063,9 +915,7 @@ async def _cleanup_database(
 ) -> None:
     """E2E 범위의 실행, 청크, 문서를 FK 역순으로 삭제한다."""
 
-    engine = _db_engine(
-        settings
-    )
+    engine = _db_engine(settings)
 
     parameters = {
         "users_idx": _TEST_USER_IDX,
@@ -1128,9 +978,7 @@ def _qdrant_client(
     """현재 테스트 환경의 실제 Qdrant 클라이언트를 생성한다."""
 
     api_key = (
-        settings.qdrant_api_key.get_secret_value()
-        if settings.qdrant_api_key is not None
-        else None
+        settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key is not None else None
     )
 
     return AsyncQdrantClient(
@@ -1140,9 +988,7 @@ def _qdrant_client(
         api_key=api_key,
         timeout=max(
             1,
-            ceil(
-                settings.qdrant_timeout_seconds
-            ),
+            ceil(settings.qdrant_timeout_seconds),
         ),
     )
 
@@ -1159,23 +1005,15 @@ def _scope_filter(
             must=[
                 models.FieldCondition(
                     key="users_idx",
-                    match=models.MatchValue(
-                        value=_TEST_USER_IDX
-                    ),
+                    match=models.MatchValue(value=_TEST_USER_IDX),
                 ),
                 models.FieldCondition(
                     key="file_idx",
-                    match=models.MatchAny(
-                        any=list(
-                            file_idxs
-                        )
-                    ),
+                    match=models.MatchAny(any=list(file_idxs)),
                 ),
                 models.FieldCondition(
                     key="is_active",
-                    match=models.MatchValue(
-                        value=True
-                    ),
+                    match=models.MatchValue(value=True),
                 ),
             ]
         )
@@ -1186,17 +1024,11 @@ def _scope_filter(
         must=[
             models.FieldCondition(
                 key="users_idx",
-                match=models.MatchValue(
-                    value=_TEST_USER_IDX
-                ),
+                match=models.MatchValue(value=_TEST_USER_IDX),
             ),
             models.FieldCondition(
                 key="file_idx",
-                match=models.MatchAny(
-                    any=list(
-                        file_idxs
-                    )
-                ),
+                match=models.MatchAny(any=list(file_idxs)),
             ),
         ]
     )
@@ -1208,17 +1040,13 @@ async def _active_points(
 ) -> tuple[models.Record, ...]:
     """지정 파일의 활성 Point와 payload·vector를 실제 Qdrant에서 읽는다."""
 
-    client = _qdrant_client(
-        settings
-    )
+    client = _qdrant_client(settings)
 
     try:
         points, next_offset = await client.scroll(
             collection_name=settings.qdrant_collection,
             scroll_filter=_scope_filter(
-                (
-                    file_idx,
-                ),
+                (file_idx,),
                 active_only=True,
             ),
             limit=256,
@@ -1229,9 +1057,7 @@ async def _active_points(
         # E2E PDF는 매우 짧고 청크 수가 256개를 넘지 않아야 한다.
         assert next_offset is None
 
-        return tuple(
-            points
-        )
+        return tuple(points)
 
     finally:
         await client.close()
@@ -1242,14 +1068,10 @@ async def _cleanup_qdrant(
 ) -> None:
     """E2E 파일의 활성·비활성 Point를 payload filter로 삭제한다."""
 
-    client = _qdrant_client(
-        settings
-    )
+    client = _qdrant_client(settings)
 
     try:
-        collection_exists = await client.collection_exists(
-            settings.qdrant_collection
-        )
+        collection_exists = await client.collection_exists(settings.qdrant_collection)
 
         # 첫 E2E 실행 전에는 Collection 자체가 없을 수 있다.
         if not collection_exists:
@@ -1277,13 +1099,9 @@ async def _cleanup(
 
     # Qdrant를 먼저 정리하면 Local DB 행을 지운 뒤 Point ID를 다시 찾을
     # 필요가 없다.
-    await _cleanup_qdrant(
-        settings
-    )
+    await _cleanup_qdrant(settings)
 
-    await _cleanup_database(
-        settings
-    )
+    await _cleanup_database(settings)
 
 
 # ============================================================
@@ -1298,12 +1116,8 @@ async def _cleanup(
 def require_e2e_opt_in() -> None:
     """일반 테스트 실행에서 실제 Claude 및 Local 인프라 호출을 방지한다."""
 
-    if os.getenv(
-        _RUN_ENV
-    ) != "1":
-        pytest.skip(
-            f"Set {_RUN_ENV}=1 to run real PDF RAG E2E tests."
-        )
+    if os.getenv(_RUN_ENV) != "1":
+        pytest.skip(f"Set {_RUN_ENV}=1 to run real PDF RAG E2E tests.")
 
 
 @pytest.fixture(
@@ -1320,8 +1134,7 @@ def e2e_runtime(
     # 실행하는 것을 차단한다.
     if settings.app_env != "test":
         pytest.fail(
-            "Real E2E cleanup is allowed only when "
-            "JIPSA_RAG_APP_ENV=test.",
+            "Real E2E cleanup is allowed only when JIPSA_RAG_APP_ENV=test.",
             pytrace=False,
         )
 
@@ -1335,8 +1148,7 @@ def e2e_runtime(
         # ValidationError 입력 원문에는 API Key가 포함될 수 있으므로
         # 전체 오류 문자열을 출력하지 않고 예외 타입만 표시한다.
         pytest.fail(
-            "A valid Anthropic API key/model is required "
-            f"for real E2E: {type(error).__name__}",
+            f"A valid Anthropic API key/model is required for real E2E: {type(error).__name__}",
             pytrace=False,
         )
 
@@ -1368,49 +1180,32 @@ def e2e_runtime(
     # - Claude GenerationSettings
     http_settings = settings.model_copy(
         update={
-            "app_server_base_url": (
-                "https://backend.e2e.invalid"
-            ),
+            "app_server_base_url": ("https://backend.e2e.invalid"),
             "app_server_max_attempts": 1,
             "app_server_retry_initial_delay_seconds": 0.0,
             "app_server_retry_max_delay_seconds": 0.0,
-            "file_download_allowed_host_suffixes": (
-                ".e2e.invalid"
-            ),
+            "file_download_allowed_host_suffixes": (".e2e.invalid"),
         }
     )
 
-    cases = {
-        case.file_idx: case
-        for case in _PDFS
-    }
+    cases = {case.file_idx: case for case in _PDFS}
 
     recorder = BackendRecorder(
         settings=http_settings,
         cases=cases,
     )
 
-    download_contract = DownloadContract(
-        cases=cases
-    )
+    download_contract = DownloadContract(cases=cases)
 
     backend_client = ApplicationServerIngestClient(
         http_settings,
-        transport=httpx2.MockTransport(
-            recorder.handle
-        ),
+        transport=httpx2.MockTransport(recorder.handle),
     )
 
     downloader = HttpFileDownloader(
         http_settings,
-        transport=httpx2.MockTransport(
-            download_contract.handle
-        ),
-        temp_directory=Path(
-            tmp_path_factory.mktemp(
-                "real-rag-e2e"
-            )
-        ),
+        transport=httpx2.MockTransport(download_contract.handle),
+        temp_directory=Path(tmp_path_factory.mktemp("real-rag-e2e")),
     )
 
     def backend_dependency() -> ApplicationServerIngestClient:
@@ -1423,29 +1218,17 @@ def e2e_runtime(
 
         return downloader
 
-    app.dependency_overrides[
-        get_application_server_ingest_client
-    ] = backend_dependency
+    app.dependency_overrides[get_application_server_ingest_client] = backend_dependency
 
-    app.dependency_overrides[
-        get_file_downloader
-    ] = downloader_dependency
+    app.dependency_overrides[get_file_downloader] = downloader_dependency
 
     try:
         # 이전 테스트 실패나 중단으로 남은 데이터가 현재 결과에 섞이지
         # 않도록 인제스트 전에 전용 범위를 정리한다.
-        asyncio.run(
-            _cleanup(
-                settings
-            )
-        )
+        asyncio.run(_cleanup(settings))
 
-        with TestClient(
-            app
-        ) as client:
-            client.headers["X-Internal-Token"] = (
-                ingest_token.get_secret_value()
-            )
+        with TestClient(app) as client:
+            client.headers["X-Internal-Token"] = ingest_token.get_secret_value()
 
             responses: dict[
                 int,
@@ -1471,20 +1254,24 @@ def e2e_runtime(
                     "POST /ingest response",
                 )
 
-                assert _bool(
-                    body,
-                    "success",
-                ) is True
+                assert (
+                    _bool(
+                        body,
+                        "success",
+                    )
+                    is True
+                )
 
-                assert _str(
-                    body,
-                    "code",
-                ) == "FILE_INDEXING_COMPLETED"
+                assert (
+                    _str(
+                        body,
+                        "code",
+                    )
+                    == "FILE_INDEXING_COMPLETED"
+                )
 
                 responses[case.file_idx] = _object(
-                    body.get(
-                        "data"
-                    ),
+                    body.get("data"),
                     "POST /ingest response data",
                 )
 
@@ -1499,11 +1286,7 @@ def e2e_runtime(
         try:
             # 테스트 Assertion 실패 또는 Fixture 구성 도중 예외가 발생해도
             # E2E 전용 데이터를 정리한다.
-            asyncio.run(
-                _cleanup(
-                    settings
-                )
-            )
+            asyncio.run(_cleanup(settings))
         finally:
             app.dependency_overrides.pop(
                 get_application_server_ingest_client,
@@ -1528,37 +1311,25 @@ def test_fixed_pdf_question_and_expected_source_contract(
 ) -> None:
     """PDF 바이트, 텍스트, 질문 및 예상 출처를 회귀 기준으로 고정한다."""
 
-    assert set(
-        e2e_runtime.responses
-    ) == set(
-        _FILE_IDXS
-    )
+    assert set(e2e_runtime.responses) == set(_FILE_IDXS)
 
     for case in _PDFS:
         pdf_bytes = case.pdf_bytes
 
         # 생성 규칙이나 PDF 원문이 한 글자라도 변경되면 해시가 달라져
         # E2E 검색·답변 기준이 바뀌었음을 즉시 알 수 있어야 한다.
-        assert hashlib.sha256(
-            pdf_bytes
-        ).hexdigest() == case.sha256
+        assert hashlib.sha256(pdf_bytes).hexdigest() == case.sha256
 
-        assert pdf_bytes.startswith(
-            b"%PDF-"
-        )
+        assert pdf_bytes.startswith(b"%PDF-")
 
         # 운영 파서와 동일한 pypdf를 사용하여 실제 텍스트 레이어가
         # 존재하는지 독립적으로 확인한다.
         reader = PdfReader(
-            BytesIO(
-                pdf_bytes
-            ),
+            BytesIO(pdf_bytes),
             strict=True,
         )
 
-        assert len(
-            reader.pages
-        ) == 1
+        assert len(reader.pages) == 1
 
         extracted_text = reader.pages[0].extract_text()
 
@@ -1566,9 +1337,7 @@ def test_fixed_pdf_question_and_expected_source_contract(
         assert case.answer_token in extracted_text
 
     # 단일 문서 질문의 검색 범위와 예상 출처는 Orchid 문서 하나다.
-    assert _QUESTIONS[0].reference_file_idxs == (
-        _ORCHID_FILE_IDX,
-    )
+    assert _QUESTIONS[0].reference_file_idxs == (_ORCHID_FILE_IDX,)
 
     assert _QUESTIONS[0].expected_source_file_idxs == frozenset(
         {
@@ -1579,9 +1348,7 @@ def test_fixed_pdf_question_and_expected_source_contract(
     # 복수 문서 질문의 검색 범위와 예상 출처는 두 문서 모두다.
     assert _QUESTIONS[1].reference_file_idxs == _FILE_IDXS
 
-    assert _QUESTIONS[1].expected_source_file_idxs == frozenset(
-        _FILE_IDXS
-    )
+    assert _QUESTIONS[1].expected_source_file_idxs == frozenset(_FILE_IDXS)
 
 
 # ============================================================
@@ -1603,108 +1370,135 @@ def test_actual_pdf_ingest_and_completion_callback(
 ) -> None:
     """실제 PDF 처리 응답과 Backend 완료 콜백을 대조한다."""
 
-    response_data = e2e_runtime.responses[
-        case.file_idx
-    ]
+    response_data = e2e_runtime.responses[case.file_idx]
 
-    callback = e2e_runtime.recorder.callback(
-        case.file_idx
-    )
+    callback = e2e_runtime.recorder.callback(case.file_idx)
 
     # /ingest 처리 중 최신 manifest를 정확히 한 번 조회해야 한다.
-    assert e2e_runtime.recorder.manifest_requests.count(
-        case.file_idx
-    ) == 1
+    assert e2e_runtime.recorder.manifest_requests.count(case.file_idx) == 1
 
-    assert _int(
-        response_data,
-        "file_idx",
-    ) == case.file_idx
+    assert (
+        _int(
+            response_data,
+            "file_idx",
+        )
+        == case.file_idx
+    )
 
-    assert _int(
-        response_data,
-        "user_idx",
-    ) == _TEST_USER_IDX
+    assert (
+        _int(
+            response_data,
+            "user_idx",
+        )
+        == _TEST_USER_IDX
+    )
 
-    assert _optional_int(
-        response_data,
-        "folder_idx",
-    ) == _TEST_FOLDER_IDX
+    assert (
+        _optional_int(
+            response_data,
+            "folder_idx",
+        )
+        == _TEST_FOLDER_IDX
+    )
 
-    assert _str(
-        response_data,
-        "file_name",
-    ) == case.file_name
+    assert (
+        _str(
+            response_data,
+            "file_name",
+        )
+        == case.file_name
+    )
 
-    assert _str(
-        response_data,
-        "file_type",
-    ) == "pdf"
+    assert (
+        _str(
+            response_data,
+            "file_type",
+        )
+        == "pdf"
+    )
 
     # MockTransport가 제공한 전체 실제 PDF 바이트 수와 downloader 결과가
     # 일치해야 한다.
     assert _int(
         response_data,
         "file_size_bytes",
-    ) == len(
-        case.pdf_bytes
+    ) == len(case.pdf_bytes)
+
+    assert (
+        _int(
+            response_data,
+            "page_count",
+        )
+        == 1
     )
 
-    assert _int(
-        response_data,
-        "page_count",
-    ) == 1
+    assert (
+        _int(
+            response_data,
+            "text_unit_count",
+        )
+        == 1
+    )
 
-    assert _int(
-        response_data,
-        "text_unit_count",
-    ) == 1
+    assert (
+        _int(
+            response_data,
+            "chunk_count",
+        )
+        > 0
+    )
 
-    assert _int(
-        response_data,
-        "chunk_count",
-    ) > 0
+    assert (
+        _str(
+            response_data,
+            "embedding_model",
+        )
+        == e2e_runtime.settings.embedding_model
+    )
 
-    assert _str(
-        response_data,
-        "embedding_model",
-    ) == e2e_runtime.settings.embedding_model
+    assert (
+        _int(
+            response_data,
+            "embedding_dim",
+        )
+        == e2e_runtime.settings.embedding_dim
+    )
 
-    assert _int(
-        response_data,
-        "embedding_dim",
-    ) == e2e_runtime.settings.embedding_dim
-
-    assert _str(
-        response_data,
-        "processing_status",
-    ) == "INDEXED"
+    assert (
+        _str(
+            response_data,
+            "processing_status",
+        )
+        == "INDEXED"
+    )
 
     callback_chunks = _objects(
         callback,
         "chunks",
     )
 
-    assert _bool(
-        callback,
-        "success",
-    ) is True
+    assert (
+        _bool(
+            callback,
+            "success",
+        )
+        is True
+    )
 
-    assert _int(
-        callback,
-        "index_version",
-    ) == _INDEX_VERSION
+    assert (
+        _int(
+            callback,
+            "index_version",
+        )
+        == _INDEX_VERSION
+    )
 
     assert _int(
         callback,
         "chunk_count",
-    ) == len(
-        callback_chunks
-    )
+    ) == len(callback_chunks)
 
-    assert len(
-        callback_chunks
-    ) == _int(
+    assert len(callback_chunks) == _int(
         response_data,
         "chunk_count",
     )
@@ -1725,10 +1519,13 @@ def test_actual_pdf_ingest_and_completion_callback(
             "chunk_id",
         )
 
-        assert _int(
-            chunk,
-            "chunk_index",
-        ) >= 0
+        assert (
+            _int(
+                chunk,
+                "chunk_index",
+            )
+            >= 0
+        )
 
         assert _SHA256_PATTERN.fullmatch(
             _str(
@@ -1738,18 +1535,19 @@ def test_actual_pdf_ingest_and_completion_callback(
         )
 
         source_metadata = _object(
-            chunk.get(
-                "source_metadata"
-            ),
+            chunk.get("source_metadata"),
             "callback source_metadata",
         )
 
         # 두 fixture PDF 모두 단일 페이지이므로 모든 청크의 원본 위치는
         # PDF 1페이지여야 한다.
-        assert _int(
-            source_metadata,
-            "page_number",
-        ) == 1
+        assert (
+            _int(
+                source_metadata,
+                "page_number",
+            )
+            == 1
+        )
 
 
 # ============================================================
@@ -1785,81 +1583,116 @@ def test_local_rag_document_chunk_and_index_state(
     # RAG_Document
     # --------------------------------------------------------
 
-    assert _int(
-        document,
-        "file_idx",
-    ) == case.file_idx
+    assert (
+        _int(
+            document,
+            "file_idx",
+        )
+        == case.file_idx
+    )
 
-    assert _int(
-        document,
-        "users_idx",
-    ) == _TEST_USER_IDX
+    assert (
+        _int(
+            document,
+            "users_idx",
+        )
+        == _TEST_USER_IDX
+    )
 
-    assert _optional_int(
-        document,
-        "folder_idx",
-    ) == _TEST_FOLDER_IDX
+    assert (
+        _optional_int(
+            document,
+            "folder_idx",
+        )
+        == _TEST_FOLDER_IDX
+    )
 
-    assert _str(
-        document,
-        "file_name",
-    ) == case.file_name
+    assert (
+        _str(
+            document,
+            "file_name",
+        )
+        == case.file_name
+    )
 
-    assert _str(
-        document,
-        "file_type",
-    ) == "PDF"
+    assert (
+        _str(
+            document,
+            "file_type",
+        )
+        == "PDF"
+    )
 
-    assert _str(
-        document,
-        "file_hash",
-    ) == case.sha256
+    assert (
+        _str(
+            document,
+            "file_hash",
+        )
+        == case.sha256
+    )
 
-    assert _int(
-        document,
-        "index_version",
-    ) == _INDEX_VERSION
+    assert (
+        _int(
+            document,
+            "index_version",
+        )
+        == _INDEX_VERSION
+    )
 
-    assert _str(
-        document,
-        "parse_status",
-    ) == "PARSED"
+    assert (
+        _str(
+            document,
+            "parse_status",
+        )
+        == "PARSED"
+    )
 
-    assert _str(
-        document,
-        "index_status",
-    ) == "INDEXED"
+    assert (
+        _str(
+            document,
+            "index_status",
+        )
+        == "INDEXED"
+    )
 
-    assert _str(
-        document,
-        "parser_type",
-    ) == _PARSER_TYPE
+    assert (
+        _str(
+            document,
+            "parser_type",
+        )
+        == _PARSER_TYPE
+    )
 
-    assert _str(
-        document,
-        "parser_version",
-    ) == _PARSER_VERSION
+    assert (
+        _str(
+            document,
+            "parser_version",
+        )
+        == _PARSER_VERSION
+    )
 
-    assert _str(
-        document,
-        "embedding_model",
-    ) == e2e_runtime.settings.embedding_model
+    assert (
+        _str(
+            document,
+            "embedding_model",
+        )
+        == e2e_runtime.settings.embedding_model
+    )
 
-    assert _db_bool(
-        document,
-        "is_deleted",
-    ) is False
+    assert (
+        _db_bool(
+            document,
+            "is_deleted",
+        )
+        is False
+    )
 
     assert _int(
         document,
         "chunk_count",
-    ) == len(
-        state.chunks
-    )
+    ) == len(state.chunks)
 
-    assert len(
-        state.chunks
-    ) > 0
+    assert len(state.chunks) > 0
 
     # --------------------------------------------------------
     # RAG_Chunk
@@ -1872,11 +1705,7 @@ def test_local_rag_document_chunk_and_index_state(
             "chunk_index",
         )
         for chunk in state.chunks
-    ) == tuple(
-        range(
-            len(state.chunks)
-        )
-    )
+    ) == tuple(range(len(state.chunks)))
 
     assert case.answer_token in "\n".join(
         _str(
@@ -1895,9 +1724,7 @@ def test_local_rag_document_chunk_and_index_state(
             )
             for chunk in state.chunks
         }
-    ) == len(
-        state.chunks
-    )
+    ) == len(state.chunks)
 
     for chunk in state.chunks:
         assert _int(
@@ -1908,25 +1735,37 @@ def test_local_rag_document_chunk_and_index_state(
             "rag_document_idx",
         )
 
-        assert _int(
-            chunk,
-            "file_idx",
-        ) == case.file_idx
+        assert (
+            _int(
+                chunk,
+                "file_idx",
+            )
+            == case.file_idx
+        )
 
-        assert _int(
-            chunk,
-            "users_idx",
-        ) == _TEST_USER_IDX
+        assert (
+            _int(
+                chunk,
+                "users_idx",
+            )
+            == _TEST_USER_IDX
+        )
 
-        assert _optional_int(
-            chunk,
-            "folder_idx",
-        ) == _TEST_FOLDER_IDX
+        assert (
+            _optional_int(
+                chunk,
+                "folder_idx",
+            )
+            == _TEST_FOLDER_IDX
+        )
 
-        assert _optional_int(
-            chunk,
-            "page",
-        ) == 1
+        assert (
+            _optional_int(
+                chunk,
+                "page",
+            )
+            == 1
+        )
 
         assert _SHA256_PATTERN.fullmatch(
             _str(
@@ -1935,24 +1774,33 @@ def test_local_rag_document_chunk_and_index_state(
             )
         )
 
-        assert _str(
-            chunk,
-            "embedding_model",
-        ) == e2e_runtime.settings.embedding_model
+        assert (
+            _str(
+                chunk,
+                "embedding_model",
+            )
+            == e2e_runtime.settings.embedding_model
+        )
 
-        assert _int(
-            chunk,
-            "index_version",
-        ) == _INDEX_VERSION
+        assert (
+            _int(
+                chunk,
+                "index_version",
+            )
+            == _INDEX_VERSION
+        )
 
     # --------------------------------------------------------
     # RAG_Index_Run
     # --------------------------------------------------------
 
-    assert _int(
-        latest_run,
-        "rag_index_run_idx",
-    ) > 0
+    assert (
+        _int(
+            latest_run,
+            "rag_index_run_idx",
+        )
+        > 0
+    )
 
     assert _int(
         latest_run,
@@ -1962,56 +1810,76 @@ def test_local_rag_document_chunk_and_index_state(
         "rag_document_idx",
     )
 
-    assert _int(
-        latest_run,
-        "file_idx",
-    ) == case.file_idx
+    assert (
+        _int(
+            latest_run,
+            "file_idx",
+        )
+        == case.file_idx
+    )
 
-    assert _int(
-        latest_run,
-        "users_idx",
-    ) == _TEST_USER_IDX
+    assert (
+        _int(
+            latest_run,
+            "users_idx",
+        )
+        == _TEST_USER_IDX
+    )
 
-    assert _str(
-        latest_run,
-        "run_type",
-    ) == "FULL"
+    assert (
+        _str(
+            latest_run,
+            "run_type",
+        )
+        == "FULL"
+    )
 
-    assert _str(
-        latest_run,
-        "status",
-    ) == "SUCCESS"
+    assert (
+        _str(
+            latest_run,
+            "status",
+        )
+        == "SUCCESS"
+    )
 
-    assert _str(
-        latest_run,
-        "parser_type",
-    ) == _PARSER_TYPE
+    assert (
+        _str(
+            latest_run,
+            "parser_type",
+        )
+        == _PARSER_TYPE
+    )
 
-    assert _str(
-        latest_run,
-        "parser_version",
-    ) == _PARSER_VERSION
+    assert (
+        _str(
+            latest_run,
+            "parser_version",
+        )
+        == _PARSER_VERSION
+    )
 
-    assert _str(
-        latest_run,
-        "embedding_model",
-    ) == e2e_runtime.settings.embedding_model
+    assert (
+        _str(
+            latest_run,
+            "embedding_model",
+        )
+        == e2e_runtime.settings.embedding_model
+    )
 
     assert _int(
         latest_run,
         "chunk_count",
-    ) == len(
-        state.chunks
+    ) == len(state.chunks)
+
+    assert (
+        _db_bool(
+            latest_run,
+            "is_finished",
+        )
+        is True
     )
 
-    assert _db_bool(
-        latest_run,
-        "is_finished",
-    ) is True
-
-    assert latest_run.get(
-        "error_message"
-    ) is None
+    assert latest_run.get("error_message") is None
 
 
 # ============================================================
@@ -2056,22 +1924,11 @@ def test_qdrant_active_points_and_payload(
     }
 
     # 활성 Point 수는 Local RAG 원본 청크 수와 정확히 같아야 한다.
-    assert len(
-        points
-    ) == len(
-        chunks_by_id
-    )
+    assert len(points) == len(chunks_by_id)
 
     # Qdrant Point ID는 Local RAG RAG_Chunk.Chunk_ID와 논리적으로
     # 1:1 대응해야 한다.
-    assert {
-        str(
-            point.id
-        )
-        for point in points
-    } == set(
-        chunks_by_id
-    )
+    assert {str(point.id) for point in points} == set(chunks_by_id)
 
     for point in points:
         assert point.payload is not None
@@ -2081,13 +1938,9 @@ def test_qdrant_active_points_and_payload(
             point.payload,
         )
 
-        point_id = str(
-            point.id
-        )
+        point_id = str(point.id)
 
-        local_chunk = chunks_by_id[
-            point_id
-        ]
+        local_chunk = chunks_by_id[point_id]
 
         # 현재 Collection은 unnamed single dense vector를 사용한다.
         assert isinstance(
@@ -2095,9 +1948,7 @@ def test_qdrant_active_points_and_payload(
             list,
         )
 
-        assert len(
-            point.vector
-        ) == e2e_runtime.settings.embedding_dim
+        assert len(point.vector) == e2e_runtime.settings.embedding_dim
 
         assert all(
             not isinstance(value, bool)
@@ -2111,10 +1962,13 @@ def test_qdrant_active_points_and_payload(
             for value in point.vector
         )
 
-        assert _str(
-            payload,
-            "chunk_id",
-        ) == point_id
+        assert (
+            _str(
+                payload,
+                "chunk_id",
+            )
+            == point_id
+        )
 
         assert _int(
             payload,
@@ -2124,20 +1978,29 @@ def test_qdrant_active_points_and_payload(
             "rag_document_idx",
         )
 
-        assert _int(
-            payload,
-            "file_idx",
-        ) == case.file_idx
+        assert (
+            _int(
+                payload,
+                "file_idx",
+            )
+            == case.file_idx
+        )
 
-        assert _int(
-            payload,
-            "users_idx",
-        ) == _TEST_USER_IDX
+        assert (
+            _int(
+                payload,
+                "users_idx",
+            )
+            == _TEST_USER_IDX
+        )
 
-        assert _optional_int(
-            payload,
-            "folder_idx",
-        ) == _TEST_FOLDER_IDX
+        assert (
+            _optional_int(
+                payload,
+                "folder_idx",
+            )
+            == _TEST_FOLDER_IDX
+        )
 
         assert _int(
             payload,
@@ -2155,20 +2018,29 @@ def test_qdrant_active_points_and_payload(
             "content",
         )
 
-        assert _str(
-            payload,
-            "file_name",
-        ) == case.file_name
+        assert (
+            _str(
+                payload,
+                "file_name",
+            )
+            == case.file_name
+        )
 
-        assert _str(
-            payload,
-            "file_type",
-        ) == "PDF"
+        assert (
+            _str(
+                payload,
+                "file_type",
+            )
+            == "PDF"
+        )
 
-        assert _str(
-            payload,
-            "file_hash",
-        ) == case.sha256
+        assert (
+            _str(
+                payload,
+                "file_hash",
+            )
+            == case.sha256
+        )
 
         assert _str(
             payload,
@@ -2186,35 +2058,53 @@ def test_qdrant_active_points_and_payload(
             "token_count",
         )
 
-        assert _optional_int(
-            payload,
-            "page",
-        ) == 1
+        assert (
+            _optional_int(
+                payload,
+                "page",
+            )
+            == 1
+        )
 
-        assert _str(
-            payload,
-            "parser_version",
-        ) == _PARSER_VERSION
+        assert (
+            _str(
+                payload,
+                "parser_version",
+            )
+            == _PARSER_VERSION
+        )
 
-        assert _str(
-            payload,
-            "embedding_model",
-        ) == e2e_runtime.settings.embedding_model
+        assert (
+            _str(
+                payload,
+                "embedding_model",
+            )
+            == e2e_runtime.settings.embedding_model
+        )
 
-        assert _int(
-            payload,
-            "embedding_dim",
-        ) == e2e_runtime.settings.embedding_dim
+        assert (
+            _int(
+                payload,
+                "embedding_dim",
+            )
+            == e2e_runtime.settings.embedding_dim
+        )
 
-        assert _int(
-            payload,
-            "index_version",
-        ) == _INDEX_VERSION
+        assert (
+            _int(
+                payload,
+                "index_version",
+            )
+            == _INDEX_VERSION
+        )
 
-        assert _bool(
-            payload,
-            "is_active",
-        ) is True
+        assert (
+            _bool(
+                payload,
+                "is_active",
+            )
+            is True
+        )
 
         # 생성 시각은 비어 있지 않은 ISO-8601 문자열로 저장되어야 한다.
         assert _str(
@@ -2231,10 +2121,7 @@ def test_qdrant_active_points_and_payload(
 @pytest.mark.parametrize(
     "question",
     _QUESTIONS,
-    ids=tuple(
-        question.name
-        for question in _QUESTIONS
-    ),
+    ids=tuple(question.name for question in _QUESTIONS),
 )
 def test_single_and_multiple_reference_real_claude_answer(
     e2e_runtime: E2eRuntime,
@@ -2246,9 +2133,7 @@ def test_single_and_multiple_reference_real_claude_answer(
         "/api/v1/rag/answers",
         json={
             "user_idx": _TEST_USER_IDX,
-            "reference_file_idxs": list(
-                question.reference_file_idxs
-            ),
+            "reference_file_idxs": list(question.reference_file_idxs),
             "query": question.query,
             # 두 PDF가 향후 청킹 정책 변경으로 여러 청크가 되더라도
             # 모든 관련 후보를 포함할 수 있도록 충분한 상한을 사용한다.
@@ -2266,9 +2151,7 @@ def test_single_and_multiple_reference_real_claude_answer(
     )
 
     assert response.status_code == 200, (
-        f"{question.name} Claude answer failed: "
-        f"status={response.status_code}, "
-        f"body={response.text}"
+        f"{question.name} Claude answer failed: status={response.status_code}, body={response.text}"
     )
 
     body = _object(
@@ -2276,20 +2159,24 @@ def test_single_and_multiple_reference_real_claude_answer(
         "RAG answer response",
     )
 
-    assert _bool(
-        body,
-        "success",
-    ) is True
+    assert (
+        _bool(
+            body,
+            "success",
+        )
+        is True
+    )
 
-    assert _str(
-        body,
-        "code",
-    ) == "RAG_ANSWER_COMPLETED"
+    assert (
+        _str(
+            body,
+            "code",
+        )
+        == "RAG_ANSWER_COMPLETED"
+    )
 
     data = _object(
-        body.get(
-            "data"
-        ),
+        body.get("data"),
         "RAG answer response data",
     )
 
@@ -2298,35 +2185,40 @@ def test_single_and_multiple_reference_real_claude_answer(
         "answer",
     )
 
-    assert _str(
-        data,
-        "status",
-    ) == "answered"
+    assert (
+        _str(
+            data,
+            "status",
+        )
+        == "answered"
+    )
 
     # Stub 응답이 아니라 실제 Claude 응답 모델 ID가 포함되어야 한다.
     assert _str(
         data,
         "model",
-    ).startswith(
-        "claude-"
-    )
+    ).startswith("claude-")
 
     usage = _object(
-        data.get(
-            "usage"
-        ),
+        data.get("usage"),
         "RAG answer usage",
     )
 
-    assert _int(
-        usage,
-        "input_tokens",
-    ) > 0
+    assert (
+        _int(
+            usage,
+            "input_tokens",
+        )
+        > 0
+    )
 
-    assert _int(
-        usage,
-        "output_tokens",
-    ) > 0
+    assert (
+        _int(
+            usage,
+            "output_tokens",
+        )
+        > 0
+    )
 
     # 문서에 고정한 고유 토큰은 번역이나 표현 방식과 관계없이
     # Claude 답변에 원문 그대로 포함되어야 한다.
@@ -2346,23 +2238,20 @@ def test_single_and_multiple_reference_real_claude_answer(
 
     # 단일 질문은 Orchid 하나, 복수 질문은 Orchid와 Cobalt 모두가
     # 실제 사용 출처로 반환되어야 한다.
-    assert frozenset(
-        _int(
-            source,
-            "file_idx",
+    assert (
+        frozenset(
+            _int(
+                source,
+                "file_idx",
+            )
+            for source in sources
         )
-        for source in sources
-    ) == question.expected_source_file_idxs
+        == question.expected_source_file_idxs
+    )
 
     # RagAnswerService 계약에 따라 sources 순서는 답변 본문에서
     # SOURCE-N이 최초로 등장한 순서와 정확히 같아야 한다.
-    cited_source_ids = tuple(
-        dict.fromkeys(
-            _SOURCE_PATTERN.findall(
-                answer
-            )
-        )
-    )
+    cited_source_ids = tuple(dict.fromkeys(_SOURCE_PATTERN.findall(answer)))
 
     response_source_ids = tuple(
         _str(
@@ -2385,15 +2274,21 @@ def test_single_and_multiple_reference_real_claude_answer(
         # 벗어나지 않아야 한다.
         assert source_file_idx in question.reference_file_idxs
 
-        assert _str(
-            source,
-            "file_type",
-        ) == "pdf"
+        assert (
+            _str(
+                source,
+                "file_type",
+            )
+            == "pdf"
+        )
 
-        assert _optional_int(
-            source,
-            "page",
-        ) == 1
+        assert (
+            _optional_int(
+                source,
+                "page",
+            )
+            == 1
+        )
 
         assert _str(
             source,

@@ -56,9 +56,7 @@ class DocumentParserFactory:
             #
             # TXT, DOCX, XLSX, PPTX는 DocumentType에 남겨 두어 외부 입력을
             # 정확한 미지원 형식으로 식별하지만 기본 파서로 등록하지 않는다.
-            registered_parsers: tuple[DocumentParser, ...] = (
-                PdfDocumentParser(),
-            )
+            registered_parsers: tuple[DocumentParser, ...] = (PdfDocumentParser(),)
         else:
             # 빈 tuple도 "등록 파서 없음"이라는 명시적인 설정으로 취급한다.
             registered_parsers = tuple(parsers)
@@ -107,9 +105,7 @@ class DocumentParserFactory:
         except KeyError as error:
             # 일반 KeyError를 외부로 노출하지 않고 문서 계층의
             # 명확한 미지원 형식 예외로 변환한다.
-            raise UnsupportedDocumentTypeError(
-                normalized_file_type
-            ) from error
+            raise UnsupportedDocumentTypeError(normalized_file_type) from error
 
     def supports(
         self,

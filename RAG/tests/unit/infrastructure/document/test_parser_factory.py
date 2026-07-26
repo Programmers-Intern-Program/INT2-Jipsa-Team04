@@ -92,9 +92,7 @@ def test_factory_rejects_non_pdf_document_types(
     assert factory.supports(file_type) is False
     assert factory.supports(file_type.value.lower()) is False
 
-    with pytest.raises(
-        UnsupportedDocumentTypeError
-    ) as exception_info:
+    with pytest.raises(UnsupportedDocumentTypeError) as exception_info:
         factory.get_parser(file_type)
 
     # Enum 입력은 예외에서도 동일한 형식 값으로 보존되어야 한다.
@@ -108,9 +106,7 @@ def test_factory_rejects_unknown_document_type_string() -> None:
 
     assert factory.supports("CSV") is False
 
-    with pytest.raises(
-        UnsupportedDocumentTypeError
-    ) as exception_info:
+    with pytest.raises(UnsupportedDocumentTypeError) as exception_info:
         factory.get_parser("CSV")
 
     assert exception_info.value.file_type == "CSV"
@@ -119,9 +115,7 @@ def test_factory_rejects_unknown_document_type_string() -> None:
 def test_factory_allows_explicit_empty_registration_for_isolated_tests() -> None:
     """빈 파서 목록을 전달하면 기본 PDF 파서도 자동 추가하지 않는다."""
 
-    factory = DocumentParserFactory(
-        parsers=()
-    )
+    factory = DocumentParserFactory(parsers=())
 
     assert factory.registered_file_types == frozenset()
     assert factory.supports(DocumentType.PDF) is False
@@ -130,9 +124,7 @@ def test_factory_allows_explicit_empty_registration_for_isolated_tests() -> None
 def test_factory_rejects_duplicate_parser_registration() -> None:
     """동일한 PDF 파서를 두 번 등록하면 선택 모호성을 방지하기 위해 거부한다."""
 
-    with pytest.raises(
-        DuplicateDocumentParserError
-    ) as exception_info:
+    with pytest.raises(DuplicateDocumentParserError) as exception_info:
         DocumentParserFactory(
             parsers=(
                 PdfDocumentParser(),
