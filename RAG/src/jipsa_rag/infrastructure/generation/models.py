@@ -14,7 +14,9 @@ def _validate_required_text(
     """원본 문자열은 보존하면서 공백만 있는 입력을 거부한다."""
 
     if not value.strip():
-        raise ValueError(f"{field_name} must not be empty.")
+        raise ValueError(
+            f"{field_name} must not be empty.",
+        )
 
 
 def _copy_read_only_mapping(
@@ -57,14 +59,19 @@ class GenerationRequest:
     ``output_schema``가 제공되면 생성 클라이언트는 공급자가 지원하는 구조화
     출력 기능을 사용해야 한다. 스키마는 요청 생성 시 깊은 복사하여 호출자의
     후속 변경이 이미 시작된 생성 요청에 영향을 주지 않게 한다.
+
+    ``max_output_tokens``는 요청 단위 생성 제한기가 남은 누적 출력 예산에
+    맞춰 단일 Claude 호출의 ``max_tokens``를 낮출 때 사용한다. 값이 없으면
+    공급자 설정의 기본 최대 출력 토큰 수를 그대로 사용한다.
     """
 
     user_prompt: str
     system_prompt: str | None = None
     output_schema: Mapping[str, object] | None = None
+    max_output_tokens: int | None = None
 
     def __post_init__(self) -> None:
-        """프롬프트와 선택적 구조화 출력 스키마를 검증하고 고정한다."""
+        """프롬프트와 선택적 구조화 출력 스키마 및 토큰 제한을 검증한다."""
 
         _validate_required_text(
             self.user_prompt,
@@ -77,6 +84,9 @@ class GenerationRequest:
                 field_name="system_prompt",
             )
 
+        if self.max_output_tokens is not None and self.max_output_tokens <= 0:
+            raise ValueError("max_output_tokens must be greater than zero when provided.")
+
         if self.output_schema is None:
             return
 
@@ -86,7 +96,9 @@ class GenerationRequest:
         object.__setattr__(
             self,
             "output_schema",
-            _copy_read_only_mapping(self.output_schema),
+            _copy_read_only_mapping(
+                self.output_schema,
+            ),
         )
 
 
@@ -146,7 +158,9 @@ class GenerationResult:
         normalized_model = self.model.strip()
 
         if not normalized_model:
-            raise ValueError("model must not be empty.")
+            raise ValueError(
+                "model must not be empty.",
+            )
 
         object.__setattr__(
             self,

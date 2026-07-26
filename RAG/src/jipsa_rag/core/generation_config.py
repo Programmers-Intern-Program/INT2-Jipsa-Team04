@@ -88,6 +88,46 @@ class GenerationSettings(BaseSettings):
         le=600,
     )
 
+    # 한 번의 RAG 답변 요청에서 허용할 최대 Claude 호출 횟수다.
+    #
+    # 최대 참조문서 20개를 각각 부분 생성한 뒤 최종 종합을 한 번 수행하는
+    # 현재 synthesis 상한을 고려하여 기본값을 21로 둔다.
+    anthropic_max_calls_per_answer: int = Field(
+        default=21,
+        ge=1,
+        le=64,
+    )
+
+    # 하나의 lookup 또는 synthesis 답변 전체가 사용할 수 있는 누적 입력
+    # 토큰 상한이다.
+    #
+    # 공급자 호출 전에는 프롬프트 UTF-8 바이트 길이를 보수적인 추정치로
+    # 검사하고, 호출 후에는 실제 usage로 다시 검증한다.
+    anthropic_max_input_tokens_per_answer: int = Field(
+        default=400_000,
+        ge=1,
+        le=10_000_000,
+    )
+
+    # 하나의 RAG 답변 전체가 사용할 수 있는 누적 출력 토큰 상한이다.
+    #
+    # 부분 답변과 최종 종합 답변의 실제 output_tokens를 모두 합산한다.
+    anthropic_max_output_tokens_per_answer: int = Field(
+        default=64_000,
+        ge=1,
+        le=1_000_000,
+    )
+
+    # 동일 RAG 프로세스에서 동시에 실행할 수 있는 Claude 공급자 요청 수다.
+    #
+    # 서로 다른 HTTP 요청에서 생성된 클라이언트도 프로세스 공유 제한기를
+    # 사용하므로 이 값을 초과하여 Claude를 호출하지 않는다.
+    anthropic_max_concurrent_requests: int = Field(
+        default=2,
+        ge=1,
+        le=32,
+    )
+
     model_config = SettingsConfigDict(
         # generation_provider
         # -> JIPSA_RAG_GENERATION_PROVIDER
@@ -100,6 +140,18 @@ class GenerationSettings(BaseSettings):
         #
         # anthropic_timeout_seconds
         # -> JIPSA_RAG_ANTHROPIC_TIMEOUT_SECONDS
+        #
+        # anthropic_max_calls_per_answer
+        # -> JIPSA_RAG_ANTHROPIC_MAX_CALLS_PER_ANSWER
+        #
+        # anthropic_max_input_tokens_per_answer
+        # -> JIPSA_RAG_ANTHROPIC_MAX_INPUT_TOKENS_PER_ANSWER
+        #
+        # anthropic_max_output_tokens_per_answer
+        # -> JIPSA_RAG_ANTHROPIC_MAX_OUTPUT_TOKENS_PER_ANSWER
+        #
+        # anthropic_max_concurrent_requests
+        # -> JIPSA_RAG_ANTHROPIC_MAX_CONCURRENT_REQUESTS
         #
         # anthropic_api_key는 공식 환경 변수 이름과 프로젝트 접두사 이름을
         # 모두 허용하기 위해 필드의 validation_alias에서 별도로 정의한다.

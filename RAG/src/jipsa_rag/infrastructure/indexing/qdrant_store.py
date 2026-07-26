@@ -94,29 +94,29 @@ class QdrantChunkVectorStore:
         *,
         client: AsyncQdrantClient | None = None,
     ) -> None:
-        """Qdrant 연결 설정과 선택적인 테스트 클라이언트를 주입받는다."""
+        """Qdrant 설정과 선택적인 외부 클라이언트를 주입받는다.
+
+        외부 클라이언트가 주입되지 않은 경우에도 생성자에서는 실제
+        AsyncQdrantClient를 만들지 않는다.
+
+        qdrant-client는 원격 클라이언트를 생성할 때 서버 버전 호환성 확인을
+        수행할 수 있다. 따라서 객체가 의존성으로 생성되었지만 요청 검증이나
+        빈 작업 처리로 Qdrant를 사용하지 않는 경우에는 불필요한 네트워크
+        접근과 호환성 경고가 발생하지 않도록 최초 실제 연산까지 생성을
+        지연한다.
+        """
 
         self._settings = settings
-        self._owns_client = client is None
-        self._client = client or AsyncQdrantClient(
-            url=settings.qdrant_url,
-            grpc_port=settings.qdrant_grpc_port,
-            prefer_grpc=settings.qdrant_prefer_grpc,
-            api_key=(
-                settings.qdrant_api_key.get_secret_value()
-                if settings.qdrant_api_key is not None
-                else None
-            ),
-            # qdrant-client의 timeout 인수는 정수 초를 사용한다.
-            # 소수 설정값을 내림하면 관리자가 지정한 제한보다 짧아질 수 있으므로
-            # 올림한 양수 값으로 전달한다.
-            timeout=max(
-                1,
-                ceil(settings.qdrant_timeout_seconds),
-            ),
-        )
 
-        # Collection 존재 확인과 payload index 생성은 프로세스에서 한 번만 수행한다.
+        # 외부에서 주입한 클라이언트의 생명주기는 주입한 호출자가 관리한다.
+        #
+        # client가 None일 때만 이 저장소가 클라이언트 소유권을 가지며,
+        # 최초 실제 Qdrant 연산에서 클라이언트를 생성하고 close()에서 종료한다.
+        self._owns_client = client is None
+        self._client = client
+
+        # Collection 존재 확인과 payload index 생성은 프로세스에서 한 번만
+        # 수행한다.
         self._collection_ready = False
         self._collection_lock = asyncio.Lock()
 
@@ -134,8 +134,13 @@ class QdrantChunkVectorStore:
         멱등 재사용할 때만 True로 업서트한다.
         """
 
+        # 임베딩 설정 오류는 Qdrant 클라이언트를 생성하거나 네트워크 요청을
+        # 수행하기 전에 검증한다.
         self._validate_embedding_configuration(embedded_document)
-        await self._ensure_collection()
+
+        # Collection 준비 과정에서 필요한 경우 Qdrant 클라이언트가 최초로
+        # 생성된다. 이미 준비된 경우에는 동일 클라이언트를 재사용한다.
+        client = await self._ensure_collection()
 
         created_at = datetime.now(UTC).isoformat()
 
@@ -159,7 +164,7 @@ class QdrantChunkVectorStore:
         ]
 
         try:
-            await self._client.upsert(
+            await client.upsert(
                 collection_name=(self._settings.qdrant_collection),
                 points=points,
                 # wait=True를 사용하여 서버가 모든 변경을 적용한 뒤
@@ -192,15 +197,19 @@ class QdrantChunkVectorStore:
 
         normalized_document_ids = _normalize_document_ids(rag_document_idxs)
 
+        # 변경 대상이 없으면 Qdrant 클라이언트를 생성하지 않는다.
+        #
+        # 빈 작업이 서버 버전 확인이나 네트워크 연결을 유발하지 않도록
+        # 클라이언트 조회보다 먼저 반환한다.
         if not normalized_document_ids:
             return
 
         # 활성 상태 변경 API가 독립적으로 호출되더라도 Collection과
         # rag_document_idx payload index가 준비되어 있도록 보장한다.
-        await self._ensure_collection()
+        client = await self._ensure_collection()
 
         try:
-            await self._client.set_payload(
+            await client.set_payload(
                 collection_name=(self._settings.qdrant_collection),
                 payload={
                     "is_active": is_active,
@@ -234,11 +243,17 @@ class QdrantChunkVectorStore:
     ) -> None:
         """실패한 신규 색인의 staging Point를 보상 삭제한다."""
 
+        # 삭제 대상이 없으면 Qdrant 클라이언트를 생성하지 않는다.
+        #
+        # 보상 처리 경로에서 빈 Chunk ID 목록이 전달될 수 있으므로
+        # 이를 실제 Qdrant 요청이나 연결 초기화로 확장하지 않는다.
         if not chunk_ids:
             return
 
+        client = self._get_client()
+
         try:
-            await self._client.delete(
+            await client.delete(
                 collection_name=(self._settings.qdrant_collection),
                 points_selector=(
                     models.PointIdsList(
@@ -257,31 +272,90 @@ class QdrantChunkVectorStore:
             raise VectorDatabaseUnavailableError("delete_chunks") from error
 
     async def close(self) -> None:
-        """이 저장소가 직접 생성한 Qdrant 클라이언트 연결을 종료한다."""
+        """이 저장소가 실제 생성한 Qdrant 클라이언트만 종료한다.
 
-        if self._owns_client:
-            await self._client.close()
+        저장소가 생성되었더라도 Qdrant 연산이 한 번도 실행되지 않았다면
+        self._client는 None이다. 이 경우 종료를 위해 새 클라이언트를 만들지
+        않고 그대로 반환한다.
 
-    async def _ensure_collection(self) -> None:
-        """Collection과 필터용 payload index를 요청 처리 전에 준비한다."""
+        외부에서 주입한 클라이언트는 호출자가 소유하므로 종료하지 않는다.
+        """
+
+        if not self._owns_client or self._client is None:
+            return
+
+        # close()가 실패한 경우에는 참조를 유지하여 호출자가 종료를 다시
+        # 시도하거나 실패 상태를 확인할 수 있도록 성공 이후에만 초기화한다.
+        await self._client.close()
+
+        self._client = None
+
+        # 종료된 저장소 인스턴스가 예외적으로 다시 사용될 경우 새 클라이언트와
+        # 새 연결을 사용하여 Collection 준비 상태를 다시 확인해야 한다.
+        self._collection_ready = False
+
+    def _get_client(self) -> AsyncQdrantClient:
+        """최초 실제 Qdrant 연산에서 소유 클라이언트를 한 번만 생성한다.
+
+        생성자에서 클라이언트를 즉시 만들지 않으므로 FastAPI 의존성 해결,
+        요청 검증 실패, 빈 보상 작업과 같이 Qdrant를 사용하지 않는 흐름에서는
+        qdrant-client의 서버 버전 확인도 실행되지 않는다.
+
+        실제 색인·활성화·삭제 연산이 시작되면 기존과 동일한 설정으로
+        AsyncQdrantClient를 생성한다. check_compatibility 값을 별도로
+        비활성화하지 않으므로 실제 Qdrant 연결에서는 SDK의 기본 호환성
+        검사가 유지된다.
+        """
+
+        if self._client is None:
+            self._client = AsyncQdrantClient(
+                url=self._settings.qdrant_url,
+                grpc_port=self._settings.qdrant_grpc_port,
+                prefer_grpc=self._settings.qdrant_prefer_grpc,
+                api_key=(
+                    self._settings.qdrant_api_key.get_secret_value()
+                    if self._settings.qdrant_api_key is not None
+                    else None
+                ),
+                # qdrant-client의 timeout 인수는 정수 초를 사용한다.
+                #
+                # 소수 설정값을 내림하면 관리자가 지정한 제한보다 짧아질 수
+                # 있으므로 올림한 양수 값으로 전달한다.
+                timeout=max(
+                    1,
+                    ceil(self._settings.qdrant_timeout_seconds),
+                ),
+            )
+
+        return self._client
+
+    async def _ensure_collection(self) -> AsyncQdrantClient:
+        """Collection과 필터용 payload index를 요청 처리 전에 준비한다.
+
+        준비 과정에서 실제 Qdrant 통신이 필요하므로 이 메서드가 호출되는
+        시점에 소유 클라이언트를 지연 생성한다.
+
+        호출자는 준비 과정과 이후 Point 연산에서 같은 클라이언트를 사용하도록
+        반환값을 받아 재사용한다.
+        """
+
+        client = self._get_client()
 
         if self._collection_ready:
-            return
+            return client
 
         async with self._collection_lock:
             # lock을 기다리는 동안 다른 요청이 준비를 완료했을 수 있으므로
             # 임계 구역 진입 후 상태를 다시 확인한다.
             if self._collection_ready:
-                return
+                return client
 
             try:
-                collection_exists = await self._client.collection_exists(
-                    self._settings.qdrant_collection
-                )
+                collection_exists = await client.collection_exists(self._settings.qdrant_collection)
 
                 if not collection_exists:
                     try:
-                        await self._client.create_collection(
+                        await client.create_collection(
                             collection_name=(self._settings.qdrant_collection),
                             vectors_config=(
                                 models.VectorParams(
@@ -302,7 +376,7 @@ class QdrantChunkVectorStore:
                     field_schema,
                 ) in _PAYLOAD_INDEXES:
                     try:
-                        await self._client.create_payload_index(
+                        await client.create_payload_index(
                             collection_name=(self._settings.qdrant_collection),
                             field_name=field_name,
                             field_schema=field_schema,
@@ -324,6 +398,8 @@ class QdrantChunkVectorStore:
                 raise VectorDatabaseUnavailableError("ensure_collection") from error
 
             self._collection_ready = True
+
+        return client
 
     def _validate_embedding_configuration(
         self,
@@ -496,7 +572,12 @@ _qdrant_vector_store: QdrantChunkVectorStore | None = None
 
 
 def get_qdrant_vector_store() -> QdrantChunkVectorStore:
-    """애플리케이션 프로세스에서 재사용할 Qdrant 저장소를 반환한다."""
+    """애플리케이션 프로세스에서 재사용할 Qdrant 저장소를 반환한다.
+
+    반환되는 저장소 객체 자체는 Qdrant 연결을 즉시 생성하지 않는다.
+    실제 색인, 활성 상태 변경 또는 삭제 연산이 실행될 때 클라이언트가
+    지연 생성된다.
+    """
 
     global _qdrant_vector_store
 
@@ -507,7 +588,7 @@ def get_qdrant_vector_store() -> QdrantChunkVectorStore:
 
 
 async def close_qdrant_vector_store() -> None:
-    """생성된 Qdrant 저장소가 있을 때만 클라이언트를 종료한다."""
+    """생성된 Qdrant 저장소와 실제 소유 클라이언트를 안전하게 종료한다."""
 
     global _qdrant_vector_store
 
