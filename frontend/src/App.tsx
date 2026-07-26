@@ -29,7 +29,7 @@ import type { Document, AISettings, ChatMessage, ChatSession, SessionUser, MeRes
 import { getUserSettings, updateUserSettings } from "./api/userSettings";
 import { loginWithGoogle, logout as logoutApi } from "./api/auth";
 import { getMe } from "./api/me";
-import { TOKEN_ROLE_CHANGED_EVENT } from "./api/client";
+import { ApiError, TOKEN_ROLE_CHANGED_EVENT } from "./api/client";
 import {
   OAUTH_CALLBACK_PATH,
   clearOAuthState,
@@ -38,6 +38,8 @@ import {
   verifyOAuthState,
 } from "./utils/oauth";
 import { listAllFiles } from "./api/files";
+import { listConversations, listMessages, renameConversation, deleteConversation, createConversation, sendMessage, submitFeedback } from "./api/chat";
+import type { ChatMessageResponse } from "./api/chat";
 import { useUploads } from "./upload/UploadProvider";
 import { fetchWithRetry } from "./utils/retry";
 
@@ -83,6 +85,44 @@ function createChatSession(selectedDocIds: string[] = [], title?: string): ChatS
   };
 }
 
+function mapServerMessagesToHistory(messages: ChatMessageResponse[]): ChatMessage[] {
+  const history: ChatMessage[] = [];
+  for (const message of messages) {
+    const time = new Date(message.createdAt).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" });
+    history.push({
+      id: `q-${message.messageId}`,
+      sender: "user",
+      text: message.question,
+      citations: [],
+      timestamp: time,
+    });
+    history.push({
+      id: `a-${message.messageId}`,
+      sender: "ai",
+      text: message.answer,
+      citations: message.citations,
+      timestamp: time,
+      messageId: message.messageId,
+      status: message.status,
+      feedbackRating: message.feedbackRating,
+      referenceFiles: message.referenceFiles,
+    });
+  }
+  return history;
+}
+
+function describeChatError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 429) return "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.";
+    if (err.status === 503) return "AI 답변 서버에 일시적으로 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.";
+    if (err.status === 502) return "AI 답변 서버 응답에 문제가 발생했습니다. 다시 시도해 주세요.";
+    if (err.status === 401) return "로그인이 필요합니다. 다시 로그인해 주세요.";
+    if (err.status === 400) return err.message || "요청이 올바르지 않습니다.";
+    return err.message || "답변을 가져오지 못했습니다.";
+  }
+  return "답변을 가져오지 못했습니다. 네트워크 상태를 확인해 주세요.";
+}
+
 export default function App() {
   const [user, setUser] = useState<SessionUser | null>(() => {
     // 토큰 없이 저장된 사용자(예: 예전 mock 로그인 찌꺼기)는 복원하지 않는다.
@@ -113,7 +153,6 @@ export default function App() {
   const [activeChatSessionId, setActiveChatSessionId] = useState<string>(() => chatSessions[0].id);
   const [committedSettings, setCommittedSettings] = useState<AISettings>({ sensitivity: 0.85, voiceModel: "Nova (명확하고 신뢰감 있는)", responseStyle: "간결형", instantSummary: true, autoHighlight: false, pushNotification: true });
   const [isUploadOpen, setIsUploadOpen] = useState(false);
-  const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
 
   // StrictMode(dev)에서 아래 useEffect가 2번 실행돼 같은 authorization code가 두 번
@@ -237,6 +276,36 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    listConversations()
+        .then(async (conversations) => {
+          if (conversations.length === 0) return;
+          const sessions = await Promise.all(
+              conversations.map(async (conversation) => {
+                const messages = await listMessages(conversation.id).catch(() => []);
+                return {
+                  id: `session-${conversation.id}`,
+                  title: conversation.title,
+                  chatHistory: mapServerMessagesToHistory(messages),
+                  selectedDocIds: [],
+                  conversationId: conversation.id,
+                };
+              })
+          );
+          if (cancelled || sessions.length === 0) return;
+          setChatSessions(sessions);
+          setActiveChatSessionId(sessions[0].id);
+        })
+        .catch((err) => {
+          console.error("[chat] 대화 목록 조회 실패:", err);
+        });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  useEffect(() => {
     if (uploadedSignal === 0) return;
     listAllFiles()
         .then(setDocuments)
@@ -313,43 +382,106 @@ export default function App() {
     );
   };
 
-  // Send message to RAG Chat engine (mock: API 연동 전까지는 안내 메시지로 응답)
-  const handleSendMessage = async (text: string) => {
+  const ensureConversation = async (session: ChatSession): Promise<number> => {
+    if (session.conversationId != null) return session.conversationId;
+    const conversation = await createConversation(session.title);
+    setChatSessions((prev) =>
+        prev.map((item) => (item.id === session.id ? { ...item, conversationId: conversation.id } : item))
+    );
+    return conversation.id;
+  };
+
+  const runSend = async (sessionId: string, text: string, fileIds: number[]) => {
+    setChatSessions((prev) =>
+        prev.map((item) =>
+            item.id === sessionId ? { ...item, isLoading: true, error: null, lastAttempt: { text, fileIds } } : item
+        )
+    );
+    try {
+      const session = chatSessions.find((item) => item.id === sessionId);
+      if (!session) return;
+      const conversationId = await ensureConversation(session);
+      const response = await sendMessage(conversationId, { question: text, fileIds });
+      const aiMessage: ChatMessage = {
+        id: `a-${response.messageId}`,
+        sender: "ai",
+        text: response.answer,
+        citations: response.citations,
+        timestamp: new Date(response.createdAt).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }),
+        messageId: response.messageId,
+        status: response.status,
+        feedbackRating: response.feedbackRating,
+        referenceFiles: response.referenceFiles,
+      };
+      setChatSessions((prev) =>
+          prev.map((item) =>
+              item.id === sessionId
+                  ? { ...item, chatHistory: [...item.chatHistory, aiMessage], isLoading: false, lastAttempt: undefined }
+                  : item
+          )
+      );
+    } catch (err) {
+      setChatSessions((prev) =>
+          prev.map((item) => (item.id === sessionId ? { ...item, isLoading: false, error: describeChatError(err) } : item))
+      );
+    }
+  };
+
+  const handleSendMessage = async (text: string, refDocIds: string[]) => {
     const targetSessionId = activeChatSessionId;
+    const fileIds = refDocIds.map(Number).filter((id) => Number.isFinite(id) && id > 0);
+    if (fileIds.length === 0) {
+      setChatSessions((prev) =>
+          prev.map((item) => (item.id === targetSessionId ? { ...item, error: "참조할 문서를 1개 이상 선택해 주세요." } : item))
+      );
+      return;
+    }
     const userMessage: ChatMessage = {
       id: `chat-${Date.now()}`,
       sender: "user",
       text,
       citations: [],
-      timestamp: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
-    };
-
-    setChatSessions((prev) =>
-      prev.map((session) =>
-        session.id === targetSessionId
-          ? { ...session, chatHistory: [...session.chatHistory, userMessage] }
-          : session
-      )
-    );
-    setIsLoadingChat(true);
-
-    // mock 응답 (실제 RAG 추론 엔진 연동은 별도 이슈)
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const aiMessage: ChatMessage = {
-      id: `chat-${Date.now() + 1}`,
-      sender: "ai",
-      text: "이것은 mock 응답입니다. 실제 AI 추론 엔진 연동은 별도 이슈에서 진행됩니다.",
-      citations: [],
-      timestamp: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })
+      timestamp: new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }),
     };
     setChatSessions((prev) =>
-      prev.map((session) =>
-        session.id === targetSessionId
-          ? { ...session, chatHistory: [...session.chatHistory, aiMessage] }
-          : session
-      )
+        prev.map((item) =>
+            item.id === targetSessionId ? { ...item, chatHistory: [...item.chatHistory, userMessage] } : item
+        )
     );
-    setIsLoadingChat(false);
+    await runSend(targetSessionId, text, fileIds);
+  };
+
+  const handleRetryChat = async () => {
+    const session = chatSessions.find((s) => s.id === activeChatSessionId);
+    if (!session || !session.lastAttempt) return;
+    await runSend(session.id, session.lastAttempt.text, session.lastAttempt.fileIds);
+  };
+
+  const handleFeedback = async (messageId: number, rating: "UP" | "DOWN") => {
+    const session = chatSessions.find((s) => s.id === activeChatSessionId);
+    if (!session || session.conversationId == null) return;
+    const conversationId = session.conversationId;
+    const targetSessionId = session.id;
+    const previous = session.chatHistory.find((m) => m.messageId === messageId)?.feedbackRating ?? null;
+    setChatSessions((prev) =>
+        prev.map((s) =>
+            s.id === targetSessionId
+                ? { ...s, chatHistory: s.chatHistory.map((m) => (m.messageId === messageId ? { ...m, feedbackRating: rating } : m)) }
+                : s
+        )
+    );
+    try {
+      await submitFeedback(conversationId, messageId, rating);
+    } catch (err) {
+      console.warn("[chat] 피드백 저장 실패:", err);
+      setChatSessions((prev) =>
+          prev.map((s) =>
+              s.id === targetSessionId
+                  ? { ...s, chatHistory: s.chatHistory.map((m) => (m.messageId === messageId ? { ...m, feedbackRating: previous } : m)) }
+                  : s
+          )
+      );
+    }
   };
 
   // Save Settings — 로컬 상태 먼저 반영(데모 흐름 유지) 후 실제 API 호출 시도.
@@ -380,6 +512,12 @@ export default function App() {
   };
 
   const handleCloseChatTab = (sessionId: string) => {
+    const target = chatSessions.find((session) => session.id === sessionId);
+    if (target?.conversationId != null) {
+      deleteConversation(target.conversationId).catch((err) => {
+        console.warn("[chat] 대화 삭제 API 실패 - 로컬에서만 제거됨:", err);
+      });
+    }
     setChatSessions((prev) => {
       const remaining = prev.filter((session) => session.id !== sessionId);
       if (remaining.length === 0) {
@@ -397,9 +535,15 @@ export default function App() {
   const handleRenameChatTab = (sessionId: string, title: string) => {
     const trimmed = title.trim();
     if (!trimmed) return;
+    const target = chatSessions.find((session) => session.id === sessionId);
     setChatSessions((prev) =>
-      prev.map((session) => (session.id === sessionId ? { ...session, title: trimmed } : session))
+        prev.map((session) => (session.id === sessionId ? { ...session, title: trimmed } : session))
     );
+    if (target?.conversationId != null) {
+      renameConversation(target.conversationId, trimmed).catch((err) => {
+        console.warn("[chat] 대화 이름 변경 API 실패 - 로컬 상태만 갱신됨:", err);
+      });
+    }
   };
 
   const handleUploadClickOnSidebar = () => {
@@ -649,7 +793,8 @@ export default function App() {
                   onRenameChatTab={handleRenameChatTab}
                   onToggleDocSelection={handleToggleDocSelection}
                   onSendMessage={handleSendMessage}
-                  isLoadingChat={isLoadingChat}
+                  onRetry={handleRetryChat}
+                  onFeedback={handleFeedback}
                 />
               </motion.div>
             )}

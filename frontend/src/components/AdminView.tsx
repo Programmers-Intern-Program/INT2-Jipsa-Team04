@@ -68,6 +68,7 @@ export default function AdminView() {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadUsers(0);
   }, []);
 

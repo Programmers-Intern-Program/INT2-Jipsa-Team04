@@ -498,6 +498,7 @@ CREATE TABLE `Conversation_Chat` (
     `Feedback_Comment` TEXT NULL COMMENT '피드백 코멘트',
     `Feedback_At` DATETIME(6) NULL COMMENT '피드백 등록/수정 일시',
     `Answer_Status` VARCHAR(30) NULL COMMENT 'RAG 답변 상태. answered 또는 insufficient_evidence',
+    `Reference_File_Idxs` JSON NULL COMMENT '답변 근거로 사용한 참조 문서 File_IDX 목록',
 
 
     PRIMARY KEY (`Conversation_Chat_IDX`),
@@ -532,6 +533,7 @@ CREATE TABLE `Message_Citation` (
     `Section_Title` VARCHAR(500) NULL COMMENT '섹션 제목 스냅샷',
     `Excerpt` TEXT NULL COMMENT 'RAG 발췌문 스냅샷',
     `Score` DECIMAL(6,5) NULL COMMENT '관련도 점수 스냅샷',
+    `Source_Id` VARCHAR(32) NULL COMMENT 'RAG SOURCE-N 인용 식별자 스냅샷',
     `Citation_Order` INT UNSIGNED NOT NULL DEFAULT 1 COMMENT '답변 내 인용 순서',
     `Created_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '생성 일시',
 
