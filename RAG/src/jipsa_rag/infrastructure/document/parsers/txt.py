@@ -1,69 +1,11 @@
-import asyncio
-from pathlib import Path
-from typing import Final
+"""TXT 문서 파서는 현재 PDF 전용 정책에 따라 제공하지 않는다.
 
-from jipsa_rag.infrastructure.document.exceptions import (
-    DocumentFileNotFoundError,
-    DocumentReadError,
-    DocumentTextNotFoundError,
-)
-from jipsa_rag.infrastructure.document.models import (
-    DocumentType,
-    ParsedDocument,
-    ParsedDocumentUnit,
-)
+이 모듈에는 의도적으로 ``TxtDocumentParser`` 클래스를 정의하지 않는다.
+TXT 지원을 다시 추가할 때는 다음 항목을 하나의 변경 단위로 함께 구현해야 한다.
 
-_TXT_PARSER_TYPE: Final[str] = "TXT_PLAIN"
-_TXT_PARSER_VERSION: Final[str] = "1.0.0"
-_DECODE_CANDIDATES: Final[tuple[str, ...]] = ("utf-8-sig", "utf-8", "cp949")
-
-
-class TxtDocumentParser:
-    @property
-    def file_type(self) -> DocumentType:
-        return DocumentType.TXT
-
-    @property
-    def parser_type(self) -> str:
-        return _TXT_PARSER_TYPE
-
-    @property
-    def parser_version(self) -> str:
-        return _TXT_PARSER_VERSION
-
-    async def parse(self, file_path: Path) -> ParsedDocument:
-        return await asyncio.to_thread(self._parse_sync, file_path)
-
-    def _parse_sync(self, file_path: Path) -> ParsedDocument:
-        if not file_path.exists() or not file_path.is_file():
-            raise DocumentFileNotFoundError(file_path)
-
-        try:
-            raw_bytes = file_path.read_bytes()
-        except OSError as error:
-            raise DocumentReadError(file_path) from error
-
-        text = self._decode(raw_bytes)
-
-        if not text.strip():
-            raise DocumentTextNotFoundError(self.file_type)
-
-        unit = ParsedDocumentUnit(
-            text=text,
-            source_metadata={"line_start": 1},
-        )
-
-        return ParsedDocument(
-            file_type=self.file_type,
-            units=(unit,),
-            document_metadata={"line_count": text.count("\n") + 1},
-        )
-
-    @staticmethod
-    def _decode(raw_bytes: bytes) -> str:
-        for encoding in _DECODE_CANDIDATES:
-            try:
-                return raw_bytes.decode(encoding)
-            except UnicodeDecodeError:
-                continue
-        return raw_bytes.decode("utf-8", errors="replace")
+- TXT 파서와 인코딩·빈 문서 예외 처리
+- ``SupportedFileType`` 요청 계약
+- ``DocumentParserFactory`` 기본 등록
+- Local RAG DB 및 Qdrant source metadata 계약
+- 단위·통합·E2E 회귀 테스트
+"""
