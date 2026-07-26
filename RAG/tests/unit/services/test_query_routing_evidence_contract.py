@@ -290,11 +290,16 @@ async def test_synthesis_partial_prompt_preserves_each_pdf_supported_subset() ->
         generation_client=generation_client,
     )
 
+    # 기본 질의 분류기는 여러 문서가 선택되었다는 사실만으로 synthesis를
+    # 선택하지 않고, 비교·종합 등 명시적인 다문서 종합 의도를 요구한다.
+    #
+    # 이 테스트의 검증 대상은 분류기 표현 범위가 아니라 PDF별 부분 생성
+    # 프롬프트와 부분 근거 보존 계약이다. 따라서 질문에 "종합"을 명시하여
+    # lookup 경로로 우회하지 않고 의도한 synthesis 경로를 실행하게 한다.
     response = await service.answer(
         _request(
             query=(
-                "두 PDF를 함께 사용하여 exact recovery code와 "
-                "exact validation code를 각각 답해 주세요."
+                "두 PDF를 종합하여 exact recovery code와 exact validation code를 각각 답해 주세요."
             ),
         )
     )

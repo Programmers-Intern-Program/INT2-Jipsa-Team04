@@ -1162,7 +1162,7 @@ def group_chunks_by_pdf(
         )
 
         if existing_metadata is not None and existing_metadata != metadata:
-            raise ValueError(("Chunks for one file_idx must share document metadata."))
+            raise ValueError("Chunks for one file_idx must share document metadata.")
 
         if existing_metadata is None:
             group_metadata[chunk.file_idx] = metadata
@@ -1206,7 +1206,7 @@ def _validate_routing_plan(
     """라우터가 검색 청크를 추가·누락하거나 lookup 순서를 바꾸지 못하게 한다."""
 
     if routing_plan.query_type is not query_type:
-        raise ValueError(("Routing plan query type does not match classification."))
+        raise ValueError("Routing plan query type does not match classification.")
 
     original_chunk_ids = tuple(chunk.chunk_id for chunk in original_chunks)
     routed_chunk_ids = tuple(chunk.chunk_id for chunk in routing_plan.prompt_chunks)
@@ -1214,15 +1214,15 @@ def _validate_routing_plan(
     if len(original_chunk_ids) != len(
         routed_chunk_ids,
     ):
-        raise ValueError(("Routing plan must preserve the search result count."))
+        raise ValueError("Routing plan must preserve the search result count.")
 
     if sorted(original_chunk_ids) != sorted(
         routed_chunk_ids,
     ):
-        raise ValueError(("Routing plan must preserve the search result chunk IDs."))
+        raise ValueError("Routing plan must preserve the search result chunk IDs.")
 
     if query_type is RagQueryType.LOOKUP and routing_plan.prompt_chunks != original_chunks:
-        raise ValueError(("Lookup routing must preserve the original chunk order."))
+        raise ValueError("Lookup routing must preserve the original chunk order.")
 
 
 def _to_chunk_search_request(
@@ -1273,7 +1273,7 @@ def _remap_partial_answer_sources(
     """PDF 로컬 SOURCE-N을 요청 전체에서 유일한 전역 SOURCE-N으로 변환한다."""
 
     if response.status is not RagAnswerStatus.ANSWERED:
-        raise ValueError(("Only answered partial responses can be remapped."))
+        raise ValueError("Only answered partial responses can be remapped.")
 
     source_id_mapping: dict[
         str,
@@ -1285,7 +1285,7 @@ def _remap_partial_answer_sources(
         response.sources,
     ):
         if source.file_idx != group.file_idx:
-            raise ValueError(("Partial response source escaped its PDF group."))
+            raise ValueError("Partial response source escaped its PDF group.")
 
         global_source_id = f"SOURCE-{first_global_source_number + source_offset}"
         source_id_mapping[source.source_id] = global_source_id
@@ -1331,7 +1331,7 @@ def _replace_answer_source_ids(
         )
 
         if global_source_id is None:
-            raise ValueError(("Partial answer contained an unmapped source ID."))
+            raise ValueError("Partial answer contained an unmapped source ID.")
 
         return f"[{global_source_id}]"
 
@@ -1391,7 +1391,7 @@ def _build_synthesis_prompt(
     """검증된 부분 답변과 전역 출처 메타데이터를 최종 생성 요청으로 만든다."""
 
     if not partial_answers:
-        raise ValueError(("At least one partial answer is required for synthesis."))
+        raise ValueError("At least one partial answer is required for synthesis.")
 
     prompt_partial_answers: list[dict[str, object]] = []
     final_sources: list[RagAnswerSource] = []
@@ -1400,19 +1400,19 @@ def _build_synthesis_prompt(
 
     for partial_answer in partial_answers:
         if partial_answer.file_idx not in selected_file_idxs:
-            raise ValueError(("Partial answer belongs to an unselected PDF."))
+            raise ValueError("Partial answer belongs to an unselected PDF.")
 
         prompt_sources: list[dict[str, object]] = []
 
         for source in partial_answer.sources:
             if source.file_idx not in selected_file_idxs:
-                raise ValueError(("Partial answer source belongs to an unselected PDF."))
+                raise ValueError("Partial answer source belongs to an unselected PDF.")
 
             if source.source_id in seen_source_ids:
-                raise ValueError(("Synthesis source IDs must be unique."))
+                raise ValueError("Synthesis source IDs must be unique.")
 
             if source.chunk_id in seen_chunk_ids:
-                raise ValueError(("Synthesis source chunk IDs must be unique."))
+                raise ValueError("Synthesis source chunk IDs must be unique.")
 
             seen_source_ids.add(
                 source.source_id,
@@ -1441,7 +1441,7 @@ def _build_synthesis_prompt(
         )
 
     if not final_sources:
-        raise ValueError(("Synthesis prompt must contain at least one actual source."))
+        raise ValueError("Synthesis prompt must contain at least one actual source.")
 
     question_json = _serialize_untrusted_json(
         {
