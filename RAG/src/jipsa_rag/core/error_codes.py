@@ -116,7 +116,7 @@ class ErrorCode(Enum):
     DOCUMENT_CHUNKS_NOT_FOUND = ErrorDefinition(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         code="DOCUMENT_CHUNKS_NOT_FOUND",
-        message=("No searchable text chunks could be created from the document."),
+        message="No searchable text chunks could be created from the document.",
     )
 
     # 청크 크기와 중첩 크기 같은 서버 내부 청킹 설정이 잘못되었거나
@@ -174,7 +174,7 @@ class ErrorCode(Enum):
     LOCAL_RAG_STORAGE_FAILED = ErrorDefinition(
         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         code="LOCAL_RAG_STORAGE_FAILED",
-        message=("The document index could not be stored in the Local RAG database."),
+        message="The document index could not be stored in the Local RAG database.",
     )
 
     # Qdrant 연결 실패, 시간 초과, 429 또는 5xx처럼
@@ -223,6 +223,17 @@ class ErrorCode(Enum):
         status_code=HTTPStatus.GATEWAY_TIMEOUT,
         code="GENERATION_SERVICE_TIMEOUT",
         message="The generation service request timed out.",
+    )
+
+    # 하나의 RAG 답변이 서버에서 설정한 Claude 호출 횟수 또는 누적
+    # 입력·출력 토큰 예산을 초과한 경우 사용한다.
+    #
+    # 공급자 자체의 429 응답과 달리 Local RAG가 비용·부하 보호를 위해
+    # 요청을 선제적으로 차단한 상태다.
+    GENERATION_BUDGET_EXCEEDED = ErrorDefinition(
+        status_code=HTTPStatus.TOO_MANY_REQUESTS,
+        code="GENERATION_BUDGET_EXCEEDED",
+        message="The generation budget for this answer was exceeded.",
     )
 
     # Claude API Key 인증 실패, 요청 제한, 공급자 과부하 또는 5xx 장애처럼

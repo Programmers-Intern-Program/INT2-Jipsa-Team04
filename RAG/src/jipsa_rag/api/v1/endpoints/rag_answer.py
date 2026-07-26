@@ -25,14 +25,21 @@ from jipsa_rag.infrastructure.embedding.exceptions import (
 from jipsa_rag.infrastructure.generation.claude import (
     ClaudeGenerationClient,
 )
+from jipsa_rag.infrastructure.generation.client import GenerationClient
 from jipsa_rag.infrastructure.generation.exceptions import (
     GenerationAuthenticationError,
+    GenerationBudgetExceededError,
     GenerationError,
     GenerationProviderError,
     GenerationRateLimitError,
     GenerationServerError,
     GenerationTimeoutError,
     InvalidGenerationResponseError,
+)
+from jipsa_rag.infrastructure.generation.limited import (
+    GenerationLimitPolicy,
+    LimitedGenerationClient,
+    get_shared_generation_concurrency_limiter,
 )
 from jipsa_rag.infrastructure.indexing.exceptions import (
     IndexStorageError,
@@ -96,26 +103,50 @@ RagPromptBuilderDependency = Annotated[
 
 async def get_generation_client(
     settings: GenerationSettingsDependency,
-) -> AsyncIterator[ClaudeGenerationClient]:
-    """요청 단위 Claude 클라이언트를 생성하고 연결 자원을 정리한다.
+) -> AsyncIterator[GenerationClient]:
+    """요청 범위 Claude 예산 제한 클라이언트를 생성하고 정리한다.
 
-    API 단위 테스트에서는 이 의존성이 아니라 최종 ``RagAnswerService``
-    의존성을 Stub으로 교체하므로 실제 Claude API와 네트워크 통신이
-    발생하지 않는다.
+    실제 Anthropic SDK 클라이언트는 요청마다 생성하고 종료한다.
+
+    ``LimitedGenerationClient``도 요청마다 새로 생성되므로 lookup 또는
+    synthesis 한 건의 호출 횟수와 누적 토큰이 다른 사용자 요청과 섞이지
+    않는다.
+
+    동시성 제한기는 프로세스 범위에서 공유되므로 서로 다른 HTTP 요청도
+    설정된 Claude 최대 동시 호출 수를 함께 지킨다.
     """
 
-    client = ClaudeGenerationClient(
+    delegate = ClaudeGenerationClient(
         settings,
+    )
+    concurrency_limiter = get_shared_generation_concurrency_limiter(
+        settings.anthropic_max_concurrent_requests,
+    )
+    client = LimitedGenerationClient(
+        delegate=delegate,
+        policy=GenerationLimitPolicy(
+            max_calls=settings.anthropic_max_calls_per_answer,
+            max_input_tokens=(
+                settings.anthropic_max_input_tokens_per_answer
+            ),
+            max_output_tokens=(
+                settings.anthropic_max_output_tokens_per_answer
+            ),
+            max_output_tokens_per_call=(
+                settings.anthropic_max_output_tokens
+            ),
+        ),
+        concurrency_limiter=concurrency_limiter,
     )
 
     try:
         yield client
     finally:
-        await client.close()
+        await delegate.close()
 
 
-ClaudeGenerationClientDependency = Annotated[
-    ClaudeGenerationClient,
+GenerationClientDependency = Annotated[
+    GenerationClient,
     Depends(get_generation_client),
 ]
 
@@ -123,13 +154,15 @@ ClaudeGenerationClientDependency = Annotated[
 def get_rag_answer_service(
     chunk_search_service: ChunkSearchServiceDependency,
     prompt_builder: RagPromptBuilderDependency,
-    generation_client: ClaudeGenerationClientDependency,
+    generation_client: GenerationClientDependency,
 ) -> RagAnswerService:
-    """질의 분류·전략 라우팅과 기존 답변 흐름을 결합한 서비스를 반환한다.
+    """질의 라우팅과 요청 범위 Claude 제한이 적용된 서비스를 반환한다.
 
-    ``RoutedRagAnswerService``는 기존 ``RagAnswerService``의 하위 타입이다.
-    lookup 질문은 기존 검색 결과와 답변 흐름을 그대로 사용하고,
-    synthesis 질문에만 PDF별 청크 그룹 순서를 적용한다.
+    lookup은 기존 단일 검색·단일 생성 흐름을 그대로 사용한다.
+
+    synthesis는 PDF별 검색, 부분 생성 및 최종 종합을 수행하지만 모든
+    Claude 호출이 동일한 요청 범위 ``LimitedGenerationClient``를
+    통과하므로 호출 횟수와 토큰 예산이 하나의 답변 단위로 누적된다.
     """
 
     return RoutedRagAnswerService(
@@ -260,7 +293,7 @@ def _convert_generation_error(
     *,
     user_idx: int,
 ) -> AppException:
-    """Claude 생성 오류를 프롬프트와 API Key 없이 공통 API 오류로 변환한다."""
+    """생성 오류를 질문·프롬프트·API Key 없이 공통 오류로 변환한다."""
 
     log_context: dict[str, str | int] = {
         "user_idx": user_idx,
@@ -271,8 +304,8 @@ def _convert_generation_error(
         error,
         GenerationProviderError,
     ):
-        # provider, HTTP 상태 코드 및 공급자 요청 ID는 원문 프롬프트나
-        # API Key를 포함하지 않는 진단용 메타데이터다.
+        # provider, 상태 코드 및 요청 ID는 프롬프트 원문이나 API Key를
+        # 포함하지 않는 안전한 진단 메타데이터다.
         log_context["generation_provider"] = error.provider
 
         if error.status_code is not None:
@@ -282,6 +315,15 @@ def _convert_generation_error(
             log_context["generation_request_id"] = error.request_id
 
     if isinstance(
+        error,
+        GenerationBudgetExceededError,
+    ):
+        # 실제 호출 수나 실제 토큰 수는 사용자별 사용 패턴 정보가 될 수
+        # 있으므로 기록하지 않고 초과한 제한 종류만 남긴다.
+        log_context["generation_budget_limit_type"] = error.limit_type
+        error_code = ErrorCode.GENERATION_BUDGET_EXCEEDED
+
+    elif isinstance(
         error,
         GenerationTimeoutError,
     ):
@@ -369,12 +411,15 @@ def _convert_rag_answer_service_error(
     summary="선택 참조문서 기반 RAG 답변 생성",
     description=(
         "질문 전송 시점에 전달된 reference_file_idxs 범위에서만 "
-        "관련 청크를 검색한다. 검색 결과가 없거나 Claude가 정해진 "
-        "근거 부족 문구를 반환하면 insufficient_evidence 응답을 반환한다. "
-        "정상 답변에는 유효한 [SOURCE-N] 인용이 하나 이상 필요하며, "
-        "응답 sources에는 Claude가 실제로 인용한 출처만 포함된다. "
-        "질문은 규칙 기반으로 lookup 또는 synthesis로 분류되며, "
-        "synthesis 검색 결과는 PDF별로 그룹화된 순서로 생성 단계에 전달된다."
+        "관련 청크를 검색한다. lookup 질문은 기존 단일 생성 흐름을 "
+        "사용하며, synthesis 질문은 PDF별 부분 답변을 생성한 뒤 "
+        "검증된 부분 결과만 최종 종합한다. 일부 PDF의 근거가 부족하면 "
+        "해당 PDF를 최종 후보에서 제외하고, 모든 PDF의 근거가 부족하면 "
+        "최종 Claude 호출 없이 insufficient_evidence를 반환한다. "
+        "정상 답변에는 유효한 [SOURCE-N] 인용이 하나 이상 필요하며 "
+        "sources에는 최종 답변이 실제 인용한 출처만 포함된다. "
+        "답변별 Claude 호출 횟수 또는 누적 토큰 예산을 초과하면 "
+        "GENERATION_BUDGET_EXCEEDED 오류를 반환한다."
     ),
     responses={
         HTTPStatus.UNAUTHORIZED: {
@@ -388,6 +433,13 @@ def _convert_rag_answer_service_error(
                 "그 밖의 요청값 오류 시 REQUEST_VALIDATION_FAILED"
             ),
         },
+        HTTPStatus.TOO_MANY_REQUESTS: {
+            "model": ApiResponse[None],
+            "description": (
+                "답변별 Claude 호출 횟수 또는 누적 입력·출력 "
+                "토큰 예산 초과"
+            ),
+        },
         HTTPStatus.BAD_GATEWAY: {
             "model": ApiResponse[None],
             "description": (
@@ -397,7 +449,9 @@ def _convert_rag_answer_service_error(
         },
         HTTPStatus.SERVICE_UNAVAILABLE: {
             "model": ApiResponse[None],
-            "description": ("TEI, Qdrant 또는 Claude 생성 공급자의 일시적 사용 불가"),
+            "description": (
+                "TEI, Qdrant 또는 Claude 생성 공급자의 일시적 사용 불가"
+            ),
         },
         HTTPStatus.GATEWAY_TIMEOUT: {
             "model": ApiResponse[None],

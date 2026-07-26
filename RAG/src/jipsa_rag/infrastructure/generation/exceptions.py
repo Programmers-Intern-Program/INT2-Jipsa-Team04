@@ -1,8 +1,40 @@
 """텍스트 생성 공급자 호출과 응답 변환 과정에서 사용하는 예외를 정의한다."""
 
+from typing import Literal
+
+GenerationBudgetLimitType = Literal[
+    "call_count",
+    "input_tokens",
+    "output_tokens",
+]
+
 
 class GenerationError(Exception):
     """텍스트 생성 계층에서 발생하는 모든 예외의 기준 클래스."""
+
+
+class GenerationBudgetExceededError(GenerationError):
+    """단일 RAG 답변의 Claude 호출 또는 토큰 예산을 초과한 경우 발생한다.
+
+    질문, 청크, 프롬프트, Claude 응답 및 실제 토큰 값은 예외 객체에
+    저장하지 않는다.
+
+    API 계층은 안전한 ``limit_type``만 사용하여 클라이언트 오류 코드와
+    구조화 로그를 구성한다.
+    """
+
+    def __init__(
+        self,
+        *,
+        limit_type: GenerationBudgetLimitType,
+    ) -> None:
+        """초과한 예산 종류만 보관한다."""
+
+        self.limit_type = limit_type
+
+        super().__init__(
+            f"Generation budget exceeded: {limit_type}",
+        )
 
 
 class GenerationProviderError(GenerationError):
@@ -10,6 +42,7 @@ class GenerationProviderError(GenerationError):
 
     외부 SDK의 원본 예외 메시지와 응답 본문에는 요청 정보나 공급자 내부 정보가
     포함될 수 있으므로 애플리케이션 경계 밖으로 그대로 전달하지 않는다.
+
     대신 공급자 이름, HTTP 상태 코드 및 요청 추적 ID처럼 안전하게 활용할 수 있는
     최소 메타데이터만 보관한다.
     """
@@ -28,7 +61,9 @@ class GenerationProviderError(GenerationError):
         self.status_code = status_code
         self.request_id = request_id
 
-        super().__init__(message)
+        super().__init__(
+            message,
+        )
 
 
 class GenerationAuthenticationError(GenerationProviderError):

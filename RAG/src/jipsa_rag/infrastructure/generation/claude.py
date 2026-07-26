@@ -53,6 +53,11 @@ class ClaudeGenerationClient:
     ``GenerationRequest.output_schema``가 존재하면 Messages API의
     ``output_config.format``에 JSON Schema를 전달한다.
 
+    ``GenerationRequest.max_output_tokens``가 존재하면 서버의 단일 호출
+    출력 토큰 상한보다 작은 값만 적용한다. 요청 단위 생성 예산 제한기는
+    이 필드를 사용하여 남은 누적 출력 예산보다 큰 ``max_tokens``가 공급자에
+    전달되지 않도록 한다.
+
     Claude가 반환한 JSON 문자열은 이 계층에서 객체로 파싱하되, RAG 상태와
     출처 같은 도메인 규칙은 상위 서비스에서 다시 검증한다.
     """
@@ -148,16 +153,16 @@ class ClaudeGenerationClient:
 
         ``output_schema``가 존재할 때만 ``output_config``를 전송한다.
 
-        일반 텍스트 생성 요청에는 해당 필드를 완전히 생략하여 기존
-        Claude 요청 계약을 유지한다.
+        일반 텍스트 생성 요청에는 해당 필드를 완전히 생략하여 기존 Claude
+        요청 계약을 유지한다.
 
-        ``output_config``의 존재 여부를 먼저 분기한다. 이렇게 하면
-        구조화 출력 분기에서 값이 ``None``이 아니라는 사실을 Mypy가
-        정확하게 추론할 수 있다.
+        요청 단위 ``max_output_tokens``가 존재하면 서버 기본 설정과 비교하여
+        더 작은 값을 사용한다. 이를 통해 누적 출력 예산 제한기가 남은
+        요청 예산보다 큰 ``max_tokens``를 Claude에 전달하지 않게 한다.
 
-        Anthropic SDK의 ``messages.create``는 ``output_config``에
-        ``OutputConfigParam`` 또는 SDK 내부의 ``Omit`` 타입만 허용한다.
-        따라서 ``None`` 가능성이 있는 값을 직접 전달하지 않는다.
+        ``output_config``의 존재 여부를 먼저 분기한다. 이렇게 하면 구조화
+        출력 분기에서 값이 ``None``이 아니라는 사실을 Mypy가 정확하게
+        추론할 수 있다.
         """
 
         messages: list[MessageParam] = [
@@ -169,6 +174,10 @@ class ClaudeGenerationClient:
 
         output_config = _build_output_config(
             request,
+        )
+        max_output_tokens = _resolve_max_output_tokens(
+            settings=self._settings,
+            request=request,
         )
 
         # =========================================================
@@ -185,13 +194,13 @@ class ClaudeGenerationClient:
             if request.system_prompt is None:
                 return await self._client.messages.create(
                     model=self._settings.anthropic_model,
-                    max_tokens=self._settings.anthropic_max_output_tokens,
+                    max_tokens=max_output_tokens,
                     messages=messages,
                 )
 
             return await self._client.messages.create(
                 model=self._settings.anthropic_model,
-                max_tokens=self._settings.anthropic_max_output_tokens,
+                max_tokens=max_output_tokens,
                 messages=messages,
                 system=request.system_prompt,
             )
@@ -201,26 +210,45 @@ class ClaudeGenerationClient:
         # =========================================================
         #
         # 위의 output_config is None 분기가 return으로 종료됐으므로
-        # 이 위치에서 output_config의 타입은 OutputConfigParam으로
-        # 확정된다.
+        # 이 위치에서 output_config의 타입은 OutputConfigParam으로 확정된다.
         #
-        # 따라서 Anthropic SDK가 요구하는 OutputConfigParam | Omit
-        # 계약에 맞으며 Mypy도 None 가능성을 보고하지 않는다.
+        # 따라서 Anthropic SDK가 요구하는 OutputConfigParam | Omit 계약에
+        # 맞으며 Mypy도 None 가능성을 보고하지 않는다.
         if request.system_prompt is None:
             return await self._client.messages.create(
                 model=self._settings.anthropic_model,
-                max_tokens=self._settings.anthropic_max_output_tokens,
+                max_tokens=max_output_tokens,
                 messages=messages,
                 output_config=output_config,
             )
 
         return await self._client.messages.create(
             model=self._settings.anthropic_model,
-            max_tokens=self._settings.anthropic_max_output_tokens,
+            max_tokens=max_output_tokens,
             messages=messages,
             system=request.system_prompt,
             output_config=output_config,
         )
+
+
+def _resolve_max_output_tokens(
+    *,
+    settings: GenerationSettings,
+    request: GenerationRequest,
+) -> int:
+    """단일 Claude 요청에 실제 적용할 최대 출력 토큰 수를 반환한다.
+
+    서버의 Anthropic 설정은 절대 상한이다. 요청 단위 제한은 누적 출력
+    예산에서 계산된 더 작은 상한이므로 둘 중 작은 값을 사용한다.
+    """
+
+    if request.max_output_tokens is None:
+        return settings.anthropic_max_output_tokens
+
+    return min(
+        settings.anthropic_max_output_tokens,
+        request.max_output_tokens,
+    )
 
 
 def _build_output_config(
@@ -306,7 +334,9 @@ def _convert_message_to_result(
         # 노출하지 않는다.
         raise InvalidGenerationResponseError(
             provider=_ANTHROPIC_PROVIDER,
-            reason=("response does not satisfy the internal generation result contract"),
+            reason=(
+                "response does not satisfy the internal generation result contract"
+            ),
         ) from error
 
 
@@ -340,7 +370,9 @@ def _parse_structured_output(
     if stop_reason in _STRUCTURED_OUTPUT_INVALID_STOP_REASONS:
         raise InvalidGenerationResponseError(
             provider=_ANTHROPIC_PROVIDER,
-            reason=("structured output did not complete with a schema-valid response"),
+            reason=(
+                "structured output did not complete with a schema-valid response"
+            ),
         )
 
     try:
@@ -359,7 +391,7 @@ def _parse_structured_output(
     ):
         raise InvalidGenerationResponseError(
             provider=_ANTHROPIC_PROVIDER,
-            reason=("structured output root must be a JSON object"),
+            reason="structured output root must be a JSON object",
         )
 
     # JSON 객체 Key는 표준상 문자열이지만 json.loads의 반환 타입은
@@ -434,7 +466,7 @@ def _map_anthropic_error(
     ):
         return InvalidGenerationResponseError(
             provider=_ANTHROPIC_PROVIDER,
-            reason=("Anthropic SDK response schema validation failed"),
+            reason="Anthropic SDK response schema validation failed",
             status_code=error.status_code,
             request_id=error.response.headers.get("request-id"),
         )
