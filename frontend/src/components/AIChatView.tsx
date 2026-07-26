@@ -415,9 +415,9 @@ export default function AIChatView({
                     }
                   }}
                   placeholder={
-                    selectedDocIds.length > 0 
-                      ? "AI에게 분석중인 문서들에 관해 무엇이든 질문해 보세요..." 
-                      : "질문을 전송하려면 왼쪽에서 1개 이상의 참조 문서를 선택해 주세요..."
+                    selectedDocIds.length > 0
+                        ? "선택한 문서에 관해 질문해 보세요..."
+                        : "문서를 선택하지 않으면 전체 문서에서 찾아 답합니다..."
                   }
                   rows={1}
                   className="flex-1 bg-transparent border-none focus:ring-0 resize-none py-2 text-body-md outline-none min-h-[40px] max-h-48 font-sans"
@@ -435,7 +435,7 @@ export default function AIChatView({
                   </button>
                   <button 
                     type="submit"
-                    disabled={isLoadingChat || !inputText.trim() || selectedDocIds.length === 0}
+                    disabled={isLoadingChat || !inputText.trim()}
                     className="w-10 h-10 bg-primary disabled:bg-primary/40 text-white rounded-xl flex items-center justify-center shadow-lg shadow-primary/20 hover:bg-opacity-95 transition-all cursor-pointer"
                     id="btn-send-chat-msg"
                   >
@@ -450,7 +450,7 @@ export default function AIChatView({
                   <button 
                     key={idx}
                     type="button"
-                    disabled={isLoadingChat || selectedDocIds.length === 0}
+                    disabled={isLoadingChat}
                     onClick={() => handleSuggestionClick(suggestion)}
                     className="px-3 py-1.5 bg-surface-container-low border border-outline-variant rounded-full text-xs text-on-surface-variant hover:bg-surface-variant transition-colors whitespace-nowrap cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >

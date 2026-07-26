@@ -296,7 +296,6 @@ public class FileService {
             throw new BadRequestException("파일명이 너무 깁니다.");
         }
         file.setName(finalName);
-        jobService.enqueueIngest(file.getId(), file.getUploadsId());
     }
 
     @Transactional

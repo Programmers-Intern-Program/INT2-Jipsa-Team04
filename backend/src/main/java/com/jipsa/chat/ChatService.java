@@ -6,6 +6,7 @@ import com.jipsa.common.BadRequestException;
 import com.jipsa.file.FileRepository;
 import com.jipsa.file.File;
 import org.springframework.stereotype.Service;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -16,6 +17,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class ChatService {
@@ -54,13 +56,17 @@ public class ChatService {
         requireOwned(userId, conversationId);
         chatRateLimiter.check(userId);
         String question = normalizeQuestion(request == null ? null : request.question());
-        List<Long> referenceFileIds = validateReferenceFileIds(userId, request == null ? null : request.fileIds());
+        List<Long> selectedFileIds = validateReferenceFileIds(userId, request == null ? null : request.fileIds());
+        List<Long> ragScope = selectedFileIds.isEmpty() ? recentUserFileIds(userId) : selectedFileIds;
+        if (ragScope.isEmpty()) {
+            throw new BadRequestException("검색할 문서가 없습니다. 먼저 문서를 업로드해 주세요.");
+        }
         Integer topK = request == null ? null : request.topK();
         Double scoreThreshold = request == null ? null : request.scoreThreshold();
         validateTopK(topK);
         validateScoreThreshold(scoreThreshold);
 
-        RagAnswerRequest ragRequest = new RagAnswerRequest(userId, question, topK, scoreThreshold, referenceFileIds);
+        RagAnswerRequest ragRequest = new RagAnswerRequest(userId, question, topK, scoreThreshold, ragScope);
 
         long startedAt = System.currentTimeMillis();
         RagAnswerResponse ragResponse = ragAnswerClient.answer(ragRequest);
@@ -71,7 +77,7 @@ public class ChatService {
         }
 
         return transactionTemplate.execute(status ->
-                persistAnswer(userId, conversationId, question, referenceFileIds, ragResponse, durationMs));
+                persistAnswer(userId, conversationId, question, selectedFileIds, ragResponse, durationMs));
     }
 
     private ChatMessageResponse persistAnswer(Long userId, Long conversationId, String question,
@@ -129,7 +135,7 @@ public class ChatService {
 
     private List<Long> validateReferenceFileIds(Long userId, List<Long> fileIds) {
         if (fileIds == null || fileIds.isEmpty()) {
-            throw new BadRequestException("참조할 문서를 1개 이상 선택해 주세요.");
+            return List.of();
         }
         List<Long> unique = new ArrayList<>(new LinkedHashSet<>(fileIds));
         if (unique.size() > MAX_REFERENCE_FILE_COUNT) {
@@ -145,6 +151,12 @@ public class ChatService {
             throw new BadRequestException("본인 소유가 아니거나 존재하지 않는 문서가 포함되어 있습니다.");
         }
         return unique;
+    }
+
+    private List<Long> recentUserFileIds(Long userId) {
+        return fileRepository
+                .findByUsersIdAndDeletedAtIsNullOrderByCreatedAtDesc(userId, PageRequest.of(0, MAX_REFERENCE_FILE_COUNT))
+                .stream().map(File::getId).toList();
     }
 
     private void validateTopK(Integer topK) {
@@ -164,18 +176,20 @@ public class ChatService {
         if (!"answered".equals(response.status()) || response.sources() == null) {
             return citations;
         }
+        Map<Long, String> currentNames = resolveCurrentFileNames(response.sources());
         int order = 1;
         for (RagAnswerSource source : response.sources()) {
             Chunk chunk = chunkRepository.findByChunkIdAndFileId(source.chunkId(), source.fileIdx()).orElse(null);
             if (chunk == null) {
                 continue;
             }
+            String fileName = currentNames.getOrDefault(source.fileIdx(), source.fileName());
             MessageCitation citation = new MessageCitation();
             citation.setConversationChatId(chatId);
             citation.setChunkIdx(chunk.getId());
             citation.setFileId(source.fileIdx());
             citation.setPage(source.page());
-            citation.setFileName(source.fileName());
+            citation.setFileName(fileName);
             citation.setSectionTitle(source.sectionTitle());
             citation.setExcerpt(source.excerpt());
             citation.setScore(source.score());
@@ -186,13 +200,30 @@ public class ChatService {
             citations.add(new ChatMessageResponse.Citation(
                     source.sourceId(),
                     source.fileIdx(),
-                    source.fileName(),
+                    fileName,
                     source.page(),
                     source.sectionTitle(),
                     source.excerpt(),
                     source.score()));
         }
         return citations;
+    }
+
+    private Map<Long, String> resolveCurrentFileNames(List<RagAnswerSource> sources) {
+        Set<Long> ids = new LinkedHashSet<>();
+        for (RagAnswerSource source : sources) {
+            if (source.fileIdx() != null) {
+                ids.add(source.fileIdx());
+            }
+        }
+        Map<Long, String> names = new HashMap<>();
+        if (ids.isEmpty()) {
+            return names;
+        }
+        for (File file : fileRepository.findAllById(ids)) {
+            names.put(file.getId(), file.getName());
+        }
+        return names;
     }
 
     private List<ChatMessageResponse.Citation> reconstructCitations(Long chatId) {

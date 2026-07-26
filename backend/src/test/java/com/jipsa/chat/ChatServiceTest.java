@@ -4,6 +4,7 @@ import com.jipsa.chunk.Chunk;
 import com.jipsa.chunk.ChunkRepository;
 import com.jipsa.common.BadRequestException;
 import com.jipsa.file.FileRepository;
+import com.jipsa.file.File;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -160,6 +161,30 @@ class ChatServiceTest {
         assertThatThrownBy(() -> chatService.sendMessage(7L, 1L,
                 new SendMessageRequest("질문", List.of(), null, null)))
                 .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    void emptyReferenceFilesSearchesAllUserFiles() {
+        when(conversationRepository.findByIdAndUsersIdAndDelFalse(1L, 7L)).thenReturn(Optional.of(ownedConversation()));
+        File f1 = new File();
+        f1.setId(10L);
+        f1.setName("A.pdf");
+        File f2 = new File();
+        f2.setId(11L);
+        f2.setName("B.pdf");
+        when(fileRepository.findByUsersIdAndDeletedAtIsNullOrderByCreatedAtDesc(eq(7L), any()))
+                .thenReturn(List.of(f1, f2));
+        stubSaveReturnsId();
+        when(ragAnswerClient.answer(any())).thenReturn(new RagAnswerResponse("답변", "answered",
+                List.of(), "claude-sonnet-5", null, "end_turn"));
+
+        ArgumentCaptor<RagAnswerRequest> captor = ArgumentCaptor.forClass(RagAnswerRequest.class);
+        ChatMessageResponse result = chatService.sendMessage(7L, 1L,
+                new SendMessageRequest("질문", List.of(), null, null));
+
+        verify(ragAnswerClient).answer(captor.capture());
+        assertThat(captor.getValue().referenceFileIdxs()).containsExactly(10L, 11L);
+        assertThat(result.referenceFiles()).isEmpty();
     }
 
     @Test
