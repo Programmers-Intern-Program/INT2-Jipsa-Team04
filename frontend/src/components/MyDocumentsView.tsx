@@ -275,7 +275,7 @@ export default function MyDocumentsView({
       clearInterval(timer);
     };
   }, [documents, onUpdateDocuments]);
-  
+
   const storagePercent = storage && storage.quotaBytes > 0
       ? Math.min(100, Math.round((storage.usedBytes / storage.quotaBytes) * 100))
       : 0;

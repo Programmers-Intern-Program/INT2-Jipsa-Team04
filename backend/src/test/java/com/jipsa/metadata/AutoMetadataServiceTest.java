@@ -193,4 +193,21 @@ class AutoMetadataServiceTest {
         assertThat(metadata.getSummary()).isNull();
         assertThat(metadata.getExtractionStatus()).isEqualTo("GENERATING");
     }
+
+    @Test
+    void discardsWhenChunksAdvancedDuringGeneration() {
+        when(chunkRepository.findMaxIndexVersionByFileId(1L)).thenReturn(1, 2);
+        when(fileMetadataRepository.claimForGeneration(eq(1L), any(), any())).thenReturn(1);
+        Chunk chunk = mock(Chunk.class);
+        lenient().when(chunk.getContent()).thenReturn("본문");
+        lenient().when(chunkRepository.findByFileIdOrderByChunkIndexAsc(eq(1L), any())).thenReturn(List.of(chunk));
+        when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(generatingMetadata(null, 1)));
+        when(autoMetadataClient.generate(any())).thenReturn(result("요약", List.of("k"), "보고서", 0.9));
+
+        service.process(1L);
+
+        FileMetadata metadata = fileMetadataRepository.findById(1L).orElseThrow();
+        assertThat(metadata.getSummary()).isNull();
+        assertThat(metadata.getExtractionStatus()).isEqualTo("GENERATING");
+    }
 }

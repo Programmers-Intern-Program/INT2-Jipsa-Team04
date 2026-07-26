@@ -29,6 +29,7 @@ public class AutoMetadataWorker {
     @Scheduled(fixedDelayString = "${app.metadata.ai.poll-interval-ms:10000}")
     public void poll() {
         if (!enabled) {
+            autoMetadataService.skipPending();
             return;
         }
         List<Long> fileIds = fileMetadataRepository.findFileIdsPendingAiMetadata(PageRequest.of(0, batchSize));

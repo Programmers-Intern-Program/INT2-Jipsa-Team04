@@ -91,6 +91,11 @@ public class AutoMetadataService {
                 fileMetadataRepository.resetStaleGenerating(threshold, now));
     }
 
+    public void skipPending() {
+        transactionTemplate.executeWithoutResult(status ->
+                fileMetadataRepository.markPendingSkipped(LocalDateTime.now()));
+    }
+
     private String buildSample(Long fileId) {
         List<Chunk> chunks = chunkRepository.findByFileIdOrderByChunkIndexAsc(fileId, PageRequest.of(0, maxChunks));
         StringBuilder builder = new StringBuilder();
@@ -118,6 +123,10 @@ public class AutoMetadataService {
             return;
         }
         if (version != null && !version.equals(metadata.getExtractionIndexVersion())) {
+            return;
+        }
+        Integer latest = chunkRepository.findMaxIndexVersionByFileId(fileId);
+        if (version != null && latest != null && !latest.equals(version)) {
             return;
         }
         String summary = truncate(result == null ? null : result.summary(), maxSummaryChars);
