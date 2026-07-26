@@ -27,6 +27,23 @@ public interface FileMetadataRepository extends JpaRepository<FileMetadata, Long
     int claimForGeneration(@Param("id") Long id, @Param("now") LocalDateTime now);
 
     @Modifying(clearAutomatically = true)
+    @Query("update FileMetadata m set m.summary = :summary, m.keywords = :keywords, "
+            + "m.extractedEntities = :entities, m.extractionConfidence = :confidence, "
+            + "m.documentType = case when m.documentType is null or m.documentType = '' "
+            + "then :documentType else m.documentType end, "
+            + "m.extractionStatus = 'READY', m.updatedAt = :now "
+            + "where m.fileId = :id and m.extractionStatus = 'GENERATING'")
+    int completeGeneration(@Param("id") Long id, @Param("summary") String summary,
+                           @Param("keywords") String keywords, @Param("entities") String entities,
+                           @Param("confidence") Double confidence, @Param("documentType") String documentType,
+                           @Param("now") LocalDateTime now);
+
+    @Modifying(clearAutomatically = true)
+    @Query("update FileMetadata m set m.extractionStatus = 'FAILED', m.updatedAt = :now "
+            + "where m.fileId = :id and m.extractionStatus = 'GENERATING'")
+    int failGeneration(@Param("id") Long id, @Param("now") LocalDateTime now);
+
+    @Modifying(clearAutomatically = true)
     @Query("update FileMetadata m set m.extractionStatus = 'PROCESSING', m.updatedAt = :now "
             + "where m.extractionStatus = 'GENERATING' and m.updatedAt < :threshold")
     int resetStaleGenerating(@Param("threshold") LocalDateTime threshold, @Param("now") LocalDateTime now);

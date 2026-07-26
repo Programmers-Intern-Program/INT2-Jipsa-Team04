@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jipsa.chunk.Chunk;
 import com.jipsa.chunk.ChunkRepository;
-import com.jipsa.file.FileMetadata;
 import com.jipsa.file.FileMetadataRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,7 +64,8 @@ public class AutoMetadataService {
         }
         String sample = buildSample(fileId);
         if (sample.isBlank()) {
-            transactionTemplate.executeWithoutResult(status -> markFailed(fileId));
+            transactionTemplate.executeWithoutResult(status ->
+                    fileMetadataRepository.failGeneration(fileId, LocalDateTime.now()));
             return;
         }
         AutoMetadataResult result;
@@ -73,7 +73,8 @@ public class AutoMetadataService {
             result = autoMetadataClient.generate(sample);
         } catch (RuntimeException e) {
             log.warn("AI 메타데이터 생성 실패 (file {}): {}", fileId, e.getMessage());
-            transactionTemplate.executeWithoutResult(status -> markFailed(fileId));
+            transactionTemplate.executeWithoutResult(status ->
+                    fileMetadataRepository.failGeneration(fileId, LocalDateTime.now()));
             return;
         }
         try {
@@ -117,44 +118,22 @@ public class AutoMetadataService {
     }
 
     private void persist(Long fileId, AutoMetadataResult result) {
-        FileMetadata metadata = fileMetadataRepository.findById(fileId).orElse(null);
-        if (metadata == null || !"GENERATING".equals(metadata.getExtractionStatus())) {
-            return;
-        }
-        Integer claimVersion = metadata.getExtractionIndexVersion();
-        Integer latest = chunkRepository.findMaxIndexVersionByFileId(fileId);
-        if (claimVersion != null && latest != null && !latest.equals(claimVersion)) {
-            return;
-        }
         String summary = truncate(result == null ? null : result.summary(), maxSummaryChars);
         if (summary == null || summary.isBlank()) {
-            metadata.setExtractionStatus("FAILED");
-            metadata.setUpdatedAt(LocalDateTime.now());
-            fileMetadataRepository.save(metadata);
+            fileMetadataRepository.failGeneration(fileId, LocalDateTime.now());
             return;
         }
-        metadata.setSummary(summary);
-        metadata.setKeywords(writeJson(limit(result.keywords())));
-        metadata.setExtractedEntities(writeJson(normalizeEntities(result.entities())));
-        metadata.setExtractionConfidence(clampConfidence(result.confidence()));
-        String documentType = validateDocumentType(result.documentType());
-        if ((metadata.getDocumentType() == null || metadata.getDocumentType().isBlank()) && documentType != null) {
-            metadata.setDocumentType(documentType);
+        int updated = fileMetadataRepository.completeGeneration(
+                fileId,
+                summary,
+                writeJson(limit(result.keywords())),
+                writeJson(normalizeEntities(result.entities())),
+                clampConfidence(result.confidence()),
+                validateDocumentType(result.documentType()),
+                LocalDateTime.now());
+        if (updated == 0) {
+            log.info("AI 메타데이터 저장 건너뜀(상태 변경됨) file {}", fileId);
         }
-        metadata.setExtractionStatus("READY");
-        metadata.setUpdatedAt(LocalDateTime.now());
-        fileMetadataRepository.save(metadata);
-    }
-
-    private void markFailed(Long fileId) {
-        fileMetadataRepository.findById(fileId).ifPresent(metadata -> {
-            if (!"GENERATING".equals(metadata.getExtractionStatus())) {
-                return;
-            }
-            metadata.setExtractionStatus("FAILED");
-            metadata.setUpdatedAt(LocalDateTime.now());
-            fileMetadataRepository.save(metadata);
-        });
     }
 
     private String truncate(String value, int max) {
