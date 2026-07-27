@@ -19,6 +19,7 @@ XLSX는 표 계산 문서이므로 단순히 모든 셀을 이어 붙이면 행�
 """
 
 import asyncio
+from contextlib import ExitStack
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
@@ -55,6 +56,10 @@ _XLSX_PARSER_TYPE: Final[str] = "XLSX_CACHED_VALUE"
 # 1.1.0부터 시트 번호, 셀 시작/끝 좌표, 행·열 범위와 실제 값 셀 좌표를
 # 명시적으로 보존한다. Parser_Version 변화는 Local RAG의 문서 식별자와
 # 결정적 Chunk ID에 포함되므로 기존 1.0.0 색인을 자동으로 대체한다.
+#
+# 이번 수정은 원본 확장자가 없는 임시 다운로드 경로도 같은 XLSX 바이트로 읽도록
+# 입력 방식을 바로잡는 호환성 수정이다. 추출 텍스트와 메타데이터 계약은 바뀌지
+# 않으므로 불필요한 전체 재색인을 막기 위해 파서 버전은 그대로 유지한다.
 _XLSX_PARSER_VERSION: Final[str] = "1.1.0"
 
 # ZIP 시그니처만으로는 다른 OOXML 형식과 구분할 수 없으므로 workbook 루트를 확인한다.
@@ -109,89 +114,86 @@ class XlsxDocumentParser:
         )
 
         try:
-            # 첫 번째 Workbook은 수식 문자열을 보존한다. data_only=False일 때
-            # formula_cell.value에는 "=SUM(A1:A3)" 같은 표현식이 들어 있다.
-            formula_workbook = load_workbook(
-                file_path,
-                data_only=False,
-                read_only=False,
-                # 외부 통합 문서 링크는 검색 텍스트에 필요하지 않고, 외부 참조
-                # 처리 복잡도를 줄이기 위해 로드하지 않는다.
-                keep_links=False,
-            )
+            # HttpFileDownloader는 외부 파일명을 임시 경로에 사용하지 않으며 모든
+            # 문서를 ``*.document`` 이름으로 저장한다. openpyxl에 Path를 직접
+            # 전달하면 실제 바이트가 정상 XLSX여도 확장자 검사에서 거부된다.
+            #
+            # 따라서 검증이 끝난 파일을 바이너리 스트림으로 열어 전달한다. 이 경우
+            # openpyxl은 파일명 확장자가 아니라 OOXML ZIP 구조를 기준으로 읽는다.
+            # 수식 표현식과 저장된 캐시 결과를 각각 읽어야 하므로 독립적인 스트림과
+            # Workbook을 두 개 사용한다.
+            with ExitStack() as resources:
+                formula_stream = resources.enter_context(file_path.open("rb"))
+                formula_workbook = load_workbook(
+                    formula_stream,
+                    data_only=False,
+                    read_only=False,
+                    # 외부 통합 문서 링크는 검색 텍스트에 필요하지 않고, 외부 참조
+                    # 처리 복잡도를 줄이기 위해 로드하지 않는다.
+                    keep_links=False,
+                )
+                resources.callback(formula_workbook.close)
 
-            try:
-                # 두 번째 Workbook은 Excel이 마지막 저장 시 기록한 캐시 결과를 읽는다.
-                # openpyxl이 수식을 직접 계산하는 것이 아니라는 점에 주의해야 한다.
+                value_stream = resources.enter_context(file_path.open("rb"))
                 value_workbook = load_workbook(
-                    file_path,
+                    value_stream,
                     data_only=True,
                     read_only=False,
                     keep_links=False,
                 )
-            except Exception:
-                # 두 번째 로드 실패 시 먼저 열린 Workbook을 즉시 닫는다. Windows에서는
-                # 열린 ZIP 핸들이 남아 있으면 임시 파일 삭제나 재시도가 실패할 수 있다.
-                formula_workbook.close()
-                raise
+                resources.callback(value_workbook.close)
 
+                units: list[ParsedDocumentUnit] = []
+                table_names: list[str] = []
+                table_ranges: list[str] = []
+                merged_range_count = 0
+
+                for sheet_index, formula_sheet in enumerate(
+                    formula_workbook.worksheets,
+                    start=1,
+                ):
+                    # 두 Workbook은 같은 원본 바이트에서 열렸으므로 시트 이름으로
+                    # 정확히 대응한다.
+                    value_sheet = value_workbook[formula_sheet.title]
+
+                    (
+                        sheet_units,
+                        sheet_table_names,
+                        sheet_table_ranges,
+                    ) = self._parse_sheet(
+                        formula_sheet,
+                        value_sheet,
+                        sheet_index=sheet_index,
+                    )
+
+                    units.extend(sheet_units)
+                    table_names.extend(sheet_table_names)
+                    table_ranges.extend(sheet_table_ranges)
+                    merged_range_count += len(formula_sheet.merged_cells.ranges)
+
+                parsed_document = ParsedDocument(
+                    file_type=self.file_type,
+                    units=tuple(units),
+                    document_metadata={
+                        "sheet_count": len(formula_workbook.worksheets),
+                        "sheet_names": tuple(formula_workbook.sheetnames),
+                        "table_names": tuple(table_names),
+                        "table_ranges": tuple(table_ranges),
+                        "merged_range_count": merged_range_count,
+                        "source_unit_count": len(units),
+                    },
+                )
+        except DocumentParserError:
+            # 위치 정보가 포함된 공통 파서 예외는 상위 계층이 그대로 처리하도록 유지한다.
+            raise
         except OSError as error:
+            # 파일 열기와 읽기 실패를 손상 문서가 아닌 파일 시스템 읽기 오류로 구분한다.
             raise DocumentReadError(file_path) from error
         except Exception as error:
-            # 잘못된 ZIP 관계, workbook XML 또는 지원하지 않는 손상 구조를
-            # 공통 손상 문서 예외로 변환한다.
+            # 잘못된 ZIP 관계, workbook XML, 시트 관계 또는 openpyxl이 지원하지 않는
+            # 손상 구조를 형식별 공통 예외로 변환한다. 원본 라이브러리 예외는 외부 API로
+            # 노출하지 않는다.
             raise InvalidDocumentError(self.file_type) from error
-
-        try:
-            units: list[ParsedDocumentUnit] = []
-            table_names: list[str] = []
-            table_ranges: list[str] = []
-            merged_range_count = 0
-
-            for sheet_index, formula_sheet in enumerate(
-                formula_workbook.worksheets,
-                start=1,
-            ):
-                # 두 Workbook은 같은 원본에서 열렸으므로 시트 이름으로 정확히 대응한다.
-                value_sheet = value_workbook[formula_sheet.title]
-
-                (
-                    sheet_units,
-                    sheet_table_names,
-                    sheet_table_ranges,
-                ) = self._parse_sheet(
-                    formula_sheet,
-                    value_sheet,
-                    sheet_index=sheet_index,
-                )
-
-                units.extend(sheet_units)
-                table_names.extend(sheet_table_names)
-                table_ranges.extend(sheet_table_ranges)
-                merged_range_count += len(formula_sheet.merged_cells.ranges)
-
-            parsed_document = ParsedDocument(
-                file_type=self.file_type,
-                units=tuple(units),
-                document_metadata={
-                    "sheet_count": len(formula_workbook.worksheets),
-                    "sheet_names": tuple(formula_workbook.sheetnames),
-                    "table_names": tuple(table_names),
-                    "table_ranges": tuple(table_ranges),
-                    "merged_range_count": merged_range_count,
-                    "source_unit_count": len(units),
-                },
-            )
-        except DocumentParserError:
-            raise
-        except Exception as error:
-            # 특정 행의 오류는 _parse_sheet()에서 위치별 예외로 바뀐다. 그 밖의
-            # Workbook 관계나 시트 수준 오류는 유효하지 않은 문서로 처리한다.
-            raise InvalidDocumentError(self.file_type) from error
-        finally:
-            # 성공과 실패 여부에 관계없이 두 Workbook의 ZIP 파일 핸들을 닫는다.
-            formula_workbook.close()
-            value_workbook.close()
 
         if parsed_document.text_unit_count == 0:
             raise DocumentTextNotFoundError(self.file_type)

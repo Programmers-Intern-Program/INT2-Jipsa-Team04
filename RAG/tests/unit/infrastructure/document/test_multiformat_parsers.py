@@ -1,5 +1,6 @@
 """PDF 외 지원 형식 파서의 핵심 추출 계약을 검증한다."""
 
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -123,7 +124,9 @@ async def test_pptx_extracts_title_shape_table_and_notes(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_xlsx_extracts_rows_merged_ranges_tables_and_formula_metadata(tmp_path: Path) -> None:
+async def test_xlsx_extracts_rows_merged_ranges_tables_and_formula_metadata(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "sample.xlsx"
     workbook = Workbook()
     sheet = workbook.active
@@ -137,6 +140,7 @@ async def test_xlsx_extracts_rows_merged_ranges_tables_and_formula_metadata(tmp_
     table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
     sheet.add_table(table)
     workbook.save(path)
+    workbook.close()
 
     parsed = await XlsxDocumentParser().parse(path)
 
@@ -154,6 +158,38 @@ async def test_xlsx_extracts_rows_merged_ranges_tables_and_formula_metadata(tmp_
         isinstance(merged_ranges, tuple) and "A4:B4" in merged_ranges
         for merged_ranges in merged_range_values
     )
+
+
+@pytest.mark.asyncio
+async def test_xlsx_parses_downloaded_file_without_xlsx_extension(tmp_path: Path) -> None:
+    """다운로더의 ``*.document`` 임시 파일도 실제 XLSX로 파싱해야 한다."""
+
+    # HttpFileDownloader는 외부 파일명을 임시 경로에 사용하지 않기 때문에 실제
+    # XLSX 바이트도 ``.document`` 확장자로 파서에 전달한다. Workbook.save()에
+    # 이 경로를 직접 넘기지 않고 BytesIO를 거쳐 저장하여 네트워크에서 받은 XLSX
+    # 원본 바이트를 임시 파일에 기록하는 운영 흐름을 그대로 재현한다.
+    path = tmp_path / "jipsa-rag-regression.document"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "E2E"
+    sheet.append(["Exact verification code", "XLSX-FOXTROT-74"])
+    sheet.append(["Owner", "Spreadsheet Operations"])
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+    path.write_bytes(buffer.getvalue())
+
+    parsed = await XlsxDocumentParser().parse(path)
+
+    assert parsed.file_type is DocumentType.XLSX
+    assert parsed.document_metadata["sheet_names"] == ("E2E",)
+    assert "XLSX-FOXTROT-74" in parsed.text
+
+    verification_unit = next(unit for unit in parsed.units if "XLSX-FOXTROT-74" in unit.text)
+    assert verification_unit.source_metadata["location_kind"] == "xlsx_cell_range"
+    assert verification_unit.source_metadata["row_number"] == 1
+    assert verification_unit.source_metadata["cell_range"] == "A1:B1"
 
 
 @pytest.mark.asyncio

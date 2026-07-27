@@ -32,6 +32,7 @@ from io import BytesIO
 from math import ceil
 from pathlib import Path
 from typing import Final, cast
+from urllib.parse import urlsplit
 
 import httpx2
 import pytest
@@ -840,6 +841,77 @@ async def _cleanup(settings: Settings) -> None:
 
 
 # ============================================================
+# 실제 E2E 인프라 설정 사전 검증
+# ============================================================
+
+
+def _uses_test_only_hostname(url: str) -> bool:
+    """URL이 ``*.test`` 전용 가짜 호스트를 사용하는지 확인한다.
+
+    일반 단위·통합 테스트의 ``.env.test``에는 실제 네트워크 호출을 막기 위해
+    ``qdrant.test``와 ``embedding.test`` 같은 예약 도메인을 사용한다.
+    이 주소는 실제 E2E에서 접속해야 하는 Local Qdrant·CUDA TEI 주소가 아니며,
+    Windows DNS에서 해석되지 않는 것이 정상이다.
+
+    URL 전체 문자열을 단순 부분 검색하지 않고 파싱된 hostname만 검사하여
+    경로나 query 문자열에 우연히 ``.test``가 포함된 정상 URL을 잘못 거부하지
+    않도록 한다.
+    """
+
+    hostname = urlsplit(url).hostname
+
+    if hostname is None:
+        # Settings 모델이 정상 URL을 보장하지만 테스트 경계에서도 방어적으로
+        # 잘못된 값을 실제 네트워크 호출 전에 거부한다.
+        return True
+
+    normalized_hostname = hostname.rstrip(".").lower()
+    return normalized_hostname == "test" or normalized_hostname.endswith(".test")
+
+
+def _validate_real_e2e_infrastructure_settings(settings: Settings) -> None:
+    """실제 E2E가 Mock 전용 ``.env.test`` 주소로 실행되는 것을 차단한다.
+
+    ``JIPSA_RAG_APP_ENV=test``는 E2E 전용 데이터 정리를 안전하게 제한하기 위해
+    반드시 유지해야 한다. 다만 Pydantic Settings는 이 값에 따라 ``.env.test``를
+    읽으므로, 실행 스크립트가 ``.env.local``의 실제 인프라 값을 현재 프로세스
+    환경 변수로 먼저 주입해야 한다. 프로세스 환경 변수가 dotenv보다 우선하므로
+    최종 프로필은 test를 유지하면서 실제 Local DB·Qdrant·CUDA TEI를 사용할 수
+    있다.
+
+    이 검증은 Qdrant 정리 호출보다 먼저 실행된다. 따라서 잘못된 실행 방법은
+    17개 테스트가 같은 DNS 오류로 연쇄 실패하는 대신 원인을 설명하는 단일
+    Fixture 오류로 종료된다.
+    """
+
+    invalid_settings: list[str] = []
+
+    qdrant_url = str(settings.qdrant_url)
+    embedding_base_url = str(settings.embedding_base_url)
+
+    if _uses_test_only_hostname(qdrant_url):
+        invalid_settings.append("JIPSA_RAG_QDRANT_URL")
+
+    if _uses_test_only_hostname(embedding_base_url):
+        invalid_settings.append("JIPSA_RAG_EMBEDDING_BASE_URL")
+
+    if not invalid_settings:
+        return
+
+    invalid_setting_names = ", ".join(invalid_settings)
+
+    pytest.fail(
+        "Real non-PDF multiformat RAG E2E received .env.test mock-only "
+        f"infrastructure settings: {invalid_setting_names}. "
+        "Load .env.local into the current process, keep "
+        "JIPSA_RAG_APP_ENV=test, start Local Qdrant and CUDA TEI, and then "
+        "run this test. Do not replace the intentional qdrant.test or "
+        "embedding.test values in .env.test.",
+        pytrace=False,
+    )
+
+
+# ============================================================
 # 실제 네 형식 인제스트 공통 Fixture
 # ============================================================
 
@@ -866,6 +938,10 @@ def e2e_runtime(
             pytrace=False,
         )
 
+    # 실제 네트워크 호출이나 E2E 전용 데이터 삭제보다 먼저 현재 Settings가
+    # .env.local의 실제 인프라 주소를 사용하고 있는지 확인한다.
+    _validate_real_e2e_infrastructure_settings(settings)
+
     get_generation_settings.cache_clear()
     try:
         get_generation_settings()
@@ -882,14 +958,22 @@ def e2e_runtime(
         pytest.fail("INTERNAL_TOKEN is required for real E2E.", pytrace=False)
 
     # Backend/S3 역할의 HTTP 경계만 테스트 대역으로 교체한다. DB, TEI,
-    # Qdrant 및 Claude 관련 설정은 원래 test 환경값을 그대로 사용한다.
+    # Qdrant 및 Claude 관련 설정은 실제 E2E 프로세스 값을 그대로 사용한다.
+    #
+    # file_download_allowed_host_suffixes는 Settings 내부에서 쉼표로 구분된
+    # 원시 문자열로 보관된다. parsed_file_download_allowed_host_suffixes 속성이
+    # 이 문자열에 split(",")을 호출하므로 tuple을 직접 넣으면 다운로드 URL
+    # 검증 시 AttributeError가 발생한다.
+    #
+    # Pydantic model_copy(update=...)는 update 값의 필드 타입을 재검증하지
+    # 않으므로 여기서는 반드시 Settings 필드 계약과 동일한 문자열을 넣는다.
     http_settings = settings.model_copy(
         update={
             "app_server_base_url": "https://backend.e2e.invalid",
             "app_server_max_attempts": 1,
             "app_server_retry_initial_delay_seconds": 0.0,
             "app_server_retry_max_delay_seconds": 0.0,
-            "file_download_allowed_host_suffixes": (".e2e.invalid",),
+            "file_download_allowed_host_suffixes": ".e2e.invalid",
         }
     )
 
@@ -918,8 +1002,14 @@ def e2e_runtime(
     app.dependency_overrides[get_application_server_ingest_client] = backend_dependency
     app.dependency_overrides[get_file_downloader] = downloader_dependency
 
+    # 최초 정리가 성공하기 전에 Fixture가 실패하면 새 E2E 데이터는 생성되지
+    # 않는다. 이 상태에서 finally가 동일한 실패 정리를 다시 실행하면 최초
+    # Qdrant 연결 오류가 중복 출력되므로 성공 여부를 별도로 추적한다.
+    initial_cleanup_completed = False
+
     try:
         asyncio.run(_cleanup(settings))
+        initial_cleanup_completed = True
 
         with TestClient(app) as client:
             client.headers["X-Internal-Token"] = ingest_token.get_secret_value()
@@ -948,7 +1038,12 @@ def e2e_runtime(
             )
     finally:
         try:
-            asyncio.run(_cleanup(settings))
+            # 최초 정리가 성공한 뒤에만 인제스트가 시작될 수 있다. 따라서 이
+            # 조건이 참일 때만 종료 정리가 필요하다. 최초 정리 자체가 실패한
+            # 경우에는 같은 네트워크 오류를 다시 발생시키지 않고 원래 예외를
+            # 그대로 보존한다.
+            if initial_cleanup_completed:
+                asyncio.run(_cleanup(settings))
         finally:
             app.dependency_overrides.pop(
                 get_application_server_ingest_client,
