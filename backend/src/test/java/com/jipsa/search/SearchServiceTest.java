@@ -4,10 +4,10 @@ import com.jipsa.common.BadRequestException;
 import com.jipsa.file.File;
 import com.jipsa.file.FileRepository;
 import com.jipsa.file.FileStatus;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Pageable;
@@ -26,15 +26,22 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class SearchServiceTest {
 
+    private static final double SCORE_THRESHOLD = 0.3;
+
     @Mock private FileRepository fileRepository;
     @Mock private RagChunkSearchClient ragChunkSearchClient;
 
-    @InjectMocks private SearchService searchService;
+    private SearchService searchService;
 
-    private File readyFile(Long id) {
+    @BeforeEach
+    void setUp() {
+        searchService = new SearchService(fileRepository, ragChunkSearchClient, SCORE_THRESHOLD);
+    }
+
+    private File readyFile(Long id, String name) {
         File file = new File();
         file.setId(id);
-        file.setName("파일" + id + ".pdf");
+        file.setName(name);
         file.setStatus(FileStatus.READY);
         return file;
     }
@@ -66,10 +73,10 @@ class SearchServiceTest {
     }
 
     @Test
-    void sendsResolvedFileIdsAndCollapsesToBestChunkPerFile() {
+    void forwardsResolvedIdsAndConfiguredThresholdAndCollapsesToBestChunkPerFile() {
         when(fileRepository.findByUsersIdAndStatusAndDeletedAtIsNullOrderByCreatedAtDesc(
                 eq(7L), eq(FileStatus.READY), any(Pageable.class)))
-                .thenReturn(List.of(readyFile(11L), readyFile(22L)));
+                .thenReturn(List.of(readyFile(11L, "파일11.pdf"), readyFile(22L, "파일22.pdf")));
 
         RagChunkSearchResponse ragResponse = new RagChunkSearchResponse(7L, 3, List.of(
                 result(11L, "파일11.pdf", "낮은 점수 청크", 0.40),
@@ -84,6 +91,7 @@ class SearchServiceTest {
         verify(ragChunkSearchClient).search(captor.capture());
         assertThat(captor.getValue().referenceFileIdxs()).containsExactly(11L, 22L);
         assertThat(captor.getValue().userIdx()).isEqualTo(7L);
+        assertThat(captor.getValue().scoreThreshold()).isEqualTo(SCORE_THRESHOLD);
 
         assertThat(response.items()).hasSize(2);
         SearchResponse.Item file11 = response.items().stream()
@@ -93,10 +101,41 @@ class SearchServiceTest {
     }
 
     @Test
+    void usesCurrentDbNameInsteadOfStaleRagFileName() {
+        when(fileRepository.findByUsersIdAndStatusAndDeletedAtIsNullOrderByCreatedAtDesc(
+                eq(7L), eq(FileStatus.READY), any(Pageable.class)))
+                .thenReturn(List.of(readyFile(11L, "새이름.pdf")));
+        when(ragChunkSearchClient.search(any()))
+                .thenReturn(new RagChunkSearchResponse(7L, 1, List.of(
+                        result(11L, "옛이름.pdf", "본문 청크", 0.80))));
+
+        SearchResponse response = searchService.search(7L, new SearchRequest("배포 절차", null));
+
+        assertThat(response.items()).hasSize(1);
+        assertThat(response.items().get(0).name()).isEqualTo("새이름.pdf");
+    }
+
+    @Test
+    void dropsResultsOutsideResolvedScope() {
+        when(fileRepository.findByUsersIdAndStatusAndDeletedAtIsNullOrderByCreatedAtDesc(
+                eq(7L), eq(FileStatus.READY), any(Pageable.class)))
+                .thenReturn(List.of(readyFile(11L, "파일11.pdf")));
+        when(ragChunkSearchClient.search(any()))
+                .thenReturn(new RagChunkSearchResponse(7L, 2, List.of(
+                        result(11L, "파일11.pdf", "범위 안 청크", 0.80),
+                        result(99L, "남의파일.pdf", "범위 밖 청크", 0.95))));
+
+        SearchResponse response = searchService.search(7L, new SearchRequest("배포 절차", null));
+
+        assertThat(response.items()).hasSize(1);
+        assertThat(response.items().get(0).fileId()).isEqualTo(11L);
+    }
+
+    @Test
     void folderScopeUsesFolderFinder() {
         when(fileRepository.findByUsersIdAndFolderIdAndStatusAndDeletedAtIsNullOrderByCreatedAtDesc(
                 eq(7L), eq(9L), eq(FileStatus.READY), any(Pageable.class)))
-                .thenReturn(List.of(readyFile(11L)));
+                .thenReturn(List.of(readyFile(11L, "파일11.pdf")));
         when(ragChunkSearchClient.search(any()))
                 .thenReturn(new RagChunkSearchResponse(7L, 1, List.of(
                         result(11L, "파일11.pdf", "폴더 범위 청크", 0.55))));

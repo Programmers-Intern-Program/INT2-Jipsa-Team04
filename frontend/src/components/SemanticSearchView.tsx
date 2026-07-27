@@ -122,8 +122,11 @@ export default function SemanticSearchView({ onNavigateToChat }: SemanticSearchV
                     )}
                   </div>
                 </div>
-                <span className="shrink-0 text-label-sm font-bold text-primary bg-primary/10 px-2.5 py-1 rounded-full">
-                  {Math.round(item.score * 100)}%
+                <span
+                  className="shrink-0 text-label-sm font-bold text-primary bg-primary/10 px-2.5 py-1 rounded-full"
+                  title="유사도 점수"
+                >
+                  {Math.min(100, Math.max(0, Math.round(item.score * 100)))}%
                 </span>
               </div>
               <div className="flex justify-end mt-3">

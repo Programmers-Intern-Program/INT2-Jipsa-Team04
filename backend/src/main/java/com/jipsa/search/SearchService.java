@@ -4,6 +4,7 @@ import com.jipsa.common.BadRequestException;
 import com.jipsa.file.File;
 import com.jipsa.file.FileRepository;
 import com.jipsa.file.FileStatus;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -23,25 +24,35 @@ public class SearchService {
 
     private final FileRepository fileRepository;
     private final RagChunkSearchClient ragChunkSearchClient;
+    private final Double scoreThreshold;
 
-    public SearchService(FileRepository fileRepository, RagChunkSearchClient ragChunkSearchClient) {
+    public SearchService(FileRepository fileRepository,
+                         RagChunkSearchClient ragChunkSearchClient,
+                         @Value("${app.rag.search-score-threshold:0.3}") Double scoreThreshold) {
         this.fileRepository = fileRepository;
         this.ragChunkSearchClient = ragChunkSearchClient;
+        this.scoreThreshold = scoreThreshold;
     }
 
     public SearchResponse search(Long userId, SearchRequest request) {
         String query = normalizeQuery(request == null ? null : request.query());
         Long folderId = request == null ? null : request.folderId();
 
-        List<Long> scopeFileIds = resolveScope(userId, folderId);
-        if (scopeFileIds.isEmpty()) {
+        List<File> scopeFiles = resolveScopeFiles(userId, folderId);
+        if (scopeFiles.isEmpty()) {
             return new SearchResponse(List.of());
         }
 
-        RagChunkSearchResponse rag = ragChunkSearchClient.search(
-                new RagChunkSearchRequest(userId, query, DEFAULT_TOP_K, null, scopeFileIds));
+        Map<Long, String> currentNameById = new LinkedHashMap<>();
+        for (File file : scopeFiles) {
+            currentNameById.put(file.getId(), file.getName());
+        }
+        List<Long> scopeFileIds = new ArrayList<>(currentNameById.keySet());
 
-        return new SearchResponse(toItems(rag));
+        RagChunkSearchResponse rag = ragChunkSearchClient.search(
+                new RagChunkSearchRequest(userId, query, DEFAULT_TOP_K, scoreThreshold, scopeFileIds));
+
+        return new SearchResponse(toItems(rag, currentNameById));
     }
 
     private String normalizeQuery(String query) {
@@ -55,35 +66,32 @@ public class SearchService {
         return trimmed;
     }
 
-    private List<Long> resolveScope(Long userId, Long folderId) {
+    private List<File> resolveScopeFiles(Long userId, Long folderId) {
         Pageable limit = PageRequest.of(0, MAX_SCOPE_FILES);
-        List<File> files = folderId == null
+        return folderId == null
                 ? fileRepository.findByUsersIdAndStatusAndDeletedAtIsNullOrderByCreatedAtDesc(
                         userId, FileStatus.READY, limit)
                 : fileRepository.findByUsersIdAndFolderIdAndStatusAndDeletedAtIsNullOrderByCreatedAtDesc(
                         userId, folderId, FileStatus.READY, limit);
-        List<Long> ids = new ArrayList<>(files.size());
-        for (File file : files) {
-            ids.add(file.getId());
-        }
-        return ids;
     }
 
-    private List<SearchResponse.Item> toItems(RagChunkSearchResponse rag) {
+    private List<SearchResponse.Item> toItems(RagChunkSearchResponse rag, Map<Long, String> currentNameById) {
         if (rag == null || rag.results() == null) {
             return List.of();
         }
         Map<Long, SearchResponse.Item> bestPerFile = new LinkedHashMap<>();
         for (RagChunkSearchResponse.Result result : rag.results()) {
-            if (result.fileIdx() == null) {
+            Long fileIdx = result.fileIdx();
+            String currentName = fileIdx == null ? null : currentNameById.get(fileIdx);
+            if (currentName == null) {
                 continue;
             }
             double score = result.score() == null ? 0.0 : result.score();
-            SearchResponse.Item existing = bestPerFile.get(result.fileIdx());
+            SearchResponse.Item existing = bestPerFile.get(fileIdx);
             if (existing == null || score > existing.score()) {
-                bestPerFile.put(result.fileIdx(), new SearchResponse.Item(
-                        result.fileIdx(),
-                        result.fileName(),
+                bestPerFile.put(fileIdx, new SearchResponse.Item(
+                        fileIdx,
+                        currentName,
                         truncate(result.content()),
                         score));
             }
