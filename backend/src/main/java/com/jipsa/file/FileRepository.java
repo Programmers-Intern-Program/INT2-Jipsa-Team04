@@ -23,6 +23,8 @@ public interface FileRepository extends JpaRepository<File, Long> {
 
     List<File> findByUsersIdAndStatusAndDeletedAtIsNullOrderByCreatedAtDesc(Long usersId, FileStatus status, Pageable pageable);
 
+    List<File> findByUsersIdAndFolderIdAndStatusAndDeletedAtIsNullOrderByCreatedAtDesc(Long usersId, Long folderId, FileStatus status, Pageable pageable);
+
     long countByIdInAndUsersIdAndDeletedAtIsNull(List<Long> ids, Long usersId);
 
     Page<File> findByUsersIdAndDeletedAtIsNotNullOrderByDeletedAtDesc(Long userId, Pageable pageable);
