@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { HardDrive, ShieldCheck, Sparkles, FolderTree, MessageSquareText, AlertTriangle } from "lucide-react";
+import { HardDrive, Search, Sparkles, FolderTree, MessageSquareText, AlertTriangle } from "lucide-react";
 import {
   buildGoogleAuthorizeUrl,
   clearOAuthCodeVerifier,
@@ -134,10 +134,10 @@ export default function LandingView() {
         <div className="mt-16 grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
           <div className="p-5 bg-white rounded-2xl border border-outline-variant/60 shadow-sm">
             <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center mb-3">
-              <ShieldCheck className="w-4.5 h-4.5 text-primary" />
+              <Search className="w-4.5 h-4.5 text-primary" />
             </div>
-            <h3 className="text-sm font-bold text-on-surface mb-1">실시간 보안 분류</h3>
-            <p className="text-xs text-outline leading-relaxed">PII 개인정보를 자동 감지해 보안 등급을 분류합니다.</p>
+            <h3 className="text-sm font-bold text-on-surface mb-1">의미 기반 검색</h3>
+            <p className="text-xs text-outline leading-relaxed">자연어로 질문하면 관련 구절이 있는 문서를 관련도순으로 찾아 줍니다.</p>
           </div>
           <div className="p-5 bg-white rounded-2xl border border-outline-variant/60 shadow-sm">
             <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center mb-3">

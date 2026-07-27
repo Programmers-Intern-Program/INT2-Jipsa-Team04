@@ -83,7 +83,7 @@ class OrganizeControllerTest {
     @Test
     void propose_AI_제안을_그대로_반환한다() throws Exception {
         given(currentUserProvider.requireUserId()).willReturn(USER_ID);
-        given(organizeService.generateProposal(USER_ID)).willReturn(new OrganizeProposal(
+        given(organizeService.generateProposal(USER_ID, false)).willReturn(new OrganizeProposal(
                 List.of(new ProposedFolder("t1", "제안폴더", null, null)),
                 List.of(new FileMapping(10L, null, "t1", "새이름.pdf"))));
 

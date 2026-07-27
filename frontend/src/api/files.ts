@@ -12,7 +12,6 @@ export interface FileListItem {
     modifiedAt: string;
     summary: string;
     tags: string[];
-    securityRank: string | null;
     documentType: string | null;
     extractionStatus: string | null;
 }
@@ -77,7 +76,6 @@ export function toDocument(item: FileListItem): Document {
         tags: item.tags ?? [],
         modifiedAt: item.modifiedAt,
         ownerName: "",
-        securityRank: item.securityRank === "기밀" ? "기밀" : "일반",
         summary: item.summary ?? "",
         piiDetected: false,
         status: item.status,
@@ -143,7 +141,6 @@ export interface FileDetail {
     modifiedAt: string;
     status: string;
     processingStage: string | null;
-    securityRank: "일반" | "기밀";
     piiDetected: boolean;
     documentType: string | null;
     extractionStatus: string | null;

@@ -5,6 +5,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -32,9 +33,18 @@ public class OrganizeController {
 
     /** AI에게 제안을 생성시킨다 — 반환되는 OrganizeProposal은 이미 검증을 통과한 상태다. */
     @PostMapping("/propose")
-    public OrganizeProposal propose() {
+    public OrganizeProposal propose(@RequestParam(value = "allowRename", required = false, defaultValue = "false") boolean allowRename) {
         Long userId = currentUserProvider.requireUserId();
-        return organizeService.generateProposal(userId);
+        return organizeService.generateProposal(userId, allowRename);
+    }
+
+    /** 방금 업로드된 파일(fileIds)만 이동/이름변경 대상으로 삼는 스코프 제안(업로드 후 정리 미리보기). */
+    @PostMapping("/propose-for-upload")
+    public OrganizeProposal proposeForUpload(
+            @RequestBody ProposeForUploadRequest request,
+            @RequestParam(value = "allowRename", required = false, defaultValue = "false") boolean allowRename) {
+        Long userId = currentUserProvider.requireUserId();
+        return organizeService.generateProposalForFiles(userId, request == null ? null : request.fileIds(), allowRename);
     }
 
     /**

@@ -58,7 +58,8 @@ export function getUploadStatus(uploadId: number): Promise<UploadStatusResponse>
 export function uploadOne(
     file: File,
     folderId: number | null,
-    onProgress?: (loaded: number, total: number) => void
+    onProgress?: (loaded: number, total: number) => void,
+    idempotencyKey?: string
 ): Promise<UploadResult> {
     return new Promise((resolve, reject) => {
         const form = new FormData();
@@ -68,7 +69,7 @@ export function uploadOne(
         const token = localStorage.getItem(TOKEN_STORAGE_KEY);
         const xhr = new XMLHttpRequest();
         xhr.open("POST", "/api/v1/uploads");
-        xhr.setRequestHeader("Idempotency-Key", crypto.randomUUID());
+        xhr.setRequestHeader("Idempotency-Key", idempotencyKey ?? crypto.randomUUID());
         if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
 
         xhr.upload.onprogress = (e) => {

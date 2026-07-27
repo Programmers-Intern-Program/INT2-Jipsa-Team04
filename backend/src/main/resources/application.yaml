@@ -37,7 +37,7 @@ app:
     retry-backoff-ms: 5000
     reap-interval-ms: 30000
   storage:
-    quota-bytes: 107374182400
+    quota-bytes: 524288000
   upload:
     reconcile:
       enabled: true

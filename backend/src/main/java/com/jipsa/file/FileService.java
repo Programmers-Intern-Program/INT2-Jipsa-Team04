@@ -52,7 +52,7 @@ public class FileService {
                        FileMetadataRepository fileMetadataRepository,
                        S3Service s3Service,
                        @Value("${app.s3.bucket}") String bucket,
-                       @Value("${app.storage.quota-bytes:107374182400}") long storageQuotaBytes,
+                       @Value("${app.storage.quota-bytes:524288000}") long storageQuotaBytes,
                        ChunkRepository chunkRepository,
                        RagPurgeService ragPurgeService) {
         this.fileRepository = fileRepository;
