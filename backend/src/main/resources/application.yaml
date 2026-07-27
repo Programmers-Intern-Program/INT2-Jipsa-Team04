@@ -51,6 +51,8 @@ app:
     base-url: ${RAG_BASE_URL:}
     token: ${RAG_INGEST_TOKEN:}
     read-timeout-ms: ${RAG_READ_TIMEOUT_MS:120000}
+    search-timeout-ms: ${RAG_SEARCH_TIMEOUT_MS:15000}
+    search-score-threshold: ${RAG_SEARCH_SCORE_THRESHOLD:0.3}
   metadata:
     document-types:
       - 계약서
