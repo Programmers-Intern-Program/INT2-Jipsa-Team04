@@ -53,13 +53,38 @@ dependencies = [
     # - PPTX 슬라이드·도형·표·발표자 노트 추출
     # - XLSX 시트·셀·병합 셀·표·저장된 수식 결과 추출
     # - TXT 인코딩 감지와 바이너리 파일 거부
-    # - 이미지 OCR 및 이미지 의미 분석은 수행하지 않음
     # =========================================================
     "charset-normalizer>=3.4.0,<4.0",
     "openpyxl>=3.1.5,<4.0",
+    "pillow>=11.0.0,<13.0",
     "pypdf>=6.14.2,<7.0",
     "python-docx>=1.2.0,<2.0",
     "python-pptx>=1.0.2,<2.0",
+
+    # =========================================================
+    # [Image Extraction and Rendering]
+    # - PyMuPDF로 PDF 임베디드 이미지 및 스캔 페이지 렌더링
+    # - OpenCV/NumPy로 OCR 입력 이미지를 안전하게 디코딩
+    # - Windows에 설치된 PowerPoint·Excel 2024를 pywin32 COM으로 제어
+    # - PPTX 차트·SmartArt와 XLSX 차트를 원본 Office 렌더러로 직접 PNG 출력
+    # =========================================================
+    "numpy>=2.0.0,<3.0",
+    "opencv-python-headless>=4.10.0,<5.0",
+    "pymupdf>=1.26.0,<2.0",
+    "pywin32==312; sys_platform == 'win32'",
+
+    # =========================================================
+    # [CUDA OCR]
+    # - EasyOCR 기반 한국어·영어 이미지 문자 인식
+    # - CUDA 12.9용 PyTorch wheel을 명시적으로 고정
+    # - 코드 기본값은 다운로드 금지이며 로컬 dotenv에서 최초 다운로드를 명시적으로 허용
+    #
+    # torch/torchvision은 아래 [tool.uv.sources]의 pytorch-cu129 인덱스에서만
+    # 설치되므로 CPU wheel이 우연히 선택되는 문제를 방지한다.
+    # =========================================================
+    "easyocr>=1.7.2,<2.0",
+    "torch==2.8.0",
+    "torchvision==0.23.0",
 
     # =========================================================
     # [Configuration]
@@ -94,6 +119,19 @@ dependencies = [
 
 
 # =============================================================
+# CUDA 12.9 PyTorch 전용 인덱스
+# =============================================================
+[tool.uv.sources]
+torch = { index = "pytorch-cu129" }
+torchvision = { index = "pytorch-cu129" }
+
+[[tool.uv.index]]
+name = "pytorch-cu129"
+url = "https://download.pytorch.org/whl/cu129"
+explicit = true
+
+
+# =============================================================
 # 실행 명령
 # =============================================================
 [project.scripts]
@@ -118,6 +156,8 @@ dev = [
     "pytest-asyncio>=1.4.0,<2.0",
     "pytest-cov>=7.1.0,<8.0",
     "ruff>=0.15.21,<1.0",
+    "types-openpyxl==3.1.5.20260518",
+    "types-pywin32==312.0.0.20260609; sys_platform == 'win32'",
 ]
 
 
@@ -170,3 +210,10 @@ strict = true
 warn_unused_configs = true
 show_error_codes = true
 pretty = true
+
+
+# PyMuPDF는 현재 py.typed 또는 공식 type stub을 제공하지 않는다.
+# 해당 외부 모듈 경계만 누락 import를 허용하고 프로젝트 내부 코드는 strict를 유지한다.
+[[tool.mypy.overrides]]
+module = ["fitz", "fitz.*"]
+ignore_missing_imports = true

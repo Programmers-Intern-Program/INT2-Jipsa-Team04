@@ -12,6 +12,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Runtime model and application cache
+# EasyOCR detection/recognition model files are downloaded here on first use.
+# The cache is machine-specific and must not be committed to Git.
+.cache/
+
 # Test and coverage
 .pytest_cache/
 .coverage
