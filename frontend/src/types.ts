@@ -56,7 +56,8 @@ export interface Folder {
 export interface Document {
   id: string;
   name: string;
-  /** API 응답 스펙엔 없는 필드. RAG 채팅 mock 등 프론트 내부 로직에서만 사용 중 (추후 정리 필요). */
+  /** 의도적으로 유지하는 항상 빈 값 필드. 실 API(toDocument)는 언제나 ""로 채우며,
+   *  어떤 UI에서도 이 값을 읽지 않는다(문서 본문 검색은 의미 검색 API가 담당). */
   content: string;
   /** bytes 단위. 화면 표시 시 formatBytes()로 변환. */
   sizeBytes: number;
