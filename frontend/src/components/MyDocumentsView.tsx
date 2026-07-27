@@ -120,7 +120,9 @@ export default function MyDocumentsView({
   const [isRenamePromptOpen, setIsRenamePromptOpen] = useState(false);
   const [smartUploading, setSmartUploading] = useState(false);
   const [smartFlowActive, setSmartFlowActive] = useState(false);
-  const { items: uploadQueue, isBusy: isNewUploaderBusy, enqueue, startAll, uploadQueuedAndWait, clearPending, removeItem: removeUploadQueueItem, retryItem, refreshRecent } = useUploads();
+  const { items: uploadQueue, enqueue, startAll, uploadQueuedAndWait, clearPending, removeItem: removeUploadQueueItem, retryItem, refreshRecent } = useUploads();
+  // 실제로 업로드가 진행 중인지(파일이 대기(QUEUED) 상태인 것과 구분). 시작/삭제 버튼과 파일 추가 잠금에 쓴다.
+  const isQueueUploading = smartUploading || uploadQueue.some((i) => i.status === "UPLOADING");
 
   useEffect(() => {
     if (!isNewUploadOpen) return;
@@ -526,12 +528,15 @@ export default function MyDocumentsView({
     txt: "text/plain",
   };
 
-  const addFilesToUploadQueue = (files: File[]) => enqueue(files, selectedFolder);
+  // 스마트 업로드는 항상 루트에 올린 뒤 AI 제안으로 폴더 배치한다(현재 보고 있는 폴더와 무관).
+  // 일반 업로드는 지금 보고 있는 폴더에 추가한다.
+  const addFilesToUploadQueue = (files: File[]) => enqueue(files, newUploaderSmartMode ? null : selectedFolder);
 
   const handleNewUploaderDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setNewUploaderDragActive(false);
+    if (isQueueUploading) return;
     addFilesToUploadQueue(Array.from(e.dataTransfer.files));
   };
 
@@ -2624,13 +2629,13 @@ export default function MyDocumentsView({
                 </div>
 
                 <div
-                    onDragEnter={(e) => { e.preventDefault(); setNewUploaderDragActive(true); }}
-                    onDragOver={(e) => { e.preventDefault(); setNewUploaderDragActive(true); }}
+                    onDragEnter={(e) => { e.preventDefault(); if (!isQueueUploading) setNewUploaderDragActive(true); }}
+                    onDragOver={(e) => { e.preventDefault(); if (!isQueueUploading) setNewUploaderDragActive(true); }}
                     onDragLeave={(e) => { e.preventDefault(); setNewUploaderDragActive(false); }}
                     onDrop={handleNewUploaderDrop}
-                    onClick={() => newUploaderInputRef.current?.click()}
-                    className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center ${
-                        newUploaderDragActive ? "border-primary bg-primary/5" : "border-outline-variant hover:border-primary/55"
+                    onClick={() => { if (!isQueueUploading) newUploaderInputRef.current?.click(); }}
+                    className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all flex flex-col items-center justify-center ${
+                        isQueueUploading ? "opacity-50 cursor-not-allowed border-outline-variant" : `cursor-pointer ${newUploaderDragActive ? "border-primary bg-primary/5" : "border-outline-variant hover:border-primary/55"}`
                     }`}
                 >
                   <Upload className="w-9 h-9 mb-2 text-primary" />
@@ -2641,6 +2646,7 @@ export default function MyDocumentsView({
                       type="file"
                       multiple
                       accept=".pdf,.txt"
+                      disabled={isQueueUploading}
                       onChange={handleNewUploaderPick}
                       className="hidden"
                   />
@@ -2676,7 +2682,7 @@ export default function MyDocumentsView({
                             ) : (
                                 <span className="text-outline font-bold shrink-0">대기</span>
                             )}
-                            {!isNewUploaderBusy && (item.status === "QUEUED" || item.status === "INVALID" || item.status === "FAILED") && (
+                            {!isQueueUploading && (item.status === "QUEUED" || item.status === "INVALID" || item.status === "FAILED") && (
                                 <button type="button" onClick={() => removeUploadQueueItem(item.id)} className="p-1 text-outline hover:text-rose-500 shrink-0 cursor-pointer">
                                   <X className="w-3.5 h-3.5" />
                                 </button>
@@ -2720,10 +2726,10 @@ export default function MyDocumentsView({
                     <button
                         type="button"
                         onClick={newUploaderSmartMode ? runSmartUpload : runNewUploaderUpload}
-                        disabled={smartUploading || isNewUploaderBusy || uploadQueue.every((i) => i.status !== "QUEUED")}
+                        disabled={isQueueUploading || uploadQueue.every((i) => i.status !== "QUEUED")}
                         className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-opacity-95 shadow-md shadow-primary/10 cursor-pointer flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      {smartUploading || isNewUploaderBusy ? "업로드 중..." : newUploaderSmartMode ? "업로드 및 정리 시작" : "업로드 시작"}
+                      {isQueueUploading ? "업로드 중..." : newUploaderSmartMode ? "업로드 및 정리 시작" : "업로드 시작"}
                     </button>
                   </div>
                 </div>

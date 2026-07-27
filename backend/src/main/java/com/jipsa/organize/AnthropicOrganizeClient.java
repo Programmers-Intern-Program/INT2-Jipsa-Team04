@@ -28,6 +28,9 @@ public class AnthropicOrganizeClient implements AiOrganizeClient {
 
     private static final long MAX_TOKENS = 8192L;
 
+    private static final String NO_RENAME_INSTRUCTION =
+            "\n- 이번 요청에서는 이름을 바꾸지 않습니다. 모든 mappings의 newName은 null로 두세요.";
+
     private static final String SYSTEM_PROMPT = """
             당신은 사용자의 문서 폴더를 정리해주는 AI입니다.
             주어진 "현재 폴더 트리"와 "파일 목록"을 보고, 파일들을 의미 있는 구조로 재편하는 제안을
@@ -90,8 +93,12 @@ public class AnthropicOrganizeClient implements AiOrganizeClient {
     }
 
     @Override
-    public OrganizeProposal proposeOrganization(List<FolderTreeNode> currentTree, List<OrganizeFileInput> files) {
-        return call(buildUserPrompt(currentTree, files));
+    public OrganizeProposal proposeOrganization(List<FolderTreeNode> currentTree, List<OrganizeFileInput> files, boolean allowRename) {
+        String prompt = buildUserPrompt(currentTree, files);
+        if (!allowRename) {
+            prompt += NO_RENAME_INSTRUCTION;
+        }
+        return call(prompt);
     }
 
     @Override
@@ -139,7 +146,7 @@ public class AnthropicOrganizeClient implements AiOrganizeClient {
         sb.append("\n- 나머지 파일은 기존 명명 규칙과 폴더 구조를 파악하기 위한 컨텍스트일 뿐입니다. 절대 mappings에 넣지 말고, 옮기거나 이름을 바꾸지 마세요.");
         sb.append("\n- 규칙의 '모든 파일을 반드시 포함'은 대상 파일에만 적용됩니다.");
         if (!allowRename) {
-            sb.append("\n- 이번 요청에서는 이름을 바꾸지 않습니다. 모든 mappings의 newName은 null로 두세요.");
+            sb.append(NO_RENAME_INSTRUCTION);
         }
         return sb.toString();
     }

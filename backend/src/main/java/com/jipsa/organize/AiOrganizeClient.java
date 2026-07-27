@@ -12,7 +12,7 @@ import java.util.Set;
  */
 public interface AiOrganizeClient {
 
-    OrganizeProposal proposeOrganization(List<FolderTreeNode> currentTree, List<OrganizeFileInput> files);
+    OrganizeProposal proposeOrganization(List<FolderTreeNode> currentTree, List<OrganizeFileInput> files, boolean allowRename);
 
     /**
      * 방금 업로드된 파일(targetFileIds)만 이동/이름변경 대상으로 삼는 스코프 제안.

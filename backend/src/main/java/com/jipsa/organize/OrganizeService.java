@@ -93,7 +93,7 @@ public class OrganizeService {
         List<FolderTreeNode> currentTree = getCurrentFolderTree(userId);
         List<OrganizeFileInput> files = organizeInputAssembler.assemble(userId);
 
-        OrganizeProposal proposal = aiOrganizeClient.proposeOrganization(currentTree, files);
+        OrganizeProposal proposal = aiOrganizeClient.proposeOrganization(currentTree, files, allowRename);
         List<ProposedFolder> newFolders = proposal.newFolders() == null ? List.of() : proposal.newFolders();
         List<FileMapping> mappings = proposal.mappings() == null ? List.of() : proposal.mappings();
         if (!allowRename) {

@@ -432,7 +432,7 @@ class OrganizeServiceTest {
         OrganizeProposal aiResponse = new OrganizeProposal(
                 List.of(new ProposedFolder("t1", "제안폴더", null, null)),
                 List.of(new FileMapping(10L, null, "t1", null)));
-        when(aiOrganizeClient.proposeOrganization(any(), any())).thenReturn(aiResponse);
+        when(aiOrganizeClient.proposeOrganization(any(), any(), anyBoolean())).thenReturn(aiResponse);
 
         OrganizeProposal result = organizeService.generateProposal(USER);
 
@@ -452,7 +452,7 @@ class OrganizeServiceTest {
         OrganizeProposal aiResponse = new OrganizeProposal(
                 List.of(),
                 List.of(new FileMapping(999L, null, null, null)));
-        when(aiOrganizeClient.proposeOrganization(any(), any())).thenReturn(aiResponse);
+        when(aiOrganizeClient.proposeOrganization(any(), any(), anyBoolean())).thenReturn(aiResponse);
 
         assertThatThrownBy(() -> organizeService.generateProposal(USER))
                 .isInstanceOf(FileNotFoundException.class);
@@ -462,7 +462,7 @@ class OrganizeServiceTest {
     void generateProposal_newFolders_mappings가_null이어도_안전하게_처리() {
         when(folderService.list(USER)).thenReturn(List.of());
         when(organizeInputAssembler.assemble(USER)).thenReturn(List.of());
-        when(aiOrganizeClient.proposeOrganization(any(), any()))
+        when(aiOrganizeClient.proposeOrganization(any(), any(), anyBoolean()))
                 .thenReturn(new OrganizeProposal(null, null));
 
         OrganizeProposal result = organizeService.generateProposal(USER);

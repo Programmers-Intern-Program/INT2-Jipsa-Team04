@@ -91,6 +91,10 @@ public class UploadService {
         ReentrantLock quotaLock = userQuotaLocks.computeIfAbsent(userId, k -> new ReentrantLock());
         quotaLock.lock();
         try {
+            Uploads racedBeforeQuota = findExistingBatch(userId, idempotencyKey);
+            if (racedBeforeQuota != null) {
+                return new UploadResponse(racedBeforeQuota.getId(), fileRepository.findIdsByUploadsId(racedBeforeQuota.getId()));
+            }
             if (fileRepository.sumSizeBytesByUsersId(userId) + incoming > storageQuotaBytes) {
                 throw new UploadLimitExceededException("스토리지 용량을 초과했습니다.");
             }
