@@ -2,6 +2,8 @@
 
 from io import BytesIO
 from pathlib import Path
+from types import TracebackType
+from typing import Any
 
 import pytest
 from openpyxl import Workbook  # type: ignore[import-untyped]
@@ -9,6 +11,7 @@ from openpyxl.drawing.image import Image as OpenpyxlImage  # type: ignore[import
 from PIL import Image
 
 from jipsa_rag.core.document_processing import DocumentProcessingSettings
+from jipsa_rag.infrastructure.document.images import download_safe_xlsx as xlsx_adapter_module
 from jipsa_rag.infrastructure.document.images.download_safe_xlsx import (
     DownloadSafeXlsxImageExtractor,
 )
@@ -40,7 +43,10 @@ def _png_bytes() -> bytes:
 
 
 @pytest.mark.asyncio
-async def test_extracts_xlsx_image_from_downloader_document_extension(tmp_path: Path) -> None:
+async def test_extracts_xlsx_image_from_downloader_document_extension(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """정상 XLSX 바이트가 ``*.document`` 경로여도 D2 이미지 위치를 보존한다."""
 
     workbook = Workbook()
@@ -72,8 +78,38 @@ async def test_extracts_xlsx_image_from_downloader_document_extension(tmp_path: 
         ocr_gpu_required=False,
         _env_file=None,
     )
-    extractor = DownloadSafeXlsxImageExtractor(settings, _UnavailableRenderer())
+    # 실제 TemporaryDirectory 구현을 감싸 생성 경로를 기록한다. 어댑터의 with 블록이
+    # 정상적으로 종료되면 Python 표준 구현이 내부 source.xlsx와 디렉터리를 모두
+    # 삭제한다. 테스트가 임시 경로를 직접 삭제하지 않으므로 정리 책임이 구현에 있다.
+    created_temporary_directories: list[Path] = []
+    standard_temporary_directory = xlsx_adapter_module.tempfile.TemporaryDirectory
 
+    class _TrackingTemporaryDirectory:
+        """표준 임시 디렉터리의 생성 위치만 기록하는 투명한 context wrapper."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self._delegate = standard_temporary_directory(*args, **kwargs)
+
+        def __enter__(self) -> str:
+            directory = self._delegate.__enter__()
+            created_temporary_directories.append(Path(directory))
+            return directory
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc_value: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> bool | None:
+            return self._delegate.__exit__(exc_type, exc_value, traceback)
+
+    monkeypatch.setattr(
+        xlsx_adapter_module.tempfile,
+        "TemporaryDirectory",
+        _TrackingTemporaryDirectory,
+    )
+
+    extractor = DownloadSafeXlsxImageExtractor(settings, _UnavailableRenderer())
     extraction = await extractor.extract(downloaded_path)
 
     assert len(extraction.images) == 1
@@ -96,6 +132,10 @@ async def test_extracts_xlsx_image_from_downloader_document_extension(tmp_path: 
     assert locator.sheet_number == 1
     assert locator.sheet_name == "Images"
     assert locator.cell_range == "D2"
+
+    # 내부 source.xlsx와 임시 디렉터리는 추출 성공 직후 모두 제거되어야 한다.
+    assert created_temporary_directories
+    assert all(not directory.exists() for directory in created_temporary_directories)
 
     # 어댑터가 원본 다운로드 임시 파일을 삭제하거나 변경해서는 안 된다.
     assert downloaded_path.read_bytes() == workbook_buffer.getvalue()

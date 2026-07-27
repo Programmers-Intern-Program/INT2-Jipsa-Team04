@@ -105,3 +105,27 @@ AWS Backend manifest·완료 callback과 Presigned GET URL의 HTTP 경계만 결
    `JIPSA_RAG_APP_ENV=test`에서 실행합니다.
 6. Presigned URL, 인증 토큰, OCR 원문 전체, 임시 파일 경로와 임베딩 벡터는 로그에
    남기지 않습니다.
+
+### 격리·복구·자원 및 로그 안전성
+
+같은 전체 파이프라인 E2E는 별도 File_IDX로 고정 문서 바이트를 재사용하여 다음 운영
+안전성 계약을 검증합니다.
+
+- 실제 Qdrant에 같은 파일·벡터를 가진 다른 사용자 Point가 존재해도 현재 사용자와
+  선택 문서 범위를 벗어난 청크·답변 출처가 반환되지 않음
+- 실제 TEI·Qdrant 검색 결과가 모두 비어 있으면 Claude 생성 dependency를 호출하지 않고
+  고정 `insufficient_evidence` 응답을 반환함
+- 다중 문서 synthesis에서 한 문서 검색이 실패해도 정상 문서의 부분 답변과 출처를
+  유지하고, 실패 문서에는 Claude 호출을 사용하지 않음
+- 동일 문서 재인제스트의 멱등 재사용, parser version 변경 재색인, 대체 문서 soft delete,
+  Qdrant 신규 Point 활성 전환과 실패 보상 삭제
+- 같은 File_IDX의 동시 인제스트가 MySQL advisory lock을 통해 직렬화되고 하나의 활성
+  문서·Point 집합과 두 개의 성공 실행 이력으로 수렴함
+- XLSX OCR 처리 뒤 다운로더 `*.document`, 임시 `source.xlsx` 및 추출 이미지 관련
+  임시 경로가 남지 않음
+- 생성 공급자 실패 시에도 질문, 검색 청크, OCR 원문, 생성 프롬프트를 로그에 기록하지
+  않으며 인증 토큰·API Key·Presigned URL은 JSON Formatter에서 마스킹됨
+
+재인제스트·동시성·보상 테스트는 기존 답변 Fixture의 File_IDX를 변경하지 않습니다.
+전용 작업 File_IDX는 각 테스트의 시작 전과 `finally`에서 Local RAG DB와 Qdrant를 모두
+정리하므로 Assertion 실패가 발생해도 이후 E2E 실행에 상태가 누적되지 않습니다.

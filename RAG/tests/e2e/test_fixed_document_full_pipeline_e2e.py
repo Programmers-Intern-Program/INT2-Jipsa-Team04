@@ -11,6 +11,9 @@ Issue #123의 두 번째·세 번째 작업 묶음은 첫 번째 묶음에서 �
 - Qdrant Point, vector, payload, 활성 상태와 사용자·문서 범위
 - 실제 Claude lookup·synthesis 답변과 형식별 source_locator
 - 답변 본문 [SOURCE-N], cited_source_ids 및 sources 순서 일치
+- 사용자·선택 문서 출처 격리와 근거 부족 Claude 미호출
+- 부분 실패, 재인제스트·재색인·보상, 동시 인제스트 복구력
+- 임시 파일·추출 이미지 정리와 질문·청크·프롬프트 로그 비노출
 
 실제 GPU 추론과 로컬 인프라 데이터 변경을 동반하므로
 ``JIPSA_RAG_RUN_E2E=1``을 명시한 경우에만 실행한다. 테스트 데이터는 전용 사용자와
@@ -22,15 +25,20 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import os
 import re
-from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+import threading
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from dataclasses import dataclass, field, replace
 from math import ceil
 from pathlib import Path
 from typing import Final, cast
 from urllib.parse import urlsplit
+from uuid import NAMESPACE_URL, uuid5
 
 import httpx2
 import pytest
@@ -38,13 +46,21 @@ import torch
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from qdrant_client import AsyncQdrantClient, models
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from jipsa_rag.api.ingest import get_application_server_ingest_client
 from jipsa_rag.api.v1.endpoints.file_processing import (
+    DatabaseSessionDependency,
+    FileIndexLockDependency,
+    QdrantVectorStoreDependency,
     get_document_parser_factory,
     get_file_downloader,
+    get_file_indexing_service,
+)
+from jipsa_rag.api.v1.endpoints.rag_answer import (
+    get_generation_client,
+    get_rag_answer_service,
 )
 from jipsa_rag.core.config import Settings, get_settings
 from jipsa_rag.core.document_processing import (
@@ -61,8 +77,25 @@ from jipsa_rag.infrastructure.app_server.ingest_client import (
 from jipsa_rag.infrastructure.document.images.models import ExtractedDocumentImage
 from jipsa_rag.infrastructure.document.images.pdf import PdfImageExtractor
 from jipsa_rag.infrastructure.document.media_aware import OcrAwarePdfDocumentParser
+from jipsa_rag.infrastructure.document.models import DocumentType, ParsedDocument
+from jipsa_rag.infrastructure.document.parser import DocumentParser
 from jipsa_rag.infrastructure.document.parser_factory import DocumentParserFactory
+from jipsa_rag.infrastructure.embedding.models import EmbeddedDocument
 from jipsa_rag.infrastructure.file.downloader import HttpFileDownloader
+from jipsa_rag.infrastructure.generation.exceptions import GenerationServerError
+from jipsa_rag.infrastructure.generation.models import (
+    GenerationRequest,
+    GenerationResult,
+    GenerationUsage,
+)
+from jipsa_rag.infrastructure.indexing.concurrent_repository import (
+    ConcurrentSafeLocalRagIndexRepository,
+)
+from jipsa_rag.infrastructure.indexing.exceptions import (
+    VectorDatabaseUnavailableError,
+)
+from jipsa_rag.infrastructure.indexing.models import DocumentIndexMetadata
+from jipsa_rag.infrastructure.indexing.qdrant_store import QdrantChunkVectorStore
 from jipsa_rag.infrastructure.ocr import (
     EasyOcrEngine,
     OcrDocumentEnricher,
@@ -70,6 +103,16 @@ from jipsa_rag.infrastructure.ocr import (
 )
 from jipsa_rag.infrastructure.ocr.exceptions import OcrRecognitionError
 from jipsa_rag.main import app
+from jipsa_rag.schemas.chunk_search import (
+    ChunkSearchRequest,
+    ChunkSearchResponse,
+    ChunkSearchResult,
+)
+from jipsa_rag.schemas.file_processing import SupportedFileType
+from jipsa_rag.schemas.source_locator import build_source_locator
+from jipsa_rag.services.file_indexing import FileIndexingService
+from jipsa_rag.services.prompt_builder import RagPromptBuilder
+from jipsa_rag.services.query_routing import RoutedRagAnswerService
 
 # ============================================================
 # 실행 제어와 고정 Fixture 경로
@@ -489,6 +532,29 @@ _PARTIAL_CASE: Final[FixtureCase] = _CASES_BY_ID[_PARTIAL_CASE_ID]
 _MAIN_FILE_IDXS: Final[tuple[int, ...]] = tuple(case.file_idx for case in _MAIN_CASES)
 _ALL_FILE_IDXS: Final[tuple[int, ...]] = (*_MAIN_FILE_IDXS, _PARTIAL_CASE.file_idx)
 
+# 재인제스트·재색인·동시성·자원 정리 검증이 기존 답변 Fixture 상태를 변경하지 않도록
+# 동일한 실제 파일 바이트를 별도 File_IDX로 격리한다. 원본 Fixture의 SHA-256, 경로,
+# 파서 기대값과 토큰 계약은 그대로 재사용하므로 추가 바이너리 파일이 필요하지 않다.
+_OPERATION_CASE: Final[FixtureCase] = replace(
+    _CASES_BY_ID["pdf-text-table"],
+    case_id="pdf-index-lifecycle-operations",
+    file_idx=max(_ALL_FILE_IDXS) + 101,
+)
+_RESOURCE_CLEANUP_CASE: Final[FixtureCase] = replace(
+    _CASES_BY_ID["xlsx-with-image"],
+    case_id="xlsx-resource-cleanup-operations",
+    file_idx=max(_ALL_FILE_IDXS) + 102,
+)
+_OPERATION_CASES: Final[tuple[FixtureCase, ...]] = (
+    _OPERATION_CASE,
+    _RESOURCE_CLEANUP_CASE,
+)
+_OPERATION_FILE_IDXS: Final[tuple[int, ...]] = tuple(
+    case.file_idx for case in _OPERATION_CASES
+)
+_ALL_E2E_FILE_IDXS: Final[tuple[int, ...]] = (*_ALL_FILE_IDXS, *_OPERATION_FILE_IDXS)
+_NO_EVIDENCE_FILE_IDX: Final[int] = max(_ALL_E2E_FILE_IDXS) + 100
+
 
 def _build_answer_scenario(value: Mapping[str, object]) -> AnswerScenario:
     """JSON 답변 기대값을 참조 범위가 검증된 불변 시나리오로 변환한다."""
@@ -613,12 +679,18 @@ def _matching_chunks(
 
 @dataclass(slots=True)
 class BackendRecorder:
-    """고정 manifest를 반환하고 실제 ingest-complete callback을 기록한다."""
+    """고정 manifest를 반환하고 실제 ingest-complete callback을 기록한다.
+
+    일반 E2E는 순차적으로 호출하지만 중복·동시 인제스트 검증은 동일한 MockTransport를
+    여러 요청 스레드가 공유한다. list와 dict 갱신을 Lock으로 보호하여 테스트 대역의
+    데이터 경합이 운영 advisory lock 검증 결과로 오인되지 않게 한다.
+    """
 
     settings: Settings
     cases: Mapping[int, FixtureCase]
     manifest_requests: list[int] = field(default_factory=list)
     callbacks: dict[int, list[dict[str, object]]] = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     async def handle(self, request: httpx2.Request) -> httpx2.Response:
         """허용된 Backend 내부 API 두 경로만 처리한다."""
@@ -640,7 +712,8 @@ class BackendRecorder:
 
         if operation == "manifest":
             assert request.method == "GET"
-            self.manifest_requests.append(file_idx)
+            with self._lock:
+                self.manifest_requests.append(file_idx)
             return httpx2.Response(status_code=200, json=case.manifest)
 
         assert operation == "ingest-complete"
@@ -649,19 +722,41 @@ class BackendRecorder:
             json.loads(request.content.decode("utf-8")),
             "ingest-complete payload",
         )
-        self.callbacks.setdefault(file_idx, []).append(payload)
+        with self._lock:
+            self.callbacks.setdefault(file_idx, []).append(payload)
         return httpx2.Response(status_code=204)
 
     def callback(self, file_idx: int) -> dict[str, object]:
         """파일별 성공 callback이 정확히 한 번 전송되었는지 확인한다."""
 
-        payloads = self.callbacks.get(file_idx, [])
+        payloads = self.payloads(file_idx)
         assert len(payloads) == 1, (
             f"file_idx={file_idx} expected one callback, received {len(payloads)}"
         )
         payload = payloads[0]
         assert _bool(payload, "success") is True
         return payload
+
+    def payloads(self, file_idx: int) -> tuple[dict[str, object], ...]:
+        """동시 요청 중에도 안전한 callback 스냅샷을 반환한다."""
+
+        with self._lock:
+            return tuple(dict(payload) for payload in self.callbacks.get(file_idx, []))
+
+    def manifest_request_count(self, file_idx: int) -> int:
+        """특정 파일 manifest 재조회 횟수를 원자적으로 반환한다."""
+
+        with self._lock:
+            return self.manifest_requests.count(file_idx)
+
+    def clear_file_history(self, file_idx: int) -> None:
+        """격리된 작업 Case를 재사용하기 전에 HTTP 기록만 제거한다."""
+
+        with self._lock:
+            self.manifest_requests = [
+                value for value in self.manifest_requests if value != file_idx
+            ]
+            self.callbacks.pop(file_idx, None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -706,6 +801,15 @@ class DatabaseState:
     """활성 문서, 원본 청크와 해당 문서의 전체 색인 실행 이력."""
 
     document: Mapping[str, object]
+    chunks: tuple[Mapping[str, object], ...]
+    runs: tuple[Mapping[str, object], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FileHistoryState:
+    """한 사용자·파일의 활성·삭제·실패 문서와 모든 청크·실행 이력."""
+
+    documents: tuple[Mapping[str, object], ...]
     chunks: tuple[Mapping[str, object], ...]
     runs: tuple[Mapping[str, object], ...]
 
@@ -843,40 +947,136 @@ async def _database_state(settings: Settings, case: FixtureCase) -> DatabaseStat
         await engine.dispose()
 
 
+async def _file_history_state(
+    settings: Settings,
+    *,
+    users_idx: int,
+    file_idx: int,
+) -> FileHistoryState:
+    """soft delete 여부와 관계없이 파일 색인 생명주기 전체를 조회한다."""
+
+    engine = _db_engine(settings)
+    try:
+        async with engine.connect() as connection:
+            documents = (
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT
+                                `RAG_Document_IDX` AS `rag_document_idx`,
+                                `File_IDX` AS `file_idx`,
+                                `Users_IDX` AS `users_idx`,
+                                `File_Hash` AS `file_hash`,
+                                `Index_Version` AS `index_version`,
+                                `Index_Status` AS `index_status`,
+                                `Parser_Type` AS `parser_type`,
+                                `Parser_Version` AS `parser_version`,
+                                `Chunk_Count` AS `chunk_count`,
+                                (`Deleted_At` IS NOT NULL) AS `is_deleted`,
+                                `Created_At` AS `created_at`,
+                                `Updated_At` AS `updated_at`
+                            FROM `RAG_Document`
+                            WHERE `Users_IDX` = :users_idx
+                              AND `File_IDX` = :file_idx
+                            ORDER BY `RAG_Document_IDX`
+                            """
+                        ),
+                        {"users_idx": users_idx, "file_idx": file_idx},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            chunks = (
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT
+                                `Chunk_ID` AS `chunk_id`,
+                                `RAG_Document_IDX` AS `rag_document_idx`,
+                                `File_IDX` AS `file_idx`,
+                                `Users_IDX` AS `users_idx`,
+                                `Chunk_Index` AS `chunk_index`,
+                                `Content_Hash` AS `content_hash`
+                            FROM `RAG_Chunk`
+                            WHERE `Users_IDX` = :users_idx
+                              AND `File_IDX` = :file_idx
+                            ORDER BY `RAG_Document_IDX`, `Chunk_Index`
+                            """
+                        ),
+                        {"users_idx": users_idx, "file_idx": file_idx},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            runs = (
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT
+                                `RAG_Index_Run_IDX` AS `rag_index_run_idx`,
+                                `RAG_Document_IDX` AS `rag_document_idx`,
+                                `Run_Type` AS `run_type`,
+                                `Status` AS `status`,
+                                `Error_Message` AS `error_message`,
+                                `Started_At` AS `started_at`,
+                                `Finished_At` AS `finished_at`
+                            FROM `RAG_Index_Run`
+                            WHERE `Users_IDX` = :users_idx
+                              AND `File_IDX` = :file_idx
+                            ORDER BY `RAG_Index_Run_IDX`
+                            """
+                        ),
+                        {"users_idx": users_idx, "file_idx": file_idx},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            return FileHistoryState(
+                documents=tuple(cast(Mapping[str, object], row) for row in documents),
+                chunks=tuple(cast(Mapping[str, object], row) for row in chunks),
+                runs=tuple(cast(Mapping[str, object], row) for row in runs),
+            )
+    finally:
+        await engine.dispose()
+
+
 async def _cleanup_database(settings: Settings, file_idxs: Sequence[int]) -> None:
-    """지정 E2E 파일의 실행·청크·문서를 FK 역순으로 삭제한다."""
+    """지정한 정확한 E2E File_IDX만 FK 역순으로 삭제한다.
+
+    최소·최대 범위 삭제는 전용 ID 사이에 존재하는 다른 테스트 데이터를 함께
+    지울 수 있다. expanding IN parameter를 사용하여 현재 모듈이 소유한 File_IDX만
+    삭제하고, 사용자 범위도 동시에 고정한다.
+    """
+
+    normalized_file_idxs = tuple(dict.fromkeys(file_idxs))
+    if not normalized_file_idxs:
+        return
 
     engine = _db_engine(settings)
     parameters = {
         "users_idx": _TEST_USER_IDX,
-        "file_idx_min": min(file_idxs),
-        "file_idx_max": max(file_idxs),
+        "file_idxs": normalized_file_idxs,
     }
     try:
         async with engine.begin() as connection:
-            for statement in (
-                text(
-                    """
-                    DELETE FROM `RAG_Index_Run`
-                    WHERE `Users_IDX` = :users_idx
-                      AND `File_IDX` BETWEEN :file_idx_min AND :file_idx_max
-                    """
-                ),
-                text(
-                    """
-                    DELETE FROM `RAG_Chunk`
-                    WHERE `Users_IDX` = :users_idx
-                      AND `File_IDX` BETWEEN :file_idx_min AND :file_idx_max
-                    """
-                ),
-                text(
-                    """
-                    DELETE FROM `RAG_Document`
-                    WHERE `Users_IDX` = :users_idx
-                      AND `File_IDX` BETWEEN :file_idx_min AND :file_idx_max
-                    """
-                ),
+            for table_name in (
+                "RAG_Index_Run",
+                "RAG_Chunk",
+                "RAG_Document",
             ):
+                statement = text(
+                    f"""
+                    DELETE FROM `{table_name}`
+                    WHERE `Users_IDX` = :users_idx
+                      AND `File_IDX` IN :file_idxs
+                    """
+                ).bindparams(bindparam("file_idxs", expanding=True))
                 await connection.execute(statement, parameters)
     finally:
         await engine.dispose()
@@ -982,6 +1182,54 @@ async def _cleanup_qdrant(settings: Settings, file_idxs: Sequence[int]) -> None:
         await client.close()
 
 
+async def _upsert_qdrant_probe_point(
+    settings: Settings,
+    *,
+    source_point: models.Record,
+    point_id: str,
+    users_idx: int,
+) -> None:
+    """기존 실제 Point를 복제해 다른 사용자 경계 검증용 Point를 저장한다."""
+
+    if source_point.payload is None or not isinstance(source_point.vector, list):
+        raise AssertionError("A source Qdrant point with payload and vector is required.")
+
+    payload = dict(cast(Mapping[str, object], source_point.payload))
+    payload["users_idx"] = users_idx
+    payload["chunk_id"] = point_id
+    payload["content"] = "OTHER-USER-SECURITY-PROBE-ONLY"
+
+    client = _qdrant_client(settings)
+    try:
+        await client.upsert(
+            collection_name=settings.qdrant_collection,
+            points=[
+                models.PointStruct(
+                    id=point_id,
+                    vector=cast(list[float], source_point.vector),
+                    payload=payload,
+                )
+            ],
+            wait=True,
+        )
+    finally:
+        await client.close()
+
+
+async def _delete_qdrant_probe_point(settings: Settings, *, point_id: str) -> None:
+    """보안 경계 검증용 단일 Point를 ID 기준으로 정리한다."""
+
+    client = _qdrant_client(settings)
+    try:
+        await client.delete(
+            collection_name=settings.qdrant_collection,
+            points_selector=models.PointIdsList(points=[point_id]),
+            wait=True,
+        )
+    finally:
+        await client.close()
+
+
 async def _cleanup(settings: Settings, file_idxs: Sequence[int]) -> None:
     """Qdrant 복제 데이터 후 Local RAG 원본 데이터를 정리한다."""
 
@@ -1078,6 +1326,8 @@ class E2eRuntime:
     recorder: BackendRecorder
     responses: Mapping[int, Mapping[str, object]]
     partial_engine: _SelectiveFailureOcrEngine
+    parser_factory: DocumentParserFactory
+    download_temp_directory: Path
 
 
 class _SelectiveFailureOcrEngine:
@@ -1206,16 +1456,21 @@ def e2e_runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2eRuntime
     )
 
     http_settings = _http_settings(settings)
-    cases_by_idx = {case.file_idx: case for case in _ALL_CASES}
+    cases_by_idx = {
+        case.file_idx: case for case in (*_ALL_CASES, *_OPERATION_CASES)
+    }
     recorder = BackendRecorder(settings=http_settings, cases=cases_by_idx)
     backend_client = ApplicationServerIngestClient(
         http_settings,
         transport=httpx2.MockTransport(recorder.handle),
     )
+    download_temp_directory = Path(
+        tmp_path_factory.mktemp("issue-123-full-pipeline")
+    )
     downloader = HttpFileDownloader(
         http_settings,
         transport=httpx2.MockTransport(DownloadContract(cases_by_idx).handle),
-        temp_directory=Path(tmp_path_factory.mktemp("issue-123-full-pipeline")),
+        temp_directory=download_temp_directory,
     )
 
     app.dependency_overrides[get_application_server_ingest_client] = lambda: backend_client
@@ -1224,7 +1479,7 @@ def e2e_runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2eRuntime
 
     initial_cleanup_completed = False
     try:
-        asyncio.run(_cleanup(settings, _ALL_FILE_IDXS))
+        asyncio.run(_cleanup(settings, _ALL_E2E_FILE_IDXS))
         initial_cleanup_completed = True
 
         ingest_token = settings.rag_ingest_token
@@ -1252,11 +1507,13 @@ def e2e_runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2eRuntime
                 recorder=recorder,
                 responses=responses,
                 partial_engine=selective_engine,
+                parser_factory=parser_factory,
+                download_temp_directory=download_temp_directory,
             )
     finally:
         try:
             if initial_cleanup_completed:
-                asyncio.run(_cleanup(settings, _ALL_FILE_IDXS))
+                asyncio.run(_cleanup(settings, _ALL_E2E_FILE_IDXS))
         finally:
             app.dependency_overrides.pop(get_application_server_ingest_client, None)
             app.dependency_overrides.pop(get_file_downloader, None)
@@ -2065,4 +2322,934 @@ def test_ocr_answer_sources_preserve_image_ordinal_and_original_location(
             assert _str(locator, "cell_range")
         else:
             raise AssertionError(f"Unexpected OCR answer file type: {file_type}")
+
+# ============================================================
+# 19. 범위·근거 부족·부분 실패·색인 생명주기 공통 Test Double
+# ============================================================
+
+
+_MISSING_OVERRIDE: Final[object] = object()
+_SECURITY_PROBE_TOKEN: Final[str] = "OTHER-USER-SECURITY-PROBE-ONLY"
+_SURVIVING_EVIDENCE_TOKEN: Final[str] = "SURVIVING-DOCUMENT-EVIDENCE"
+_FAILED_DOCUMENT_TOKEN: Final[str] = "FAILED-DOCUMENT-EVIDENCE"
+
+
+@contextmanager
+def _temporary_dependency_override(
+    dependency: Callable[..., object],
+    replacement: Callable[..., object],
+) -> Iterator[None]:
+    """FastAPI dependency override를 예외와 Assertion 실패에도 원래 상태로 복구한다."""
+
+    previous = app.dependency_overrides.get(dependency, _MISSING_OVERRIDE)
+    app.dependency_overrides[dependency] = replacement
+    try:
+        yield
+    finally:
+        if previous is _MISSING_OVERRIDE:
+            app.dependency_overrides.pop(dependency, None)
+        else:
+            app.dependency_overrides[dependency] = cast(
+                Callable[..., object],
+                previous,
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class _VersionedDocumentParser:
+    """실제 파싱 결과는 유지하면서 재색인 정체성의 parser_version만 변경한다."""
+
+    delegate: DocumentParser
+    version: str
+
+    @property
+    def file_type(self) -> DocumentType:
+        """원본 파서가 담당하는 DocumentType을 그대로 반환한다."""
+
+        return self.delegate.file_type
+
+    @property
+    def parser_type(self) -> str:
+        """텍스트·OCR 추출 방식 식별자는 원본과 동일하게 유지한다."""
+
+        return self.delegate.parser_type
+
+    @property
+    def parser_version(self) -> str:
+        """새 문서 버전을 강제하는 E2E 전용 호환 버전을 반환한다."""
+
+        return self.version
+
+    async def parse(self, file_path: Path) -> ParsedDocument:
+        """운영 파서의 실제 다중 형식 파싱과 OCR 처리를 그대로 위임한다."""
+
+        return await self.delegate.parse(file_path)
+
+
+class _FailIfCalledGenerationClient:
+    """근거가 없을 때 Claude 호출이 발생하면 즉시 실패시키는 생성 대역."""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        del request
+        self.call_count += 1
+        raise AssertionError("Claude must not be called without document evidence.")
+
+
+class _ControlledChunkSearcher:
+    """문서별 검색 성공·실패를 결정적으로 재현하는 synthesis 검색 대역."""
+
+    def __init__(
+        self,
+        *,
+        responses: Mapping[int, ChunkSearchResponse],
+        failed_file_idxs: frozenset[int] = frozenset(),
+    ) -> None:
+        self._responses = dict(responses)
+        self._failed_file_idxs = failed_file_idxs
+        self.requests: list[ChunkSearchRequest] = []
+
+    async def search(self, request: ChunkSearchRequest) -> ChunkSearchResponse:
+        """단일 문서 synthesis 검색 요청을 기록하고 지정 실패만 발생시킨다."""
+
+        self.requests.append(request)
+        if len(request.reference_file_idxs) != 1:
+            raise AssertionError("Controlled synthesis search requires one file per call.")
+
+        file_idx = request.reference_file_idxs[0]
+        if file_idx in self._failed_file_idxs:
+            raise VectorDatabaseUnavailableError(
+                "search_chunks",
+                status_code=503,
+            )
+        try:
+            return self._responses[file_idx]
+        except KeyError as error:
+            raise AssertionError(f"Missing controlled search response for {file_idx}.") from error
+
+
+class _DeterministicStructuredGenerationClient:
+    """부분·최종 synthesis에서 실제 SOURCE 계약만 결정적으로 응답하는 대역."""
+
+    def __init__(self, *, answer_token: str) -> None:
+        self.answer_token = answer_token
+        self.requests: list[GenerationRequest] = []
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        """현재 프롬프트에 존재하는 첫 SOURCE를 인용한 구조화 응답을 반환한다."""
+
+        self.requests.append(request)
+        source_ids = tuple(
+            dict.fromkeys(
+                re.findall(r"SOURCE-[1-9][0-9]*", request.user_prompt)
+            )
+        )
+        if not source_ids:
+            raise AssertionError("A deterministic generation prompt requires SOURCE-N.")
+
+        cited_source_id = source_ids[0]
+        structured_output: dict[str, object] = {
+            "status": "answered",
+            "answer": f"{self.answer_token} [{cited_source_id}]",
+            "cited_source_ids": [cited_source_id],
+        }
+        return GenerationResult(
+            text=json.dumps(structured_output, ensure_ascii=False),
+            model="claude-e2e-deterministic",
+            usage=GenerationUsage(input_tokens=1, output_tokens=1),
+            stop_reason="end_turn",
+            structured_output=structured_output,
+        )
+
+
+class _SensitiveFailureGenerationClient:
+    """프롬프트 수신 후 안전한 공급자 오류만 발생시켜 로그 비노출을 검증한다."""
+
+    def __init__(self) -> None:
+        self.requests: list[GenerationRequest] = []
+
+    async def generate(self, request: GenerationRequest) -> GenerationResult:
+        self.requests.append(request)
+        raise GenerationServerError(
+            "Generation provider request failed.",
+            provider="anthropic",
+            status_code=503,
+            request_id="safe-e2e-request-id",
+        )
+
+
+class _FailPreviousDeactivationVectorStore:
+    """신규 Point 활성화 뒤 이전 문서 비활성화만 한 번 실패시키는 Qdrant 대역."""
+
+    def __init__(self, delegate: QdrantChunkVectorStore) -> None:
+        self._delegate = delegate
+        self.failure_count = 0
+
+    async def upsert_document(
+        self,
+        *,
+        rag_document_idx: int,
+        metadata: DocumentIndexMetadata,
+        embedded_document: EmbeddedDocument,
+        is_active: bool,
+    ) -> None:
+        await self._delegate.upsert_document(
+            rag_document_idx=rag_document_idx,
+            metadata=metadata,
+            embedded_document=embedded_document,
+            is_active=is_active,
+        )
+
+    async def set_documents_active(
+        self,
+        *,
+        rag_document_idxs: tuple[int, ...],
+        is_active: bool,
+    ) -> None:
+        # 신규 문서 활성화는 성공시키고, 기존 정상 문서를 비활성화하는 첫 호출만
+        # 실패시킨다. 이후 보상 단계의 이전 문서 재활성화와 신규 문서 비활성화는
+        # 실제 Qdrant에 위임하여 최종 검색 가능 상태까지 검증한다.
+        if not is_active and rag_document_idxs and self.failure_count == 0:
+            self.failure_count += 1
+            raise VectorDatabaseUnavailableError(
+                "set_documents_active",
+                status_code=503,
+            )
+        await self._delegate.set_documents_active(
+            rag_document_idxs=rag_document_idxs,
+            is_active=is_active,
+        )
+
+    async def delete_chunks(self, *, chunk_ids: tuple[str, ...]) -> None:
+        await self._delegate.delete_chunks(chunk_ids=chunk_ids)
+
+
+class _StaticRagAnswerServiceProvider:
+    """FastAPI override가 동일한 RAG 답변 서비스 인스턴스를 반환하도록 한다."""
+
+    def __init__(self, service: RoutedRagAnswerService) -> None:
+        self._service = service
+
+    def __call__(self) -> RoutedRagAnswerService:
+        return self._service
+
+
+
+def _controlled_search_result(
+    *,
+    file_idx: int,
+    content: str,
+    content_origin: str = "text",
+) -> ChunkSearchResult:
+    """보안·부분 실패 테스트에 사용할 형식 유효한 단일 PDF 검색 결과를 만든다."""
+
+    source_metadata: dict[str, object] = {
+        "page_number": 1,
+        "unit_type": "ocr_image" if content_origin == "ocr" else "paragraph",
+        "content_origin": content_origin,
+    }
+    if content_origin == "ocr":
+        source_metadata.update(
+            {
+                "image_index": 1,
+                "image_id": "controlled-ocr-image-1",
+                "image_kind": "pdf_embedded",
+                "ocr_engine": "EASYOCR_CUDA",
+                "ocr_mean_confidence": 0.95,
+            }
+        )
+
+    return ChunkSearchResult(
+        chunk_id=str(uuid5(NAMESPACE_URL, f"controlled-chunk-{file_idx}-{content}")),
+        score=1.0,
+        rag_document_idx=file_idx + 10_000,
+        file_idx=file_idx,
+        folder_idx=_TEST_FOLDER_IDX,
+        file_name=f"controlled-{file_idx}.pdf",
+        file_type=SupportedFileType.PDF,
+        chunk_index=0,
+        content=content,
+        token_count=None,
+        source_locator=build_source_locator(
+            file_type=SupportedFileType.PDF,
+            source_metadata=source_metadata,
+        ),
+        parser_version="controlled-e2e-v1",
+        embedding_model="controlled-e2e-embedding",
+        index_version=_INDEX_VERSION,
+    )
+
+
+
+def _response_code(response: object) -> str:
+    """오류 본문 전체를 출력하지 않고 공개 code만 안전하게 읽는다."""
+
+    json_method = getattr(response, "json", None)
+    if not callable(json_method):
+        return "unknown"
+    try:
+        body = _object(json_method(), "API response")
+    except (AssertionError, TypeError, ValueError):
+        return "unknown"
+    value = body.get("code")
+    return value if isinstance(value, str) and value else "unknown"
+
+
+
+def _active_documents(history: FileHistoryState) -> tuple[Mapping[str, object], ...]:
+    """검색 가능한 INDEXED·비삭제 문서만 반환한다."""
+
+    return tuple(
+        document
+        for document in history.documents
+        if _str(document, "index_status") == "INDEXED"
+        and not _db_bool(document, "is_deleted")
+    )
+
+
+
+def _assert_directory_empty(path: Path) -> None:
+    """다운로드·추출 작업 후 임시 디렉터리에 파일이나 하위 폴더가 없는지 확인한다."""
+
+    assert path.is_dir()
+    remaining = tuple(path.rglob("*"))
+    assert remaining == (), (
+        "Temporary document or extracted image artifacts remained: "
+        f"{tuple(item.name for item in remaining)!r}"
+    )
+
+
+# ============================================================
+# 20. 선택하지 않은 문서와 다른 사용자의 출처 차단
+# ============================================================
+
+
+def test_unselected_document_and_other_user_sources_are_blocked(
+    e2e_runtime: E2eRuntime,
+    answer_runtime: AnswerRuntime,
+) -> None:
+    """실제 Qdrant 필터와 최종 답변이 사용자·선택 문서 경계를 모두 지키는지 검증한다."""
+
+    selected_case = _CASES_BY_ID["pdf-text-table"]
+    unselected_case = _CASES_BY_ID["docx-structure"]
+    selected_points = asyncio.run(
+        _qdrant_points(
+            e2e_runtime.settings,
+            users_idx=_TEST_USER_IDX,
+            file_idxs=(selected_case.file_idx,),
+        )
+    )
+    assert selected_points
+
+    probe_id = str(uuid5(NAMESPACE_URL, "issue-123-other-user-security-probe"))
+    asyncio.run(
+        _upsert_qdrant_probe_point(
+            e2e_runtime.settings,
+            source_point=selected_points[0],
+            point_id=probe_id,
+            users_idx=_OTHER_USER_IDX,
+        )
+    )
+    try:
+        # 같은 File_IDX와 같은 벡터를 가진 다른 사용자 Point가 실제로 존재하는 상태에서
+        # 원래 사용자의 검색 결과에 probe가 섞이지 않아야 사용자 필터 검증이 유효하다.
+        other_user_points = asyncio.run(
+            _qdrant_points(
+                e2e_runtime.settings,
+                users_idx=_OTHER_USER_IDX,
+                file_idxs=(selected_case.file_idx,),
+            )
+        )
+        assert any(str(point.id) == probe_id for point in other_user_points)
+
+        response = e2e_runtime.client.post(
+            "/api/v1/chunks/search",
+            json={
+                "user_idx": _TEST_USER_IDX,
+                "reference_file_idxs": [selected_case.file_idx],
+                "query": (
+                    "선택 문서의 PDF-PARAGRAPH-TOKEN-101을 찾고 "
+                    "선택하지 않은 DOCX-PARAGRAPH-TOKEN-201은 제외해 주세요."
+                ),
+                "top_k": 20,
+                "score_threshold": None,
+            },
+        )
+        assert response.status_code == 200
+        body = _object(response.json(), "scope search response")
+        data = _object(body.get("data"), "scope search response data")
+        results = _objects(data, "results")
+        assert results
+        assert {_int(result, "file_idx") for result in results} == {
+            selected_case.file_idx
+        }
+        assert all(_str(result, "chunk_id") != probe_id for result in results)
+        assert all(
+            not _contains_token(_str(result, "content"), _SECURITY_PROBE_TOKEN)
+            for result in results
+        )
+        assert all(
+            not _contains_token(
+                _str(result, "content"),
+                unselected_case.assertions[0].token,
+            )
+            for result in results
+        )
+
+        # 최종 답변 계층도 검색 후보 전체가 아니라 질문에서 선택한 파일의 실제 인용
+        # sources만 반환해야 한다. 기존 실제 Claude lookup 결과를 보안 회귀 기준으로 쓴다.
+        scenario = _ANSWER_SCENARIOS_BY_ID["lookup-pdf-text-table"]
+        answer_result = answer_runtime.result(scenario.scenario_id)
+        assert {_int(source, "file_idx") for source in answer_result.sources} == {
+            selected_case.file_idx
+        }
+        assert all(
+            _int(source, "file_idx") != unselected_case.file_idx
+            for source in answer_result.sources
+        )
+    finally:
+        asyncio.run(
+            _delete_qdrant_probe_point(
+                e2e_runtime.settings,
+                point_id=probe_id,
+            )
+        )
+
+
+# ============================================================
+# 21. 전체 근거 부족 시 Claude 미호출
+# ============================================================
+
+
+def test_no_evidence_skips_claude_generation(e2e_runtime: E2eRuntime) -> None:
+    """실제 TEI·Qdrant 검색 결과가 비면 Claude dependency가 호출되지 않는지 검증한다."""
+
+    generation_client = _FailIfCalledGenerationClient()
+
+    def generation_dependency() -> _FailIfCalledGenerationClient:
+        return generation_client
+
+    with _temporary_dependency_override(
+        get_generation_client,
+        generation_dependency,
+    ):
+        response = e2e_runtime.client.post(
+            "/api/v1/rag/answers",
+            json={
+                "user_idx": _TEST_USER_IDX,
+                "reference_file_idxs": [_NO_EVIDENCE_FILE_IDX],
+                "query": "색인되지 않은 문서에서 존재하지 않는 근거를 찾아 주세요.",
+                "top_k": 5,
+                "score_threshold": None,
+            },
+        )
+
+    assert response.status_code == 200
+    body = _object(response.json(), "no evidence answer response")
+    data = _object(body.get("data"), "no evidence answer data")
+    assert _str(data, "status") == "insufficient_evidence"
+    assert _str(data, "answer") == "제공된 문서 근거만으로는 답변할 수 없습니다."
+    assert _strings(data, "cited_source_ids") == ()
+    assert _objects(data, "sources") == []
+    assert data.get("model") is None
+    assert data.get("usage") is None
+    assert generation_client.call_count == 0
+
+
+# ============================================================
+# 22. 일부 문서 처리 실패 시 나머지 문서 답변 유지
+# ============================================================
+
+
+def test_synthesis_keeps_valid_document_when_one_document_search_fails(
+    e2e_runtime: E2eRuntime,
+) -> None:
+    """한 문서의 VectorDB 실패가 다른 문서의 검증된 부분 답변을 제거하지 않는지 검증한다."""
+
+    valid_file_idx = _NO_EVIDENCE_FILE_IDX + 1
+    failed_file_idx = _NO_EVIDENCE_FILE_IDX + 2
+    valid_result = _controlled_search_result(
+        file_idx=valid_file_idx,
+        content=_SURVIVING_EVIDENCE_TOKEN,
+    )
+    searcher = _ControlledChunkSearcher(
+        responses={
+            valid_file_idx: ChunkSearchResponse(
+                user_idx=_TEST_USER_IDX,
+                result_count=1,
+                results=(valid_result,),
+            )
+        },
+        failed_file_idxs=frozenset({failed_file_idx}),
+    )
+    generation_client = _DeterministicStructuredGenerationClient(
+        answer_token=_SURVIVING_EVIDENCE_TOKEN,
+    )
+    service = RoutedRagAnswerService(
+        chunk_searcher=searcher,
+        prompt_builder=RagPromptBuilder(),
+        generation_client=generation_client,
+    )
+
+    with _temporary_dependency_override(
+        get_rag_answer_service,
+        _StaticRagAnswerServiceProvider(service),
+    ):
+        response = e2e_runtime.client.post(
+            "/api/v1/rag/answers",
+            json={
+                "user_idx": _TEST_USER_IDX,
+                "reference_file_idxs": [valid_file_idx, failed_file_idx],
+                "query": "선택한 두 문서를 비교하고 확인 가능한 근거를 종합해 주세요.",
+                "top_k": 5,
+                "score_threshold": None,
+            },
+        )
+
+    assert response.status_code == 200
+    body = _object(response.json(), "partial success answer response")
+    data = _object(body.get("data"), "partial success answer data")
+    assert _str(data, "status") == "answered"
+    assert _SURVIVING_EVIDENCE_TOKEN in _str(data, "answer")
+    assert _FAILED_DOCUMENT_TOKEN not in _str(data, "answer")
+
+    sources = _objects(data, "sources")
+    assert sources
+    assert {_int(source, "file_idx") for source in sources} == {valid_file_idx}
+    assert all(_int(source, "file_idx") != failed_file_idx for source in sources)
+
+    # 정상 문서 부분 답변 한 번과 최종 synthesis 한 번만 생성한다. 실패 문서는 검색
+    # 단계에서 제외되므로 해당 문서용 Claude 호출은 발생하지 않는다.
+    assert len(generation_client.requests) == 2
+    assert tuple(request.reference_file_idxs for request in searcher.requests) == (
+        (valid_file_idx,),
+        (failed_file_idx,),
+    )
+
+
+# ============================================================
+# 23. 재인제스트·재색인·삭제·보상 처리
+# ============================================================
+
+
+def test_reingest_reindex_soft_delete_and_compensation(
+    e2e_runtime: E2eRuntime,
+) -> None:
+    """멱등 재인제스트, 새 버전 전환, 이전 삭제와 실패 보상을 실제 DB·Qdrant로 검증한다."""
+
+    case = _OPERATION_CASE
+    settings = e2e_runtime.settings
+    asyncio.run(_cleanup(settings, (case.file_idx,)))
+    e2e_runtime.recorder.clear_file_history(case.file_idx)
+
+    base_parser = e2e_runtime.parser_factory.get_parser(case.file_type)
+    reindex_version = f"{base_parser.parser_version}-issue123-reindex"
+    failed_version = f"{base_parser.parser_version}-issue123-compensation"
+
+    try:
+        first_response = e2e_runtime.client.post("/ingest", json=case.manifest)
+        second_response = e2e_runtime.client.post("/ingest", json=case.manifest)
+        assert first_response.status_code == 200
+        assert second_response.status_code == 200
+
+        idempotent_history = asyncio.run(
+            _file_history_state(
+                settings,
+                users_idx=_TEST_USER_IDX,
+                file_idx=case.file_idx,
+            )
+        )
+        assert len(idempotent_history.documents) == 1
+        assert len(idempotent_history.runs) == 2
+        assert all(_str(run, "status") == "SUCCESS" for run in idempotent_history.runs)
+        reused_document_idx = _int(
+            idempotent_history.documents[0],
+            "rag_document_idx",
+        )
+        assert {
+            _int(run, "rag_document_idx") for run in idempotent_history.runs
+        } == {reused_document_idx}
+
+        # 같은 실제 문서 바이트를 새 parser_version으로 처리하면 새 문서가 staging된
+        # 뒤 활성화되고, 기존 정상 문서는 성공 확정 후에만 soft delete된다.
+        reindex_factory = DocumentParserFactory(
+            parsers=(
+                _VersionedDocumentParser(
+                    delegate=base_parser,
+                    version=reindex_version,
+                ),
+            )
+        )
+        with _temporary_dependency_override(
+            get_document_parser_factory,
+            lambda: reindex_factory,
+        ):
+            reindex_response = e2e_runtime.client.post("/ingest", json=case.manifest)
+        assert reindex_response.status_code == 200
+
+        reindexed_history = asyncio.run(
+            _file_history_state(
+                settings,
+                users_idx=_TEST_USER_IDX,
+                file_idx=case.file_idx,
+            )
+        )
+        assert len(reindexed_history.documents) == 2
+        active_documents = _active_documents(reindexed_history)
+        assert len(active_documents) == 1
+        active_document = active_documents[0]
+        assert _str(active_document, "parser_version") == reindex_version
+        active_document_idx = _int(active_document, "rag_document_idx")
+
+        deleted_documents = tuple(
+            document
+            for document in reindexed_history.documents
+            if _db_bool(document, "is_deleted")
+        )
+        assert len(deleted_documents) == 1
+        assert _int(deleted_documents[0], "rag_document_idx") == reused_document_idx
+
+        all_points = asyncio.run(
+            _qdrant_points(
+                settings,
+                users_idx=_TEST_USER_IDX,
+                file_idxs=(case.file_idx,),
+                active_only=False,
+            )
+        )
+        active_point_document_ids = {
+            _int(cast(Mapping[str, object], point.payload), "rag_document_idx")
+            for point in all_points
+            if point.payload is not None
+            and _bool(cast(Mapping[str, object], point.payload), "is_active")
+        }
+        inactive_point_document_ids = {
+            _int(cast(Mapping[str, object], point.payload), "rag_document_idx")
+            for point in all_points
+            if point.payload is not None
+            and not _bool(cast(Mapping[str, object], point.payload), "is_active")
+        }
+        assert active_point_document_ids == {active_document_idx}
+        assert reused_document_idx in inactive_point_document_ids
+
+        # 다음 새 버전은 실제 Qdrant 신규 활성화까지 진행한 뒤 이전 문서 비활성화에서
+        # 실패시킨다. 서비스는 이전 정상 Point를 다시 활성화하고 신규 Point를 삭제하며,
+        # Local RAG에는 실패 문서와 FAILED 실행 이력만 남겨야 한다.
+        compensation_factory = DocumentParserFactory(
+            parsers=(
+                _VersionedDocumentParser(
+                    delegate=base_parser,
+                    version=failed_version,
+                ),
+            )
+        )
+        failing_store_holder: list[_FailPreviousDeactivationVectorStore] = []
+
+        def failing_indexing_service(
+            database_session: DatabaseSessionDependency,
+            vector_store: QdrantVectorStoreDependency,
+            file_lock: FileIndexLockDependency,
+        ) -> FileIndexingService:
+            wrapped_store = _FailPreviousDeactivationVectorStore(vector_store)
+            failing_store_holder.append(wrapped_store)
+            return FileIndexingService(
+                local_repository=ConcurrentSafeLocalRagIndexRepository(
+                    database_session
+                ),
+                vector_store=wrapped_store,
+                file_lock=file_lock,
+            )
+
+        with _temporary_dependency_override(
+            get_document_parser_factory,
+            lambda: compensation_factory,
+        ), _temporary_dependency_override(
+            get_file_indexing_service,
+            failing_indexing_service,
+        ):
+            failed_response = e2e_runtime.client.post("/ingest", json=case.manifest)
+
+        assert failed_response.status_code == 503, (
+            "Compensation fault returned an unexpected status: "
+            f"code={_response_code(failed_response)}"
+        )
+        assert failing_store_holder
+        assert failing_store_holder[-1].failure_count == 1
+
+        compensated_history = asyncio.run(
+            _file_history_state(
+                settings,
+                users_idx=_TEST_USER_IDX,
+                file_idx=case.file_idx,
+            )
+        )
+        compensated_active = _active_documents(compensated_history)
+        assert len(compensated_active) == 1
+        assert _int(compensated_active[0], "rag_document_idx") == active_document_idx
+        assert _str(compensated_active[0], "parser_version") == reindex_version
+
+        failed_documents = tuple(
+            document
+            for document in compensated_history.documents
+            if _str(document, "index_status") == "FAILED"
+        )
+        assert len(failed_documents) == 1
+        failed_document_idx = _int(failed_documents[0], "rag_document_idx")
+        assert _str(failed_documents[0], "parser_version") == failed_version
+        assert any(
+            _str(run, "status") == "FAILED"
+            and _int(run, "rag_document_idx") == failed_document_idx
+            for run in compensated_history.runs
+        )
+
+        compensated_points = asyncio.run(
+            _qdrant_points(
+                settings,
+                users_idx=_TEST_USER_IDX,
+                file_idxs=(case.file_idx,),
+                active_only=False,
+            )
+        )
+        compensated_point_document_ids = {
+            _int(cast(Mapping[str, object], point.payload), "rag_document_idx")
+            for point in compensated_points
+            if point.payload is not None
+        }
+        assert failed_document_idx not in compensated_point_document_ids
+        assert active_document_idx in compensated_point_document_ids
+
+        callbacks = e2e_runtime.recorder.payloads(case.file_idx)
+        assert len(callbacks) == 4
+        assert tuple(_bool(payload, "success") for payload in callbacks) == (
+            True,
+            True,
+            True,
+            False,
+        )
+        failure_callback = callbacks[-1]
+        assert "chunks" not in failure_callback
+        assert "chunk_count" not in failure_callback
+        assert "index_version" not in failure_callback
+    finally:
+        asyncio.run(_cleanup(settings, (case.file_idx,)))
+        e2e_runtime.recorder.clear_file_history(case.file_idx)
+
+
+# ============================================================
+# 24. 중복 요청과 동시 인제스트
+# ============================================================
+
+
+def test_duplicate_concurrent_ingest_is_serialized_and_idempotent(
+    e2e_runtime: E2eRuntime,
+) -> None:
+    """같은 File_IDX 동시 요청이 하나의 문서·Point 집합과 두 성공 이력으로 수렴하는지 검증한다."""
+
+    case = _OPERATION_CASE
+    settings = e2e_runtime.settings
+    asyncio.run(_cleanup(settings, (case.file_idx,)))
+    e2e_runtime.recorder.clear_file_history(case.file_idx)
+    start_barrier = threading.Barrier(3)
+
+    def post_ingest() -> tuple[int, str]:
+        """두 작업 스레드가 같은 시점에 POST /ingest를 시작하도록 대기한다."""
+
+        start_barrier.wait(timeout=30)
+        response = e2e_runtime.client.post("/ingest", json=case.manifest)
+        return response.status_code, _response_code(response)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = tuple(executor.submit(post_ingest) for _ in range(2))
+            start_barrier.wait(timeout=30)
+            results = tuple(future.result(timeout=300) for future in futures)
+
+        assert results == (
+            (200, "FILE_INDEXING_COMPLETED"),
+            (200, "FILE_INDEXING_COMPLETED"),
+        )
+
+        history = asyncio.run(
+            _file_history_state(
+                settings,
+                users_idx=_TEST_USER_IDX,
+                file_idx=case.file_idx,
+            )
+        )
+        assert len(history.documents) == 1
+        assert len(_active_documents(history)) == 1
+        assert len(history.runs) == 2
+        assert all(_str(run, "status") == "SUCCESS" for run in history.runs)
+        assert len({_int(run, "rag_document_idx") for run in history.runs}) == 1
+
+        chunk_ids = tuple(_str(chunk, "chunk_id") for chunk in history.chunks)
+        assert chunk_ids
+        assert len(chunk_ids) == len(set(chunk_ids))
+
+        points = asyncio.run(
+            _qdrant_points(
+                settings,
+                users_idx=_TEST_USER_IDX,
+                file_idxs=(case.file_idx,),
+            )
+        )
+        assert {str(point.id) for point in points} == set(chunk_ids)
+        assert e2e_runtime.recorder.manifest_request_count(case.file_idx) == 2
+
+        callbacks = e2e_runtime.recorder.payloads(case.file_idx)
+        assert len(callbacks) == 2
+        assert all(_bool(payload, "success") for payload in callbacks)
+        callback_chunk_id_sets = tuple(
+            tuple(
+                _str(chunk, "chunk_id")
+                for chunk in _objects(payload, "chunks")
+            )
+            for payload in callbacks
+        )
+        assert callback_chunk_id_sets[0] == callback_chunk_id_sets[1]
+        assert set(callback_chunk_id_sets[0]) == set(chunk_ids)
+    finally:
+        asyncio.run(_cleanup(settings, (case.file_idx,)))
+        e2e_runtime.recorder.clear_file_history(case.file_idx)
+
+
+# ============================================================
+# 25. 임시 파일과 추출 이미지 정리
+# ============================================================
+
+
+def test_temporary_download_and_extracted_image_resources_are_cleaned(
+    e2e_runtime: E2eRuntime,
+) -> None:
+    """성공한 XLSX OCR 인제스트 뒤 다운로드 파일과 추출 이미지 임시물이 남지 않는지 검증한다."""
+
+    case = _RESOURCE_CLEANUP_CASE
+    settings = e2e_runtime.settings
+    asyncio.run(_cleanup(settings, (case.file_idx,)))
+    e2e_runtime.recorder.clear_file_history(case.file_idx)
+    _assert_directory_empty(e2e_runtime.download_temp_directory)
+
+    try:
+        response = e2e_runtime.client.post("/ingest", json=case.manifest)
+        assert response.status_code == 200
+        callback = e2e_runtime.recorder.callback(case.file_idx)
+        callback_chunks = _objects(callback, "chunks")
+        assert callback_chunks
+        assert any(
+            _str(_source_metadata(chunk), "content_origin") == "ocr"
+            for chunk in callback_chunks
+        )
+
+        # 다운로더의 *.document와 형식 검증 임시 파일은 async context 종료 시 삭제된다.
+        # XLSX 삽입 이미지는 바이트 기반 불변 모델로 전달되므로 callback·DB 어디에도
+        # 임시 파일 경로나 추출 이미지 파일명이 저장되지 않아야 한다.
+        _assert_directory_empty(e2e_runtime.download_temp_directory)
+        serialized_callback = json.dumps(callback, ensure_ascii=False, default=str)
+        assert str(e2e_runtime.download_temp_directory) not in serialized_callback
+        assert ".document" not in serialized_callback
+        assert "source.xlsx" not in serialized_callback
+    finally:
+        asyncio.run(_cleanup(settings, (case.file_idx,)))
+        e2e_runtime.recorder.clear_file_history(case.file_idx)
+        _assert_directory_empty(e2e_runtime.download_temp_directory)
+
+
+# ============================================================
+# 26. 질문·청크·OCR·프롬프트·인증정보 로그 비노출
+# ============================================================
+
+
+def test_question_chunk_ocr_and_prompt_are_not_exposed_in_failure_logs(
+    e2e_runtime: E2eRuntime,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """생성 실패 로그가 질문·근거 원문·전체 프롬프트를 포함하지 않는지 검증한다."""
+
+    question_secret = "QUESTION-SECRET-ISSUE123-7A9F"
+    chunk_secret = "CHUNK-SECRET-ISSUE123-8B0E"
+    ocr_secret = "OCR-SECRET-ISSUE123-9C1D"
+    prompt_secret = "PROMPT-SECRET-ISSUE123-0D2C"
+    file_idx = _NO_EVIDENCE_FILE_IDX + 10
+
+    controlled_result = _controlled_search_result(
+        file_idx=file_idx,
+        content=f"{chunk_secret} {ocr_secret} {prompt_secret}",
+        content_origin="ocr",
+    )
+    searcher = _ControlledChunkSearcher(
+        responses={
+            file_idx: ChunkSearchResponse(
+                user_idx=_TEST_USER_IDX,
+                result_count=1,
+                results=(controlled_result,),
+            )
+        }
+    )
+    generation_client = _SensitiveFailureGenerationClient()
+    service = RoutedRagAnswerService(
+        chunk_searcher=searcher,
+        prompt_builder=RagPromptBuilder(),
+        generation_client=generation_client,
+    )
+
+    with caplog.at_level(logging.INFO), _temporary_dependency_override(
+        get_rag_answer_service,
+        _StaticRagAnswerServiceProvider(service),
+    ):
+        response = e2e_runtime.client.post(
+            "/api/v1/rag/answers",
+            json={
+                "user_idx": _TEST_USER_IDX,
+                "reference_file_idxs": [file_idx],
+                "query": question_secret,
+                "top_k": 5,
+                "score_threshold": None,
+            },
+        )
+
+    assert response.status_code == 503
+    assert generation_client.requests
+    generation_request = generation_client.requests[0]
+    assert question_secret in generation_request.user_prompt
+    assert chunk_secret in generation_request.user_prompt
+    assert ocr_secret in generation_request.user_prompt
+    assert prompt_secret in generation_request.user_prompt
+
+    # caplog는 Formatter 적용 전 LogRecord를 보므로 message와 extra를 모두 문자열화해
+    # 애플리케이션 코드가 원문을 필드에 직접 넣는 회귀까지 검사한다.
+    log_text = "\n".join(
+        (
+            record.getMessage()
+            + " "
+            + repr(
+                {
+                    key: value
+                    for key, value in record.__dict__.items()
+                    if key not in {"args", "msg", "exc_info", "exc_text"}
+                }
+            )
+        )
+        for record in caplog.records
+    )
+    rag_ingest_token = e2e_runtime.settings.rag_ingest_token
+    internal_token = e2e_runtime.settings.internal_token
+    authentication_secrets = (
+        rag_ingest_token.get_secret_value() if rag_ingest_token is not None else "",
+        internal_token.get_secret_value() if internal_token is not None else "",
+        e2e_runtime.generation_settings.anthropic_api_key.get_secret_value(),
+    )
+
+    for secret in (
+        question_secret,
+        chunk_secret,
+        ocr_secret,
+        prompt_secret,
+        generation_request.user_prompt,
+        generation_request.system_prompt or "",
+        *authentication_secrets,
+    ):
+        if secret:
+            assert secret not in log_text
 
