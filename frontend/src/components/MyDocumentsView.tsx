@@ -50,7 +50,6 @@ import { useUploads } from "../upload/UploadProvider";
 
 interface MyDocumentsViewProps {
   documents: Document[];
-  onUploadDocument: (doc: { name: string; content: string; type: string }) => Promise<void>;
   onNavigateToChat: (docIds: string[]) => void;
   isUploadOpen: boolean;
   setIsUploadOpen: (open: boolean) => void;
@@ -288,7 +287,6 @@ export default function MyDocumentsView({
     return source.filter((doc) => {
       const matchesSearch =
           doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          doc.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
           doc.summary.toLowerCase().includes(searchQuery.toLowerCase()) ||
           doc.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
 
@@ -754,28 +752,6 @@ export default function MyDocumentsView({
   const handleSmartUploadTrigger = () => {
     setIsSpecialUploadMode(true);
     setIsUploadOpen(true);
-  };
-
-  const handleLoadSample = (key: string) => {
-    if (key === "sample1") {
-      setUploadName("2024년_인공지능_클라우드_바우처_결과보고서");
-      setUploadContent(`[2024년 정보통신산업진흥원 클라우드 서비스 바우처 최종 보고서]
-과제명: AI-Drive 지능형 협업 솔루션 개발 및 실증 사업.
-총 예산: 480,000,000원 (정부지원금 3억 5천만 원, 민간부담금 1억 3천만 원)
-실적 요약:
-- 기업 문서 분류 정확도 94.2% 달성 (목표치 90% 대비 초과 달성)
-- RAG 문서 추출 실시간 매칭 레이턴시 0.8초 구현 완료.
-- 실시간 비밀유지 계약 및 PII 민감 개인 정보 식별 차단 필터 모듈 탑재 완료.
-연구 책임자: 김민수 수석 (010-4433-2211, minsoo.kim@aidrive.ai)`);
-    } else if (key === "sample2") {
-      setUploadName("사내_복리후생_규정집_수정본");
-      setUploadContent(`[사내 복리후생 가이드 - 인사운영팀 편찬]
-인재의 건강한 균형 발전을 위한 주요 혜택:
-1. 연간 선택적 복지 포인트 240만 원 지급 (매분기 60만 원 분할 부여)
-2. 본인 및 부모, 자녀 종합 실손 의료보험 가입 지원 (연간 최대 500만 원 보상한도)
-3. 주택자금 저금리 사내 대출 이자 보전 (최대 1억 원 원금 지원, 연 1.5% 보전금리)
-주의 사항: 사내 내부 문서로써 협력 개발팀 외 제3자 무단 발설을 불허함.`);
-    }
   };
 
   /**
@@ -2597,26 +2573,6 @@ export default function MyDocumentsView({
                   <Upload className={`w-10 h-10 mb-3 animate-bounce-subtle ${isSpecialUploadMode ? "text-secondary" : "text-primary"}`} />
                   <p className="font-bold text-body-md text-on-surface">여기에 기기의 문서를 끌어서 놓으세요</p>
                   <p className="text-xs text-outline mt-1 leading-relaxed">PDF, DOCX, XLSX, TXT 형식 지원 (한국어 완전 분석 지원)</p>
-                  
-                  <div className="h-px bg-outline-variant/30 w-1/2 my-3"></div>
-                  
-                  <p className="text-[11px] text-outline font-semibold">또는 아래 예시 템플릿을 즉시 테스트해 보세요:</p>
-                  <div className="flex gap-2 mt-2">
-                    <button 
-                      type="button"
-                      onClick={() => handleLoadSample("sample1")}
-                      className="px-2.5 py-1 bg-primary/5 hover:bg-primary/10 border border-primary/10 text-primary text-[10px] font-bold rounded-lg cursor-pointer animate-pulse"
-                    >
-                      📝 정부 바우처 결과보고서(TXT)
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => handleLoadSample("sample2")}
-                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 text-indigo-600 text-[10px] font-bold rounded-lg cursor-pointer"
-                    >
-                      🏢 사내 복리후생 가이드(TXT)
-                    </button>
-                  </div>
                 </div>
 
                 <div className="grid grid-cols-3 gap-4">

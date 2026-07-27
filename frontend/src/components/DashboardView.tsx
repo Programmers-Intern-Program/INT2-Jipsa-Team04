@@ -6,10 +6,7 @@ import {
   Folder,
   FileText,
   TrendingUp,
-  FileSpreadsheet,
-  Check,
-  Merge,
-  Highlighter
+  FileSpreadsheet
 } from "lucide-react";
 import type { Document, Folder as FolderType } from "../types";
 import { formatBytes } from "../utils/formatBytes";
@@ -24,8 +21,6 @@ interface DashboardViewProps {
 }
 
 export default function DashboardView({ documents, onNavigateToChat, onNavigateToTab }: DashboardViewProps) {
-  const [completedActions, setCompletedActions] = useState<string[]>([]);
-  const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [folders, setFolders] = useState<FolderType[]>([]);
   useEffect(() => {
     listFolders().then(setFolders).catch(() => {});
@@ -40,33 +35,6 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
       .sort((a, b) => b.count - a.count);
   const topFolder = folderCounts[0] ?? { name: "미분류", count: documents.filter(d => d.folderId === null).length };
   const topPercent = totalCount > 0 ? Math.round((topFolder.count / totalCount) * 100) : 0;
-
-  const handleRunSummary = (id: string) => {
-    setLoadingAction(id);
-    setTimeout(() => {
-      setLoadingAction(null);
-      setCompletedActions([...completedActions, id]);
-      alert("AI가 '2024년 4분기 경영 전략.pdf' 문서의 3줄 요약을 성공적으로 추출하였습니다.\n\n요약 결과:\n1. 클라우드 현대화 12억 원 전액 집행 완료.\n2. 전 부서 업무 자동화 솔루션 45% 도입 진행.\n3. 해외 마케팅 예산 15% 부족에 대한 비상 승인 절차 개시.");
-    }, 1500);
-  };
-
-  const handleApplyHighlight = (id: string) => {
-    setLoadingAction(id);
-    setTimeout(() => {
-      setLoadingAction(null);
-      setCompletedActions([...completedActions, id]);
-      alert("AI가 '5월 예산 집행 현황.xlsx' 문서에서 핵심 수치를 자동 하이라이트했습니다.\n\n하이라이트된 항목:\n- 글로벌 마케팅 예산 약 15%(1억 2천만 원) 부족\n- 클라우드 인프라 12억 원 전액 집행 완료");
-    }, 1500);
-  };
-
-  const handleMergeDocs = (id: string) => {
-    setLoadingAction(id);
-    setTimeout(() => {
-      setLoadingAction(null);
-      setCompletedActions([...completedActions, id]);
-      alert("중복된 3개의 프로젝트 알파 관련 임시 메모를 분석하여 '프로젝트 알파 핵심 기획안_통합본.docx' 파일로 영구 통합 완료했습니다.");
-    }, 1800);
-  };
 
   return (
     <motion.div 
@@ -143,111 +111,6 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
         </div>
       </div>
 
-      {/* AI Recommendations: Glassmorphism Cards */}
-      <section id="dashboard-ai-recommendations-section">
-        <h2 className="text-xl font-bold text-on-surface mb-6 flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-secondary fill-secondary/20" />
-          AI 추천 스마트 작업
-        </h2>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6" id="ai-recomm-grid">
-          {/* Card 1: Summarize */}
-          <div className="bg-white/80 backdrop-blur-md p-6 rounded-3xl border-l-4 border-l-secondary border border-outline-variant/50 flex flex-col hover:scale-[1.01] transition-all shadow-sm hover:shadow-md relative overflow-hidden group" id="recomm-card-summarize">
-            <div className="absolute right-2 top-2 w-16 h-16 bg-secondary/5 blur-xl rounded-full"></div>
-            <div className="flex items-center gap-2 text-secondary mb-3">
-              <Sparkles className="w-4 h-4 fill-secondary/20" />
-              <span className="font-bold text-xs uppercase tracking-wider">요약 생성 필요</span>
-            </div>
-            <h4 className="font-bold text-body-lg text-on-surface mb-2 group-hover:text-secondary transition-colors">2024 하반기 경영 전략.pdf</h4>
-            <p className="text-body-sm text-on-surface-variant flex-1 leading-relaxed">최근 업로드된 핵심 조직 전략 문서입니다. AI 가독성을 높이기 위해 3줄 핵심 요약을 생성할 준비가 되었습니다.</p>
-            
-            <button 
-              disabled={completedActions.includes("summarize") || loadingAction === "summarize"}
-              onClick={() => handleRunSummary("summarize")}
-              className={`mt-4 py-2.5 px-4 rounded-xl font-semibold text-label-md text-center transition-all cursor-pointer w-full ${
-                completedActions.includes("summarize") 
-                  ? "bg-emerald-100 text-emerald-700 border border-emerald-200"
-                  : loadingAction === "summarize"
-                  ? "bg-secondary/20 text-secondary cursor-wait animate-pulse"
-                  : "bg-secondary text-white hover:bg-opacity-95 shadow-md shadow-secondary/15"
-              }`}
-              id="btn-run-summary-recomm"
-            >
-              {completedActions.includes("summarize") ? (
-                <span className="flex items-center justify-center gap-1"><Check className="w-4 h-4" /> 완료됨</span>
-              ) : loadingAction === "summarize" ? (
-                "AI 요약 처리 중..."
-              ) : (
-                "요약 생성하기"
-              )}
-            </button>
-          </div>
-
-          {/* Card 2: Auto Highlight */}
-          <div className="bg-white/80 backdrop-blur-md p-6 rounded-3xl border-l-4 border-l-amber-500 border border-outline-variant/50 flex flex-col hover:scale-[1.01] transition-all shadow-sm hover:shadow-md relative overflow-hidden group" id="recomm-card-highlight">
-            <div className="absolute right-2 top-2 w-16 h-16 bg-amber-500/5 blur-xl rounded-full"></div>
-            <div className="flex items-center gap-2 text-amber-600 mb-3">
-              <Highlighter className="w-4 h-4" />
-              <span className="font-bold text-xs uppercase tracking-wider">핵심 내용 하이라이트</span>
-            </div>
-            <h4 className="font-bold text-body-lg text-on-surface mb-2 group-hover:text-amber-600 transition-colors">5월 예산 집행 현황.xlsx</h4>
-            <p className="text-body-sm text-on-surface-variant flex-1 leading-relaxed">예산 초과/부족 등 핵심 수치가 담긴 문서입니다. AI가 중요 항목을 자동으로 하이라이트할 준비가 되었습니다.</p>
-
-            <button
-              disabled={completedActions.includes("highlight") || loadingAction === "highlight"}
-              onClick={() => handleApplyHighlight("highlight")}
-              className={`mt-4 py-2.5 px-4 rounded-xl font-semibold text-label-md text-center transition-all cursor-pointer w-full ${
-                completedActions.includes("highlight")
-                  ? "bg-emerald-100 text-emerald-700 border border-emerald-200"
-                  : loadingAction === "highlight"
-                  ? "bg-amber-500/20 text-amber-600 cursor-wait animate-pulse"
-                  : "bg-amber-500 text-white hover:bg-opacity-95 shadow-md shadow-amber-500/15"
-              }`}
-              id="btn-run-highlight-recomm"
-            >
-              {completedActions.includes("highlight") ? (
-                <span className="flex items-center justify-center gap-1"><Check className="w-4 h-4" /> 하이라이트 완료</span>
-              ) : loadingAction === "highlight" ? (
-                "하이라이트 처리 중..."
-              ) : (
-                "자동 하이라이트 적용"
-              )}
-            </button>
-          </div>
-
-          {/* Card 3: Merge Suggestion */}
-          <div className="bg-white/80 backdrop-blur-md p-6 rounded-3xl border-l-4 border-l-purple-600 border border-outline-variant/50 flex flex-col hover:scale-[1.01] transition-all shadow-sm hover:shadow-md relative overflow-hidden group" id="recomm-card-merge">
-            <div className="absolute right-2 top-2 w-16 h-16 bg-purple-100/50 blur-xl rounded-full"></div>
-            <div className="flex items-center gap-2 text-purple-600 mb-3">
-              <Merge className="w-4 h-4" />
-              <span className="font-bold text-xs uppercase tracking-wider">문서 통합 제안</span>
-            </div>
-            <h4 className="font-bold text-body-lg text-on-surface mb-2 group-hover:text-purple-600 transition-colors">프로젝트 알파 관련 중복 문서</h4>
-            <p className="text-body-sm text-on-surface-variant flex-1 leading-relaxed">최근 생성된 '프로젝트 알파' 협력 및 회의 메모 3건이 발견되었습니다. AI 기술로 중복을 없애고 하나로 병합해 보세요.</p>
-            
-            <button 
-              disabled={completedActions.includes("merge") || loadingAction === "merge"}
-              onClick={() => handleMergeDocs("merge")}
-              className={`mt-4 py-2.5 px-4 rounded-xl font-semibold text-label-md text-center transition-all cursor-pointer w-full ${
-                completedActions.includes("merge") 
-                  ? "bg-emerald-100 text-emerald-700 border border-emerald-200"
-                  : loadingAction === "merge"
-                  ? "bg-purple-100 text-purple-700 cursor-wait animate-pulse"
-                  : "bg-purple-600 text-white hover:bg-opacity-95 shadow-md shadow-purple-600/15"
-              }`}
-              id="btn-run-merge-recomm"
-            >
-              {completedActions.includes("merge") ? (
-                <span className="flex items-center justify-center gap-1"><Check className="w-4 h-4" /> 기획서 병합 완료</span>
-              ) : loadingAction === "merge" ? (
-                "AI 병합 및 중복 정리 중..."
-              ) : (
-                "통합 제안 처리"
-              )}
-            </button>
-          </div>
-        </div>
-      </section>
-
       {/* Recently Accessed Docs Table */}
       <section className="bg-white rounded-3xl border border-outline-variant overflow-hidden shadow-sm" id="recent-documents-dashboard-section">
         <div className="px-8 py-5 border-b border-outline-variant flex justify-between items-center" id="recent-docs-header-bar">
@@ -273,7 +136,14 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant" id="recent-docs-table-body">
-              {documents.slice(0, 4).map((doc) => (
+              {documents.length === 0 && (
+                <tr id="recent-docs-empty-row">
+                  <td colSpan={5} className="px-8 py-16 text-center text-body-sm text-outline">
+                    아직 업로드한 문서가 없습니다. 문서를 업로드하면 여기에 표시됩니다.
+                  </td>
+                </tr>
+              )}
+              {documents.slice(0, 12).map((doc) => (
                 <tr key={doc.id} className="hover:bg-surface-container-low transition-colors group" id={`recent-row-${doc.id}`}>
                   <td className="px-8 py-5">
                     <div className="flex items-center gap-3">

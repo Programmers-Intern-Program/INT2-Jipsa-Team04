@@ -155,6 +155,7 @@ export default function App() {
   const [committedSettings, setCommittedSettings] = useState<AISettings>({ sensitivity: 0.85, voiceModel: "Nova (명확하고 신뢰감 있는)", responseStyle: "간결형", instantSummary: true, autoHighlight: false, pushNotification: true });
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
+  const [globalSearchSubmit, setGlobalSearchSubmit] = useState<{ query: string; token: number } | null>(null);
 
   // StrictMode(dev)에서 아래 useEffect가 2번 실행돼 같은 authorization code가 두 번
   // 교환(POST /auth/oauth/google)되는 것을 막는다. ref는 StrictMode의 mount→cleanup→mount
@@ -330,41 +331,18 @@ export default function App() {
     setUser(null);
   };
 
-  // Sync global search into documents tab
+  // 전역 검색: 입력은 로컬 상태만 갱신하고, Enter 시 "의미 검색" 탭으로 이동해
+  // 입력 질의로 실제 의미 검색(POST /api/v1/search)을 자동 실행한다.
   const handleGlobalSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setGlobalSearch(e.target.value);
-    if (activeTab !== "documents" && activeTab !== "chat") {
-      setActiveTab("documents");
-    }
   };
 
-  // Upload document (mock: API 연동 전까지는 로컬 상태에만 반영)
-  const handleUploadDocument = async (docData: { name: string; content: string; type: string }) => {
-    const newDocument: Document = {
-      id: `doc-${Date.now()}`,
-      name: docData.name,
-      content: docData.content,
-      sizeBytes: new Blob([docData.content]).size,
-      fileType: docData.type,
-      folderId: null, // 미분류(루트)
-      tags: [],
-      modifiedAt: new Date().toLocaleDateString("ko-KR"),
-      ownerName: user?.name || "사용자",
-      securityRank: "일반",
-      summary: "AI 분류 대기 중인 문서입니다. (mock 데이터, 백엔드 연동 전)",
-      piiDetected: false
-    };
-
-    setDocuments((prevDocs) => [newDocument, ...prevDocs]);
-    setChatSessions((prev) =>
-      prev.map((session) =>
-        session.id === activeChatSessionId
-          ? { ...session, selectedDocIds: [newDocument.id, ...session.selectedDocIds] }
-          : session
-      )
-    );
-
-    alert(`AI 분류 성공! (mock)\n\n• 파일명: ${newDocument.name}\n• 분류된 폴더: [미분류]\n• 보안 조치 등급: [${newDocument.securityRank}]`);
+  const handleGlobalSearchSubmit = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter") return;
+    const query = globalSearch.trim();
+    if (!query) return;
+    setGlobalSearchSubmit({ query, token: Date.now() });
+    setActiveTab("search");
   };
 
   // Toggle RAG document selection (활성 채팅 탭 기준)
@@ -707,6 +685,7 @@ export default function App() {
                 type="text"
                 value={globalSearch}
                 onChange={handleGlobalSearchChange}
+                onKeyDown={handleGlobalSearchSubmit}
                 placeholder="어느 화면에서든 파일 제목 또는 AI 추출 단어를 검색..."
                 className="w-full bg-surface-container-low border border-outline-variant rounded-full py-2 pl-11 pr-4 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-body-sm font-medium transition-all"
                 id="global-search-input"
@@ -772,7 +751,6 @@ export default function App() {
               >
                 <MyDocumentsView
                   documents={documents}
-                  onUploadDocument={handleUploadDocument}
                   onNavigateToChat={handleNavigateToChat}
                   isUploadOpen={isUploadOpen}
                   setIsUploadOpen={setIsUploadOpen}
@@ -814,7 +792,11 @@ export default function App() {
                 exit={{ opacity: 0, y: -15 }}
                 transition={{ duration: 0.25 }}
               >
-                <SemanticSearchView onNavigateToChat={handleNavigateToChat} />
+                <SemanticSearchView
+                  onNavigateToChat={handleNavigateToChat}
+                  initialSearch={globalSearchSubmit}
+                  onSearchConsumed={() => setGlobalSearchSubmit(null)}
+                />
               </motion.div>
             )}
 
