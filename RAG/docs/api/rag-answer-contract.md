@@ -1,174 +1,235 @@
-# RAG Answer API Contract
+# RAG Answer API 혼합 문서 및 Source Locator 계약
 
-## 1. 목적
+## 1. 적용 범위
 
-`POST /api/v1/rag/answers`는 질문 전송 시점에 선택된 PDF만 검색 범위로
-고정하고, 해당 PDF에서 확인한 근거만 사용하여 답변을 생성한다.
+`POST /api/v1/rag/answers`는 사용자가 선택한 파일 범위에서만 근거를 검색한다.
+지원 원본 형식은 다음과 같다.
 
-RAG 서비스는 AWS 자격 증명을 사용하거나 S3에 직접 접근하지 않는다.
-문서 인제스트는 애플리케이션 서버가 발급한 Presigned GET URL을 통해
-별도로 완료되어 있어야 하며, 답변 API는 Local RAG DB, Qdrant, TEI와
-Claude를 사용한다.
+- PDF
+- DOCX
+- PPTX
+- TXT
+- XLSX
 
-현재 답변 대상 문서 형식은 PDF만 지원한다. OCR, TXT, DOCX, XLSX,
-PPTX는 이 계약의 범위에 포함하지 않는다.
+일반 파서 텍스트와 이미지 OCR 텍스트는 같은 Qdrant collection과 같은 검색
+점수 기준을 사용한다. OCR 청크를 별도로 제외하는 검색 필터는 사용하지 않는다.
 
-## 2. 요청
+사용자 인증·인가와 파일 접근 권한의 최종 판정은 AWS Backend의 책임이다.
+Local RAG는 요청으로 전달된 `user_idx`와 `reference_file_idxs`를 검색 범위로
+고정하고, Qdrant 결과가 해당 범위를 벗어나지 않는지 재검증한다.
 
-```json
-{
-  "user_idx": 45,
-  "reference_file_idxs": [123, 456],
-  "query": "두 PDF를 비교하여 공통점과 차이점을 알려줘",
-  "top_k": 5,
-  "score_threshold": 0.6
-}
+## 2. 검색 범위 계약
+
+Qdrant 검색은 다음 세 조건을 `must`로 결합한다.
+
+```text
+users_idx == request.user_idx
+AND is_active == true
+AND file_idx IN request.reference_file_idxs
 ```
 
-| 필드                  | 타입          | 필수   | 제약                          |
-| --------------------- | ------------- | ------ | ----------------------------- |
-| `user_idx`            | integer       | 예     | 0보다 큰 정수                 |
-| `reference_file_idxs` | integer array | 예     | 1개 이상 20개 이하, 중복 금지 |
-| `query`               | string        | 예     | 1자 이상 4096자 이하          |
-| `top_k`               | integer       | 아니요 | 기본값 5, 1 이상 20 이하      |
-| `score_threshold`     | number/null   | 아니요 | -1.0 이상 1.0 이하            |
+Repository와 Service가 같은 조건을 각각 검증한다.
 
-`reference_file_idxs`가 없거나 비어 있으면 사용자의 전체 문서를 검색하지
-않고 요청 검증 오류로 종료한다.
+- 선택하지 않은 `file_idx`가 반환되면 요청을 실패시킨다.
+- 다른 사용자의 `users_idx`가 반환되면 요청을 실패시킨다.
+- 비활성 point는 검색 필터와 결과 재검증에서 모두 차단한다.
+- 검색 결과의 중복 Chunk ID, 점수 순서 및 `top_k` 초과를 차단한다.
 
 ## 3. 질의 유형
 
 ### lookup
 
-명시적인 다문서 비교·대조·종합 의도가 없는 질문이다.
+명시적인 다문서 비교·종합 의도가 없으면 기존 lookup 흐름을 사용한다.
+PDF, DOCX, PPTX, TXT, XLSX 중 어떤 형식이 선택되어도 동일하게 동작한다.
 
-선택 문서 범위에서 한 번 검색하고 기존 단일 프롬프트, 단일 Claude 생성,
-출처 검증 흐름을 유지한다.
+```text
+선택 문서 전체 범위 검색
+→ 전체 컨텍스트 제한 적용
+→ 단일 Claude 생성
+→ 답변 인용과 cited_source_ids 검증
+→ 실제 인용 출처만 반환
+```
 
 ### synthesis
 
-두 개 이상의 PDF가 선택되고 비교, 대조, 차이점, 공통점, 종합, 문서별
-정리와 같은 다문서 의도가 명시된 질문이다.
+두 개 이상의 문서가 선택되고 질문에 비교·종합 의도가 명시되면 synthesis를
+사용한다.
 
-1. PDF별로 독립 검색한다.
-2. PDF별 청크 수와 전체 컨텍스트를 제한한다.
-3. PDF별 부분 답변을 생성한다.
-4. 실제 인용 출처만 전역 `SOURCE-N`으로 변환한다.
-5. 검증된 부분 답변만 최종 종합한다.
-6. 최종 답변에서 실제 사용한 출처만 반환한다.
+```text
+선택 파일별 독립 검색
+→ 문서별 청크 수 제한
+→ 전체 컨텍스트 예산을 문서 간 라운드 로빈 배분
+→ 문서별 부분 답변 생성
+→ 각 부분 답변의 SOURCE-N 검증
+→ 요청 전체의 전역 SOURCE-N으로 재매핑
+→ 검증된 부분 답변만 최종 Claude 입력으로 사용
+→ 최종 인용 검증
+```
 
-## 4. 근거 부족
+한 문서의 검색이 실패하더라도 다른 문서의 유효한 검색 결과는 유지한다.
+다만 사용자·선택 문서 범위 위반이나 잘못된 인용은 부분 실패로 숨기지 않고
+전체 요청을 실패시킨다.
 
-### 검색 결과 전체 부족
+유효한 부분 답변이 하나도 없으면 최종 Claude 호출을 생략하고
+`insufficient_evidence`를 반환한다.
 
-검색 결과가 전혀 없으면 Claude를 호출하지 않는다.
+## 4. Source Locator
+
+모든 검색 결과와 최종 출처는 `source_locator`를 사용한다.
 
 ```json
 {
-  "success": true,
-  "code": "RAG_ANSWER_COMPLETED",
-  "message": "The RAG answer request was processed.",
-  "data": {
-    "answer": "제공된 문서 근거만으로는 답변할 수 없습니다.",
-    "status": "insufficient_evidence",
-    "sources": [],
-    "model": null,
-    "usage": null,
-    "stop_reason": null
-  }
+  "file_type": "xlsx",
+  "kind": "xlsx_cell_range",
+  "content_origin": "ocr",
+  "unit_type": "ocr_image",
+  "structure_path": "sheet:성과/range:B2:E10",
+  "sheet_name": "성과",
+  "cell_range": "B2:E10",
+  "image_index": 2,
+  "image_id": "chart-2",
+  "image_kind": "xlsx_chart_render",
+  "ocr_engine": "easyocr",
+  "ocr_mean_confidence": 0.91
 }
 ```
 
-### 일부 PDF 근거 부족
+### PDF
 
-일부 PDF의 검색 결과가 없거나 PDF별 부분 답변이
-`insufficient_evidence`이면 해당 PDF를 최종 종합 후보에서 제외한다.
+- `kind`: `pdf_page`
+- `page`: 1부터 시작하는 페이지 번호
+- OCR인 경우 `image_index`, `image_id`, `image_kind` 추가
 
-하나 이상의 PDF가 검증된 부분 답변을 제공하면 최종 종합을 계속한다.
-근거가 없는 PDF의 내용을 외부 지식이나 추측으로 보완하지 않는다.
+### DOCX
 
-### 모든 부분 답변 근거 부족
+- `kind`: `docx_block`
+- `section_index`, `block_index`, `paragraph_index`, `table_index`
+- `section_title`, `structure_path`
+- OCR인 경우 원본 블록 위치와 이미지 정보를 함께 반환
 
-모든 PDF 부분 답변이 `insufficient_evidence`이면 최종 종합 Claude
-호출을 실행하지 않는다.
+### PPTX
 
-고정 근거 부족 문구와 빈 `sources`를 반환한다.
+- `kind`: `pptx_slide` 또는 `pptx_shape`
+- `slide_no`, `shape_index`, `shape_id`, `shape_path`
+- 필요한 경우 EMU 좌표와 크기 반환
+- OCR인 경우 그림·차트·SmartArt 렌더 이미지 정보를 함께 반환
 
-## 5. 정상 답변
+### XLSX
+
+- `kind`: `xlsx_cell_range`
+- `sheet_number`, `sheet_name`, `cell_range`
+- `cell_coordinates`, `merged_cell_ranges`
+- OCR인 경우 삽입 이미지 또는 차트 렌더 이미지 정보를 함께 반환
+
+### TXT
+
+- `kind`: `txt_line`
+- `line_number`, `char_start`, `char_end`
+
+## 5. OCR 출처 계약
+
+OCR 청크는 다음 조건을 만족한다.
+
+- `source_locator.content_origin == "ocr"`
+- `source_locator.image_id` 또는 `image_index`가 존재한다.
+- 원본 문서 위치가 동일한 locator에 함께 존재한다.
+- 일반 텍스트 청크와 동일한 SOURCE-N 인용 검증을 통과한다.
+- OCR 원문 전체는 외부 응답에 반환하지 않고 제한된 `excerpt`만 반환한다.
+
+## 6. 응답 예시
+
+```json
+{
+  "answer": "정책 목표와 성과 증가가 함께 확인됩니다. [SOURCE-1][SOURCE-2]",
+  "status": "answered",
+  "sources": [
+    {
+      "source_id": "SOURCE-1",
+      "chunk_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "rag_document_idx": 1001,
+      "file_idx": 101,
+      "folder_idx": 9,
+      "file_name": "정책.pdf",
+      "file_type": "pdf",
+      "chunk_index": 0,
+      "score": 0.95,
+      "page": 3,
+      "slide_no": null,
+      "sheet_name": null,
+      "section_title": null,
+      "source_locator": {
+        "file_type": "pdf",
+        "kind": "pdf_page",
+        "content_origin": "text",
+        "structure_path": "page:3",
+        "page": 3,
+        "cell_coordinates": [],
+        "merged_cell_ranges": []
+      },
+      "excerpt": "정책 문서는 목표를 설명합니다."
+    },
+    {
+      "source_id": "SOURCE-2",
+      "chunk_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      "rag_document_idx": 2002,
+      "file_idx": 202,
+      "folder_idx": 9,
+      "file_name": "성과.xlsx",
+      "file_type": "xlsx",
+      "chunk_index": 0,
+      "score": 0.93,
+      "page": null,
+      "slide_no": null,
+      "sheet_name": "성과",
+      "section_title": null,
+      "source_locator": {
+        "file_type": "xlsx",
+        "kind": "xlsx_cell_range",
+        "content_origin": "ocr",
+        "unit_type": "ocr_image",
+        "structure_path": "sheet:성과/range:B2:E10",
+        "sheet_name": "성과",
+        "cell_range": "B2:E10",
+        "cell_coordinates": [],
+        "merged_cell_ranges": [],
+        "image_index": 2,
+        "image_id": "chart-2",
+        "image_kind": "xlsx_chart_render"
+      },
+      "excerpt": "[이미지 OCR] 성과 차트는 증가 추세입니다."
+    }
+  ],
+  "model": "claude-sonnet-5",
+  "usage": {
+    "input_tokens": 1200,
+    "output_tokens": 220
+  },
+  "stop_reason": "end_turn"
+}
+```
+
+## 7. 인용 무결성
 
 정상 답변은 다음 조건을 모두 만족해야 한다.
 
-- `status`는 `answered`
-- 답변 본문에 한 개 이상의 `[SOURCE-N]` 존재
-- `cited_source_ids`와 본문 최초 인용 순서 일치
-- 모든 출처가 현재 프롬프트 후보에 존재
-- 선택하지 않은 PDF 출처 미포함
-- 응답 `sources`에는 실제 사용 출처만 포함
+1. answer에 하나 이상의 `[SOURCE-N]`이 존재한다.
+2. `cited_source_ids`는 answer의 최초 등장 순서와 정확히 일치한다.
+3. 모든 SOURCE-N은 현재 프롬프트의 후보 출처에 존재한다.
+4. 응답 `sources`에는 실제 인용된 출처만 최초 등장 순서로 포함한다.
+5. 같은 `source_id` 또는 `chunk_id`가 중복되지 않는다.
+6. synthesis의 최종 출처는 요청 시 선택한 `reference_file_idxs` 안에 있어야 한다.
 
-`usage`는 기존 API 하위 호환성을 위해 최종 Claude 호출의 사용량을
-반환한다.
+## 8. 근거 부족 응답
 
-부분 답변과 최종 답변 전체의 누적 사용량은 내부 생성 예산 제한기가
-별도로 관리한다.
-
-## 6. Claude 제한
-
-| 환경 변수                                          | 기본값 | 의미                |
-| -------------------------------------------------- | -----: | ------------------- |
-| `JIPSA_RAG_ANTHROPIC_MAX_CALLS_PER_ANSWER`         |     21 | 부분·최종 호출 합계 |
-| `JIPSA_RAG_ANTHROPIC_MAX_INPUT_TOKENS_PER_ANSWER`  | 400000 | 누적 입력 토큰      |
-| `JIPSA_RAG_ANTHROPIC_MAX_OUTPUT_TOKENS_PER_ANSWER` |  64000 | 누적 출력 토큰      |
-| `JIPSA_RAG_ANTHROPIC_MAX_CONCURRENT_REQUESTS`      |      2 | 프로세스 동시 호출  |
-| `JIPSA_RAG_ANTHROPIC_MAX_OUTPUT_TOKENS`            |   4096 | 단일 호출 출력 상한 |
-
-호출 횟수 또는 토큰 예산을 초과하면 부분 답변을 정상 응답으로 반환하지
-않는다.
+검색 결과 또는 유효한 부분 답변이 없으면 Claude 호출을 생략할 수 있다.
 
 ```json
 {
-  "success": false,
-  "code": "GENERATION_BUDGET_EXCEEDED",
-  "message": "The generation budget for this answer was exceeded.",
-  "data": null
+  "answer": "제공된 문서 근거만으로는 답변할 수 없습니다.",
+  "status": "insufficient_evidence",
+  "sources": [],
+  "model": null,
+  "usage": null,
+  "stop_reason": null
 }
 ```
-
-HTTP 상태는 `429 Too Many Requests`다.
-
-## 7. 로그 보안
-
-다음 원문은 정상, 근거 부족, 예산 초과, 공급자 실패 경로 모두에서 로그와
-예외 메시지에 기록하지 않는다.
-
-- 사용자 질문
-- 검색 청크
-- 출처 발췌문
-- 시스템·사용자 프롬프트
-- PDF별 부분 답변
-- 최종 Claude 답변
-- 구조화 출력 JSON
-- Anthropic API Key
-- 내부 인증 토큰
-- Presigned URL과 Query String
-
-로그에는 이벤트 이름, 사용자 식별자, 문서 수, 결과 수, PDF 그룹 수,
-안전한 오류 종류와 상태 코드만 기록한다.
-
-## 8. 오류 계약
-
-| HTTP | 코드                             |
-| ---: | -------------------------------- |
-|  401 | `UNAUTHORIZED`                   |
-|  422 | `REFERENCE_DOCUMENT_REQUIRED`    |
-|  422 | `REQUEST_VALIDATION_FAILED`      |
-|  429 | `GENERATION_BUDGET_EXCEEDED`     |
-|  502 | `VECTOR_SEARCH_FAILED`           |
-|  502 | `INVALID_VECTOR_SEARCH_RESULT`   |
-|  502 | `GENERATION_REQUEST_FAILED`      |
-|  502 | `INVALID_GENERATION_RESPONSE`    |
-|  503 | `EMBEDDING_SERVICE_UNAVAILABLE`  |
-|  503 | `VECTOR_DATABASE_UNAVAILABLE`    |
-|  503 | `GENERATION_SERVICE_UNAVAILABLE` |
-|  504 | `EMBEDDING_SERVICE_TIMEOUT`      |
-|  504 | `GENERATION_SERVICE_TIMEOUT`     |
-|  500 | `INTERNAL_SERVER_ERROR`          |
