@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { convertToHtml } from "mammoth/mammoth.browser";
 import * as XLSX from "xlsx";
+import DOMPurify from "dompurify";
 import { fetchFileBlob, downloadFile } from "../api/files";
 
 export interface PreviewHighlight {
@@ -34,6 +35,10 @@ function escapeHtml(text: string): string {
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
+}
+
+function isRenderable(type: string): boolean {
+    return type === "pdf" || type === "docx" || type === "xlsx" || type === "txt";
 }
 
 function decodeTextBytes(buffer: ArrayBuffer): string {
@@ -160,14 +165,15 @@ function highlightExcerpt(container: HTMLElement, excerpt: string | null, sectio
 }
 
 export default function FilePreview({ fileId, fileName, fileType, highlight, className }: FilePreviewProps) {
-    const [status, setStatus] = useState<PreviewStatus>("loading");
+    const type = fileType.toLowerCase();
+    const [status, setStatus] = useState<PreviewStatus>(() => (isRenderable(type) ? "loading" : "unsupported"));
     const [blobUrl, setBlobUrl] = useState<string | null>(null);
     const [html, setHtml] = useState<string>("");
     const [text, setText] = useState<string>("");
     const contentRef = useRef<HTMLDivElement>(null);
-    const type = fileType.toLowerCase();
 
     useEffect(() => {
+        if (!isRenderable(type)) return;
         let active = true;
         let createdUrl: string | null = null;
         (async () => {
@@ -183,7 +189,7 @@ export default function FilePreview({ fileId, fileName, fileType, highlight, cla
                     if (!active) return;
                     const result = await convertToHtml({ arrayBuffer });
                     if (!active) return;
-                    setHtml(result.value);
+                    setHtml(DOMPurify.sanitize(result.value));
                     setStatus("docx");
                 } else if (type === "xlsx") {
                     const arrayBuffer = await blob.arrayBuffer();
@@ -193,15 +199,13 @@ export default function FilePreview({ fileId, fileName, fileType, highlight, cla
                         .map((name) => `<h3 class="xlsx-sheet-name">${escapeHtml(name)}</h3>${XLSX.utils.sheet_to_html(workbook.Sheets[name])}`)
                         .join("");
                     if (!active) return;
-                    setHtml(rendered);
+                    setHtml(DOMPurify.sanitize(rendered));
                     setStatus("xlsx");
                 } else if (type === "txt") {
                     const buffer = await blob.arrayBuffer();
                     if (!active) return;
                     setText(decodeTextBytes(buffer));
                     setStatus("txt");
-                } else {
-                    setStatus("unsupported");
                 }
             } catch {
                 if (active) setStatus("error");

@@ -106,10 +106,10 @@ export default function FileDetailPanel({ fileId, folders, onClose, onTagsChange
     const isProcessing = detail?.status === "PROCESSING" || detail?.status === "UPLOADED";
 
     return (
-        <div className="fixed inset-0 z-[110] flex" id="file-detail-overlay">
+        <div className="fixed inset-0 z-[110] flex flex-col lg:flex-row" id="file-detail-overlay">
             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose}></div>
             {detail && !loading && (
-                <div className="relative hidden lg:flex flex-1 min-w-0 p-6">
+                <div className="relative flex flex-1 min-h-0 min-w-0 p-4 lg:p-6">
                     <FilePreview
                         key={fileId}
                         fileId={fileId}
@@ -119,7 +119,7 @@ export default function FileDetailPanel({ fileId, folders, onClose, onTagsChange
                     />
                 </div>
             )}
-            <aside className="relative w-full max-w-md h-full bg-white shadow-2xl overflow-y-auto ml-auto" id="file-detail-panel">
+            <aside className="relative w-full lg:max-w-md h-[40%] lg:h-full shrink-0 lg:ml-auto bg-white shadow-2xl overflow-y-auto" id="file-detail-panel">
                 <div className="sticky top-0 bg-white border-b border-outline-variant px-6 py-4 flex items-center justify-between z-10">
                     <h2 className="font-bold text-title-sm text-on-surface">문서 상세 정보</h2>
                     <button onClick={onClose} className="p-2 hover:bg-surface-container rounded-full text-outline hover:text-on-surface cursor-pointer" title="닫기">

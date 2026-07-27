@@ -453,6 +453,24 @@ export default function MyDocumentsView({
     }
   };
 
+  const fileNameClickTimer = useRef<number | null>(null);
+  const handleFileNameClick = (docId: string) => {
+    if (fileNameClickTimer.current !== null) {
+      window.clearTimeout(fileNameClickTimer.current);
+    }
+    fileNameClickTimer.current = window.setTimeout(() => {
+      fileNameClickTimer.current = null;
+      setDetailFileId(Number(docId));
+    }, 250);
+  };
+  const handleFileNameDoubleClick = (docId: string, currentName: string) => {
+    if (fileNameClickTimer.current !== null) {
+      window.clearTimeout(fileNameClickTimer.current);
+      fileNameClickTimer.current = null;
+    }
+    handleRenameDocument(docId, currentName);
+  };
+
   const handleMoveDocuments = async (docIds: string[], targetFolder: number | null) => {
     const fileIds = docIds.map(Number).filter((id) => Number.isFinite(id));
     try {
@@ -1716,7 +1734,7 @@ export default function MyDocumentsView({
                                   </button>
                                   <div className="min-w-0 flex-1">
                                     <div className="flex items-center gap-1.5">
-                                      <p className="font-bold text-body-sm text-on-surface leading-tight truncate cursor-text" title="더블클릭하여 이름 변경" onDoubleClick={() => handleRenameDocument(doc.id, doc.name)}>{doc.name}</p>
+                                      <p className="font-bold text-body-sm text-on-surface leading-tight truncate cursor-pointer" title="클릭하여 미리보기 · 더블클릭하여 이름 변경" onClick={() => handleFileNameClick(doc.id)} onDoubleClick={() => handleFileNameDoubleClick(doc.id, doc.name)}>{doc.name}</p>
                                       <button
                                         type="button"
                                         onClick={(e) => {
@@ -2026,7 +2044,7 @@ export default function MyDocumentsView({
                               )}
                               </button>
                               <div className="truncate flex-1">
-                                <p className="font-bold text-xs text-on-surface leading-tight truncate cursor-text" title="더블클릭하여 이름 변경" onDoubleClick={() => handleRenameDocument(doc.id, doc.name)}>{doc.name}</p>
+                                <p className="font-bold text-xs text-on-surface leading-tight truncate cursor-pointer" title="클릭하여 미리보기 · 더블클릭하여 이름 변경" onClick={() => handleFileNameClick(doc.id)} onDoubleClick={() => handleFileNameDoubleClick(doc.id, doc.name)}>{doc.name}</p>
                                 <p className="text-[10px] text-outline mt-1 font-sans truncate">
                                   {getFolderPath(doc.folderId, folders) || "미분류"} · {doc.ownerName}
                                 </p>
@@ -2508,6 +2526,7 @@ export default function MyDocumentsView({
       </AnimatePresence>
 
       <FileDetailPanel
+          key={detailFileId ?? "closed"}
           fileId={detailFileId}
           folders={folders}
           onClose={() => setDetailFileId(null)}
