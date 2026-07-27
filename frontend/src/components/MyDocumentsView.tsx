@@ -2600,7 +2600,7 @@ export default function MyDocumentsView({
                     rows={6}
                     value={uploadContent}
                     onChange={(e) => setUploadContent(e.target.value)}
-                    placeholder="AI가 분석하고 요약할 본문 내용을 직접 붙여넣거나 위의 템플릿 샘플을 클릭하여 즉시 입력해 보세요."
+                    placeholder="AI가 분석하고 요약할 본문 내용을 직접 붙여넣거나, 위 영역에 파일을 첨부해 주세요."
                     className="w-full bg-white border border-outline-variant rounded-xl py-2.5 px-3 text-body-sm outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-sans"
                   ></textarea>
                 </div>

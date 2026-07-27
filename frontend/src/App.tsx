@@ -152,7 +152,10 @@ export default function App() {
     createChatSession(getInitialSelectedDocIds([]))
   ]);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string>(() => chatSessions[0].id);
-  const [committedSettings, setCommittedSettings] = useState<AISettings>({ sensitivity: 0.85, voiceModel: "Nova (명확하고 신뢰감 있는)", responseStyle: "간결형", instantSummary: true, autoHighlight: false, pushNotification: true });
+  // 서버에서 실제 설정을 받기 전에는 null(로딩 중). 하드코딩 기본값을 사용자 설정처럼 보여주지 않는다.
+  const [committedSettings, setCommittedSettings] = useState<AISettings | null>(null);
+  const [settingsError, setSettingsError] = useState(false);
+  const [settingsReloadKey, setSettingsReloadKey] = useState(0);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
   const [globalSearchSubmit, setGlobalSearchSubmit] = useState<{ query: string; token: number } | null>(null);
@@ -254,15 +257,21 @@ export default function App() {
   // 중이라 토큰이 저장되기 전)는 아예 시도하지 않고 건너뛴다. user가 채워지는 시점
   // (로그인 완료/세션 복원)에 맞춰 시도하도록 [user] 의존성을 쓴다. 이 시점엔 로그인이
   // 확정된 상태라 실패하면 "비로그인이라 401"이 아니라 진짜 오류이므로, mock으로 조용히
-  // 가리지 않고 재시도(fetchWithRetry)한다 — 그래도 실패하면 fallback 기본값을 유지한다.
+  // 가리지 않고 재시도(fetchWithRetry)한다 — 그래도 실패하면 오류 상태로 두고(하드코딩 기본값 미표시)
+  // 설정 화면에서 재시도 UI를 제공한다. settingsReloadKey가 바뀌면 다시 조회한다.
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
+    setSettingsError(false);
     fetchWithRetry(getUserSettings)
-      .then(setCommittedSettings)
+      .then((s) => { if (!cancelled) setCommittedSettings(s); })
       .catch((err) => {
+        if (cancelled) return;
         console.error("[settings] GET /api/v1/users/me/settings 재시도 후에도 실패:", err);
+        setSettingsError(true);
       });
-  }, [user]);
+    return () => { cancelled = true; };
+  }, [user, settingsReloadKey]);
 
   // 실제 문서 목록 조회 시도 — 위 설정 조회와 같은 이유로 [user] 의존성과 재시도를 쓴다.
   // 로그인이 확정된 뒤의 실패는 실제 오류이므로, mock 파일 목록으로 가리는 대신 재시도하고
@@ -458,15 +467,17 @@ export default function App() {
   };
 
   // Save Settings — 로컬 상태 먼저 반영(데모 흐름 유지) 후 실제 API 호출 시도.
-  // 비로그인 상태면 PATCH가 401로 실패하는 게 정상이며, 그 경우
-  // 로컬 상태만 갱신된 채로 남는다(Folder의 create/delete와 동일한 폴백 패턴).
+  // PATCH 성공을 확인한 뒤에만 committedSettings를 갱신한다. 실패는 삼키지 않고
+  // 그대로 전파해, SettingsView가 거짓 성공 대신 오류를 표시하고 값을 되돌리도록 한다.
   const handleSaveSettings = async (newSettings: AISettings) => {
+    await updateUserSettings(newSettings);
     setCommittedSettings(newSettings);
-    try {
-      await updateUserSettings(newSettings);
-    } catch (err) {
-      console.warn("[settings] PATCH /api/v1/users/me/settings 실패 - 로컬 상태만 갱신됨(비로그인 상태면 정상):", err);
-    }
+  };
+
+  const handleRetrySettings = () => {
+    setCommittedSettings(null);
+    setSettingsError(false);
+    setSettingsReloadKey((k) => k + 1);
   };
 
   // Smart navigation from Dashboard/Documents: 지정 문서로 새 채팅 탭을 열어 이동
@@ -755,7 +766,7 @@ export default function App() {
                   isUploadOpen={isUploadOpen}
                   setIsUploadOpen={setIsUploadOpen}
                   onUpdateDocuments={setDocuments}
-                  sensitivity={committedSettings.sensitivity}
+                  sensitivity={committedSettings?.sensitivity ?? 0.85}
                 />
               </motion.div>
             )}
@@ -811,6 +822,8 @@ export default function App() {
                 <SettingsView
                   user={user}
                   committedSettings={committedSettings}
+                  hasError={settingsError}
+                  onRetry={handleRetrySettings}
                   onSaveSettings={handleSaveSettings}
                 />
               </motion.div>
