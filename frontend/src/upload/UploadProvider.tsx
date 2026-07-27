@@ -31,7 +31,7 @@ export interface UploadItem {
     idempotencyKey: string;
 }
 
-const ALLOWED_EXTS = ["pdf", "txt"];
+const ALLOWED_EXTS = ["pdf", "txt", "docx", "pptx", "xlsx"];
 const MAX_BYTES = 20 * 1024 * 1024;
 
 function validate(file: File): string | null {

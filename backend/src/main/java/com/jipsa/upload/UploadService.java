@@ -34,7 +34,7 @@ public class UploadService {
     private static final long MAX_FILE_SIZE = 20L * 1024 * 1024;
     private static final int MAX_FILE_COUNT = 5;
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
-            "pdf", "txt");
+            "pdf", "txt", "docx", "pptx", "xlsx");
 
     private static final Logger log = LoggerFactory.getLogger(UploadService.class);
 

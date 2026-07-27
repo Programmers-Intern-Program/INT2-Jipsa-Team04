@@ -7,8 +7,9 @@ import {
   Folder, 
   FolderClosed, 
   FileText, 
-  FileSpreadsheet, 
-  Sparkles, 
+  FileSpreadsheet,
+  Presentation,
+  Sparkles,
   ChevronRight, 
   ChevronDown,
   Download, 
@@ -524,6 +525,7 @@ export default function MyDocumentsView({
   const mimeByType: Record<string, string> = {
     pdf: "application/pdf",
     docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     txt: "text/plain",
   };
@@ -1382,6 +1384,7 @@ export default function MyDocumentsView({
                 <option value="">파일 유형 전체</option>
                 <option value="pdf">PDF 문서</option>
                 <option value="docx">WORD 서류</option>
+                <option value="pptx">PPT 프레젠테이션</option>
                 <option value="xlsx">EXCEL 스프레드시트</option>
                 <option value="txt">TEXT 텍스트</option>
               </select>
@@ -1699,6 +1702,8 @@ export default function MyDocumentsView({
                                     <FileText className="w-10 h-10 text-rose-500 bg-rose-50 p-2 rounded-xl shrink-0" />
                                   ) : doc.fileType === "xlsx" ? (
                                     <FileSpreadsheet className="w-10 h-10 text-emerald-500 bg-emerald-50 p-2 rounded-xl shrink-0" />
+                                  ) : doc.fileType === "pptx" ? (
+                                    <Presentation className="w-10 h-10 text-orange-500 bg-orange-50 p-2 rounded-xl shrink-0" />
                                   ) : (
                                     <FileText className="w-10 h-10 text-blue-500 bg-blue-50 p-2 rounded-xl shrink-0" />
                                   )}
@@ -2001,6 +2006,8 @@ export default function MyDocumentsView({
                                 <FileText className="w-6 h-6 text-rose-500 shrink-0" />
                               ) : doc.fileType === "xlsx" ? (
                                 <FileSpreadsheet className="w-6 h-6 text-emerald-500 shrink-0" />
+                              ) : doc.fileType === "pptx" ? (
+                                <Presentation className="w-6 h-6 text-orange-500 shrink-0" />
                               ) : (
                                 <FileText className="w-6 h-6 text-blue-500 shrink-0" />
                               )}
@@ -2536,7 +2543,7 @@ export default function MyDocumentsView({
                 >
                   <Upload className={`w-10 h-10 mb-3 animate-bounce-subtle ${isSpecialUploadMode ? "text-secondary" : "text-primary"}`} />
                   <p className="font-bold text-body-md text-on-surface">여기에 기기의 문서를 끌어서 놓으세요</p>
-                  <p className="text-xs text-outline mt-1 leading-relaxed">PDF, DOCX, XLSX, TXT 형식 지원 (한국어 완전 분석 지원)</p>
+                  <p className="text-xs text-outline mt-1 leading-relaxed">PDF, DOCX, PPTX, XLSX, TXT 형식 지원 (한국어 완전 분석 지원)</p>
                 </div>
 
                 <div className="grid grid-cols-3 gap-4">
@@ -2645,7 +2652,7 @@ export default function MyDocumentsView({
                       ref={newUploaderInputRef}
                       type="file"
                       multiple
-                      accept=".pdf,.txt"
+                      accept=".pdf,.txt,.docx,.pptx,.xlsx"
                       disabled={isQueueUploading}
                       onChange={handleNewUploaderPick}
                       className="hidden"

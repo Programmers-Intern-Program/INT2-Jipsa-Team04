@@ -46,10 +46,12 @@ function highlightExcerpt(container: HTMLElement, excerpt: string | null, sectio
 }
 
 export default function SourcePreviewModal({ citation, fileName, fileType, onClose }: SourcePreviewModalProps) {
-    const [status, setStatus] = useState<"loading" | "pdf" | "docx" | "unsupported" | "error">("loading");
+    const [status, setStatus] = useState<"loading" | "pdf" | "docx" | "txt" | "unsupported" | "error">("loading");
     const [blobUrl, setBlobUrl] = useState<string | null>(null);
     const [html, setHtml] = useState<string>("");
+    const [text, setText] = useState<string>("");
     const docxRef = useRef<HTMLDivElement>(null);
+    const txtRef = useRef<HTMLDivElement>(null);
     const type = fileType.toLowerCase();
 
     useEffect(() => {
@@ -70,6 +72,11 @@ export default function SourcePreviewModal({ citation, fileName, fileType, onClo
                     if (!active) return;
                     setHtml(result.value);
                     setStatus("docx");
+                } else if (type === "txt") {
+                    const textContent = await blob.text();
+                    if (!active) return;
+                    setText(textContent);
+                    setStatus("txt");
                 } else {
                     setStatus("unsupported");
                 }
@@ -86,6 +93,9 @@ export default function SourcePreviewModal({ citation, fileName, fileType, onClo
     useEffect(() => {
         if (status === "docx" && docxRef.current) {
             highlightExcerpt(docxRef.current, citation.excerpt, citation.sectionTitle);
+        }
+        if (status === "txt" && txtRef.current) {
+            highlightExcerpt(txtRef.current, citation.excerpt, citation.sectionTitle);
         }
     }, [status, citation.excerpt, citation.sectionTitle]);
 
@@ -108,6 +118,7 @@ export default function SourcePreviewModal({ citation, fileName, fileType, onClo
         .docx-preview td, .docx-preview th { border: 1px solid #d1d5db; padding: 4px 8px; }
         .docx-preview img { max-width: 100%; height: auto; }
         .docx-preview mark.source-highlight { background: #fde68a; padding: 1px 2px; border-radius: 2px; }
+        .txt-preview mark.source-highlight { background: #fde68a; padding: 1px 2px; border-radius: 2px; }
       `}</style>
             <div
                 className="bg-white rounded-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden shadow-2xl"
@@ -167,6 +178,16 @@ export default function SourcePreviewModal({ citation, fileName, fileType, onClo
                             className="docx-preview h-full overflow-y-auto px-8 py-6 bg-white text-on-surface leading-relaxed"
                             dangerouslySetInnerHTML={{ __html: html }}
                         />
+                    )}
+                    {status === "txt" && (
+                        <div
+                            ref={txtRef}
+                            className="txt-preview h-full overflow-y-auto px-8 py-6 bg-white text-on-surface text-sm leading-relaxed font-mono whitespace-pre-wrap break-words"
+                        >
+                            {text.split("\n").map((line, i) => (
+                                <div key={i}>{line === "" ? " " : line}</div>
+                            ))}
+                        </div>
                     )}
                     {(status === "unsupported" || status === "error") && (
                         <div className="h-full flex flex-col items-center justify-center gap-3 text-center px-6">
