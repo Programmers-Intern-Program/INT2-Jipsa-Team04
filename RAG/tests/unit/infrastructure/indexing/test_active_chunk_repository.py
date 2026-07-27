@@ -1,6 +1,7 @@
-"""최신 활성 청크 저장소 조회 정책을 테스트한다."""
+"""최신 활성 청크 저장소 조회와 출처 메타데이터 복원 정책을 테스트한다."""
 
 import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from types import TracebackType
 from typing import cast
@@ -125,16 +126,29 @@ def _create_chunk_row(
     chunk_id: str,
     chunk_index: int,
     content: str,
-    page: int,
+    page: int | None,
+    chunk_count: int = 2,
+    source_metadata: object | None = None,
 ) -> dict[str, object]:
     """최신 활성 문서에 속한 단일 청크 조회 행을 생성한다."""
+
+    if source_metadata is None:
+        # 기존 PDF 계약도 Source_Metadata JSON을 통해 동일하게 복원되는지 확인한다.
+        # page 정규화 컬럼은 이전 데이터 fallback 검증을 위해 별도로 유지한다.
+        source_metadata = json.dumps(
+            {
+                "location_kind": "pdf_page",
+                "page_number": page,
+            },
+            ensure_ascii=False,
+        )
 
     return {
         "rag_document_idx": rag_document_idx,
         "users_idx": 45,
         "file_idx": 123,
         "index_version": 2,
-        "chunk_count": 2,
+        "chunk_count": chunk_count,
         "chunk_id": chunk_id,
         "chunk_index": chunk_index,
         "content": content,
@@ -148,6 +162,7 @@ def _create_chunk_row(
         "slide_no": None,
         "sheet_name": None,
         "section_title": None,
+        "source_metadata": source_metadata,
     }
 
 
@@ -194,6 +209,14 @@ async def test_fetches_all_chunks_from_latest_successful_active_document() -> No
         _LATEST_SECOND_CHUNK_ID,
     )
     assert _OLD_CHUNK_ID not in {chunk.chunk_id for chunk in snapshot.chunks}
+    assert snapshot.chunks[0].source_metadata == {
+        "location_kind": "pdf_page",
+        "page_number": 1,
+    }
+    assert snapshot.chunks[1].source_metadata == {
+        "location_kind": "pdf_page",
+        "page_number": 2,
+    }
 
     # 호출자가 과거 처리 결과의 RAG_Document_IDX를 바인딩하지 않는다.
     # 저장소 쿼리가 최신 SUCCESS 실행을 MAX(PK)로 직접 선택해야 한다.
@@ -202,7 +225,187 @@ async def test_fetches_all_chunks_from_latest_successful_active_document() -> No
         "file_idx": 123,
     }
     assert "MAX(candidate_run.`RAG_Index_Run_IDX`)" in fake_session.executed_statement
+    assert "chunk.`Source_Metadata` AS `source_metadata`" in fake_session.executed_statement
     assert ":rag_document_idx" not in fake_session.executed_statement
+
+
+@pytest.mark.asyncio
+async def test_preserves_complete_multiformat_source_metadata_from_json() -> None:
+    """정규화 컬럼에 없는 형식별 위치 필드도 성공 콜백 스냅샷에 보존해야 한다."""
+
+    source_metadata = {
+        "location_kind": "xlsx_cell_range",
+        "sheet_name": "E2E",
+        "sheet_number": 1,
+        "row_number": 2,
+        "start_cell": "A2",
+        "end_cell": "B2",
+        "cell_range": "A2:B2",
+        "cell_coordinates": [
+            "A2",
+            "B2",
+        ],
+    }
+    row = _create_chunk_row(
+        rag_document_idx=300,
+        chunk_id=_LATEST_FIRST_CHUNK_ID,
+        chunk_index=0,
+        content="Exact verification code\tXLSX-FOXTROT-74",
+        page=None,
+        chunk_count=1,
+        source_metadata=json.dumps(
+            source_metadata,
+            ensure_ascii=False,
+        ),
+    )
+    row["sheet_name"] = "E2E"
+
+    fake_session = FakeAsyncSession(
+        rows=(row,),
+    )
+    repository = LocalRagActiveChunkRepository(
+        cast(
+            AsyncSession,
+            fake_session,
+        )
+    )
+
+    snapshot = await repository.fetch_latest_active_chunk_snapshot(
+        users_idx=45,
+        file_idx=123,
+    )
+
+    assert snapshot.chunk_count == 1
+    assert snapshot.chunks[0].source_metadata == {
+        "location_kind": "xlsx_cell_range",
+        "sheet_name": "E2E",
+        "sheet_number": 1,
+        "row_number": 2,
+        "start_cell": "A2",
+        "end_cell": "B2",
+        "cell_range": "A2:B2",
+        "cell_coordinates": (
+            "A2",
+            "B2",
+        ),
+    }
+
+
+@pytest.mark.asyncio
+async def test_accepts_driver_deserialized_source_metadata_mapping() -> None:
+    """DB 드라이버가 JSON을 Mapping으로 반환해도 같은 메타데이터를 복원해야 한다."""
+
+    row = _create_chunk_row(
+        rag_document_idx=400,
+        chunk_id=_LATEST_FIRST_CHUNK_ID,
+        chunk_index=0,
+        content="The TXT exact verification code is TXT-GOLF-85.",
+        page=None,
+        chunk_count=1,
+        source_metadata={
+            "location_kind": "txt_line",
+            "line_number": 2,
+            "character_start": 14,
+            "character_end": 60,
+        },
+    )
+
+    fake_session = FakeAsyncSession(
+        rows=(row,),
+    )
+    repository = LocalRagActiveChunkRepository(
+        cast(
+            AsyncSession,
+            fake_session,
+        )
+    )
+
+    snapshot = await repository.fetch_latest_active_chunk_snapshot(
+        users_idx=45,
+        file_idx=123,
+    )
+
+    assert snapshot.chunks[0].source_metadata == {
+        "location_kind": "txt_line",
+        "line_number": 2,
+        "character_start": 14,
+        "character_end": 60,
+    }
+
+
+@pytest.mark.asyncio
+async def test_uses_normalized_columns_as_legacy_metadata_fallback() -> None:
+    """Source_Metadata가 NULL인 이전 청크는 정규화 컬럼으로 최소 위치를 복원한다."""
+
+    row = _create_chunk_row(
+        rag_document_idx=500,
+        chunk_id=_LATEST_FIRST_CHUNK_ID,
+        chunk_index=0,
+        content="레거시 슬라이드 청크",
+        page=None,
+        chunk_count=1,
+        source_metadata=None,
+    )
+
+    # Helper의 None 기본값은 PDF JSON을 생성하므로 명시적으로 NULL을 다시 설정한다.
+    row["source_metadata"] = None
+    row["slide_no"] = 3
+    row["section_title"] = "레거시 제목"
+
+    fake_session = FakeAsyncSession(
+        rows=(row,),
+    )
+    repository = LocalRagActiveChunkRepository(
+        cast(
+            AsyncSession,
+            fake_session,
+        )
+    )
+
+    snapshot = await repository.fetch_latest_active_chunk_snapshot(
+        users_idx=45,
+        file_idx=123,
+    )
+
+    assert snapshot.chunks[0].source_metadata == {
+        "slide_number": 3,
+        "section_title": "레거시 제목",
+    }
+
+
+@pytest.mark.asyncio
+async def test_rejects_invalid_nested_source_metadata_object() -> None:
+    """콜백 스키마가 허용하지 않는 중첩 객체를 성공 payload로 보내지 않아야 한다."""
+
+    row = _create_chunk_row(
+        rag_document_idx=600,
+        chunk_id=_LATEST_FIRST_CHUNK_ID,
+        chunk_index=0,
+        content="잘못된 출처 메타데이터",
+        page=None,
+        chunk_count=1,
+        source_metadata='{"nested":{"row_number":2}}',
+    )
+
+    fake_session = FakeAsyncSession(
+        rows=(row,),
+    )
+    repository = LocalRagActiveChunkRepository(
+        cast(
+            AsyncSession,
+            fake_session,
+        )
+    )
+
+    with pytest.raises(
+        LocalRagStorageError,
+    ) as exception_info:
+        await repository.fetch_latest_active_chunk_snapshot(
+            users_idx=45,
+            file_idx=123,
+        )
+
+    assert exception_info.value.operation == "validate_latest_active_chunk_snapshot"
 
 
 @pytest.mark.asyncio

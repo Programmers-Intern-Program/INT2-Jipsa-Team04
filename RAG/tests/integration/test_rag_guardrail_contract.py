@@ -630,7 +630,7 @@ def test_pdf_parser_rejects_corrupted_empty_and_scanned_documents(
 
 
 # ============================================================
-# 4. TXT · DOCX · XLSX · PPTX 요청 거부 검증
+# 4. TXT · DOCX · XLSX · PPTX 다중 형식 지원 검증
 # ============================================================
 
 
@@ -643,25 +643,25 @@ def test_pdf_parser_rejects_corrupted_empty_and_scanned_documents(
     [
         pytest.param(
             "txt",
-            "unsupported.txt",
+            "supported.txt",
             DocumentType.TXT,
             id="txt",
         ),
         pytest.param(
             "docx",
-            "unsupported.docx",
+            "supported.docx",
             DocumentType.DOCX,
             id="docx",
         ),
         pytest.param(
             "xlsx",
-            "unsupported.xlsx",
+            "supported.xlsx",
             DocumentType.XLSX,
             id="xlsx",
         ),
         pytest.param(
             "pptx",
-            "unsupported.pptx",
+            "supported.pptx",
             DocumentType.PPTX,
             id="pptx",
         ),
@@ -673,7 +673,23 @@ def test_non_pdf_file_processing_requests_are_rejected(
     file_name: str,
     document_type: DocumentType,
 ) -> None:
-    """비 PDF 요청을 HTTP 요청 검증과 Parser Factory 양쪽에서 거부한다."""
+    """비 PDF 지원 형식이 스키마와 Parser Factory를 통과하는지 검증한다.
+
+    함수명은 기존 Pytest Node ID 및 외부 테스트 명령과의 하위 호환성을
+    유지하기 위해 변경하지 않는다. 현재 검증 대상은 비 PDF 형식의
+    거부가 아니라 정식 지원 계약이다.
+
+    테스트 요청에는 의도적으로 허용되지 않은 ``.invalid`` 다운로드
+    호스트를 사용한다. 올바른 처리 순서는 다음과 같다.
+
+    1. TXT, DOCX, XLSX, PPTX 요청 스키마 검증 통과
+    2. file_type과 파일명 확장자 일치 검증 통과
+    3. 파일 처리 비즈니스 로직 진입
+    4. 다운로드 URL 허용 호스트 검증에서 요청 차단
+
+    따라서 응답은 file_type 요청 검증 오류인 422가 아니라
+    INVALID_FILE_URL에 대응하는 400이어야 한다.
+    """
 
     response = client.post(
         "/api/v1/files/process",
@@ -683,6 +699,8 @@ def test_non_pdf_file_processing_requests_are_rejected(
             "folder_idx": None,
             "file_name": file_name,
             "file_type": file_type,
+            # 실제 외부 네트워크 요청이 발생하기 전에 허용 호스트 검증에서
+            # 차단되도록 예약된 .invalid 도메인을 사용한다.
             "download_url": (f"https://files.invalid/{file_name}?X-Amz-Signature=test-only"),
             "url_expires_in": 900,
         },
@@ -690,36 +708,37 @@ def test_non_pdf_file_processing_requests_are_rejected(
 
     body = response.json()
 
-    # 비 PDF 형식은 엔드포인트 비즈니스 로직에 진입하기 전 요청
-    # 스키마 단계에서 거부되어야 한다.
-    assert response.status_code == 422
+    # 비 PDF 지원 형식이 요청 스키마에서 거부됐다면 422가 반환된다.
+    #
+    # 현재 기대하는 400은 file_type 검증을 통과하고 비즈니스 계층의
+    # 다운로드 URL 검증까지 정상적으로 진입했다는 의미다.
+    assert response.status_code == 400
     assert body["success"] is False
-    assert body["code"] == "REQUEST_VALIDATION_FAILED"
-    assert body["message"] == "Request validation failed."
+    assert body["code"] == "INVALID_FILE_URL"
 
-    invalid_fields = {error["field"] for error in body["data"]["errors"]}
-
-    assert "body.file_type" in invalid_fields
-
-    # 내부 서비스가 DocumentType 값을 직접 전달하는 경우에도
-    # Parser Factory는 등록되지 않은 형식을 거부해야 한다.
+    # 운영 기본 Factory에는 PDF뿐 아니라 DOCX, PPTX, TXT, XLSX 파서도
+    # 모두 등록되어 있어야 한다.
     factory = DocumentParserFactory()
 
-    assert (
-        factory.supports(
-            document_type,
-        )
-        is False
-    )
+    assert factory.supports(document_type) is True
 
+    selected_parser = factory.get_parser(document_type)
+
+    assert selected_parser.file_type is document_type
+
+    # 정식 지원 목록에 포함되지 않은 문자열은 supports()에서 예외를
+    # 발생시키지 않고 False로 판정되어야 한다.
+    assert factory.supports("odt") is False
+
+    # 실제 파서 조회에서는 지원하지 않는 형식임을 나타내는 명시적인
+    # 문서 계층 예외가 발생해야 한다.
     with pytest.raises(
         UnsupportedDocumentTypeError,
     ) as exception_info:
-        factory.get_parser(
-            document_type,
-        )
+        factory.get_parser("odt")
 
-    assert exception_info.value.file_type is document_type
+    # Factory는 안전한 오류 진단을 위해 원래 입력 문자열을 보존한다.
+    assert exception_info.value.file_type == "odt"
 
 
 # ============================================================

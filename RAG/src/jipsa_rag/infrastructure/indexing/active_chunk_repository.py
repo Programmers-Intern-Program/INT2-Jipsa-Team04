@@ -1,7 +1,15 @@
-"""파일 범위의 최신 성공 색인과 전체 청크를 Local RAG DB에서 조회한다."""
+"""파일 범위의 최신 성공 색인과 전체 청크를 Local RAG DB에서 조회한다.
 
+RAG_Chunk.Source_Metadata JSON에는 DOCX 문단, PPTX 도형, XLSX 셀 범위,
+TXT 줄 위치처럼 정규화 전용 컬럼만으로 표현할 수 없는 전체 출처 정보가 저장된다.
+성공 콜백은 이 JSON을 우선 복원하고, 이전 데이터와의 호환성을 위해 Page,
+Slide_No, Sheet_Name, Section_Title 컬럼을 누락 필드의 fallback으로 사용한다.
+"""
+
+import json
+import math
 from collections.abc import Mapping, Sequence
-from typing import Final
+from typing import Final, cast
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -10,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from jipsa_rag.infrastructure.indexing.chunk_snapshot_models import (
     IndexedChunkSnapshot,
     IndexedDocumentSnapshot,
+    SnapshotMetadataScalar,
     SnapshotMetadataValue,
 )
 from jipsa_rag.infrastructure.indexing.exceptions import (
@@ -30,6 +39,7 @@ from jipsa_rag.infrastructure.indexing.exceptions import (
 # 3. 청크의 Index_Version이 상위 문서의 Index_Version과 같아야 한다.
 # 4. 최신 실행은 MAX(RAG_Index_Run_IDX)로 결정한다.
 # 5. Chunk_Index 순서로 정렬하여 0부터 이어지는 전체 스냅샷을 구성한다.
+# 6. Source_Metadata JSON을 조회하여 형식별 전체 원본 위치를 복원한다.
 #
 # 동일한 인제스트 요청이 반복되어 기존 RAG_Document를 멱등 재사용한 경우에도
 # 새로운 SUCCESS 실행 이력은 생성된다. 이때 최신 실행이 같은 문서를 가리키므로
@@ -50,7 +60,8 @@ _SELECT_LATEST_ACTIVE_CHUNKS: Final = text(
         chunk.`Page` AS `page`,
         chunk.`Slide_No` AS `slide_no`,
         chunk.`Sheet_Name` AS `sheet_name`,
-        chunk.`Section_Title` AS `section_title`
+        chunk.`Section_Title` AS `section_title`,
+        chunk.`Source_Metadata` AS `source_metadata`
     FROM `RAG_Document` AS document
     INNER JOIN `RAG_Index_Run` AS latest_successful_run
         ON latest_successful_run.`RAG_Document_IDX`
@@ -168,8 +179,8 @@ class LocalRagActiveChunkRepository:
             TypeError,
             ValueError,
         ) as error:
-            # DB 값이 모델 계약과 다르면 일부 청크를 전송하지 않고
-            # 저장소 일관성 오류로 처리한다.
+            # DB 값이나 Source_Metadata JSON이 모델 계약과 다르면 일부 청크를
+            # 전송하지 않고 저장소 일관성 오류로 처리한다.
             raise LocalRagStorageError("validate_latest_active_chunk_snapshot") from error
 
 
@@ -254,10 +265,13 @@ def _build_document_snapshot(
         ):
             raise ValueError("chunk_count must be identical for all rows.")
 
-        source_metadata: dict[
-            str,
-            SnapshotMetadataValue,
-        ] = {}
+        # Source_Metadata JSON은 파서와 구조 보존 청커가 만든 전체 위치 계약이다.
+        # 정규화 컬럼만으로 다시 조립하면 DOCX paragraph_index, PPTX shape_path,
+        # XLSX cell_range, TXT line_number 같은 필드가 사라지므로 JSON을 우선한다.
+        source_metadata = _read_source_metadata(
+            row,
+            "source_metadata",
+        )
 
         page_number = _optional_integer(
             row,
@@ -276,19 +290,32 @@ def _build_document_snapshot(
             "section_title",
         )
 
-        # DB의 형식별 위치 컬럼을 외부 계약에서 사용하는 명시적인 키로
-        # 변환한다. 값이 없는 형식의 필드는 payload에 포함하지 않는다.
+        # Source_Metadata 컬럼이 추가되기 전에 저장된 기존 청크나 일부 키가 없는
+        # 데이터도 콜백할 수 있도록 정규화 컬럼을 fallback으로 병합한다.
+        # JSON에 이미 같은 키가 있으면 원본 메타데이터를 우선하여 덮어쓰지 않는다.
         if page_number is not None:
-            source_metadata["page_number"] = page_number
+            source_metadata.setdefault(
+                "page_number",
+                page_number,
+            )
 
         if slide_number is not None:
-            source_metadata["slide_number"] = slide_number
+            source_metadata.setdefault(
+                "slide_number",
+                slide_number,
+            )
 
         if sheet_name is not None:
-            source_metadata["sheet_name"] = sheet_name
+            source_metadata.setdefault(
+                "sheet_name",
+                sheet_name,
+            )
 
         if section_title is not None:
-            source_metadata["section_title"] = section_title
+            source_metadata.setdefault(
+                "section_title",
+                section_title,
+            )
 
         chunks.append(
             IndexedChunkSnapshot(
@@ -327,6 +354,123 @@ def _build_document_snapshot(
     )
 
 
+def _read_source_metadata(
+    row: Mapping[str, object],
+    key: str,
+) -> dict[str, SnapshotMetadataValue]:
+    """MySQL JSON 값을 콜백 스냅샷의 불변 메타데이터 계약으로 복원한다.
+
+    asyncmy와 SQLAlchemy 설정에 따라 JSON 컬럼은 JSON 문자열 또는 이미
+    역직렬화된 Mapping으로 반환될 수 있으므로 두 형태를 모두 허용한다.
+    NULL은 Source_Metadata 컬럼 도입 이전 데이터와의 호환성을 위해 빈 객체로
+    처리하며, 이후 정규화 위치 컬럼이 fallback 값을 채운다.
+
+    콜백 스키마는 JSON 스칼라와 스칼라 배열만 허용한다. 중첩 객체나 배열 안의
+    객체를 조용히 문자열로 바꾸지 않고 즉시 거부하여 AWS DB에 손상된 출처
+    계약이 동기화되는 것을 방지한다.
+    """
+
+    raw_value = row[key]
+
+    if raw_value is None:
+        return {}
+
+    parsed_value: object
+
+    if isinstance(raw_value, str):
+        if not raw_value.strip():
+            raise ValueError(f"{key} must not be an empty JSON string.")
+
+        parsed_value = json.loads(
+            raw_value,
+            parse_constant=_reject_non_finite_json_constant,
+        )
+    elif isinstance(raw_value, Mapping):
+        # DB 드라이버가 반환한 변경 가능한 dict를 그대로 스냅샷에 보관하지 않는다.
+        parsed_value = dict(raw_value)
+    else:
+        raise TypeError(f"{key} must be a JSON object string, mapping, or null.")
+
+    if not isinstance(parsed_value, Mapping):
+        raise TypeError(f"{key} must contain a JSON object.")
+
+    normalized: dict[str, SnapshotMetadataValue] = {}
+
+    for raw_key, metadata_value in cast(
+        Mapping[object, object],
+        parsed_value,
+    ).items():
+        if not isinstance(raw_key, str):
+            raise TypeError(f"{key} keys must be strings.")
+
+        normalized_key = raw_key.strip()
+
+        if not normalized_key:
+            raise ValueError(f"{key} keys must not be empty.")
+
+        if normalized_key in normalized:
+            raise ValueError(f"{key} contains duplicate normalized keys.")
+
+        normalized[normalized_key] = _normalize_snapshot_metadata_value(
+            metadata_value,
+        )
+
+    return normalized
+
+
+def _normalize_snapshot_metadata_value(
+    value: object,
+) -> SnapshotMetadataValue:
+    """JSON 값을 성공 콜백이 허용하는 스칼라 또는 스칼라 tuple로 변환한다."""
+
+    if value is None or isinstance(
+        value,
+        str | bool | int,
+    ):
+        return value
+
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("source metadata floats must be finite.")
+
+        return value
+
+    if isinstance(value, Sequence) and not isinstance(
+        value,
+        str | bytes | bytearray,
+    ):
+        normalized_items: list[SnapshotMetadataScalar] = []
+
+        for item in value:
+            if item is None or isinstance(
+                item,
+                str | bool | int,
+            ):
+                normalized_items.append(item)
+                continue
+
+            if isinstance(item, float):
+                if not math.isfinite(item):
+                    raise ValueError("source metadata array floats must be finite.")
+
+                normalized_items.append(item)
+                continue
+
+            raise TypeError("source metadata arrays must contain only JSON scalar values.")
+
+        return tuple(normalized_items)
+
+    raise TypeError("source metadata values must be JSON scalars or scalar arrays.")
+
+
+def _reject_non_finite_json_constant(
+    value: str,
+) -> object:
+    """JSON의 NaN과 Infinity 확장을 거부한다."""
+
+    raise ValueError(f"non-finite JSON constant is not allowed: {value}")
+
+
 def _validate_positive_identifier(
     value: int,
     *,
@@ -334,7 +478,17 @@ def _validate_positive_identifier(
 ) -> None:
     """bool이 아닌 양의 정수 식별자인지 검증한다."""
 
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+    if (
+        isinstance(
+            value,
+            bool,
+        )
+        or not isinstance(
+            value,
+            int,
+        )
+        or value <= 0
+    ):
         raise ValueError(f"{field_name} must be a positive integer.")
 
 
@@ -346,7 +500,10 @@ def _require_integer(
 
     value = row[key]
 
-    if isinstance(value, bool) or not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(
+        value,
+        int,
+    ):
         raise TypeError(f"{key} must be an integer.")
 
     return value
@@ -363,7 +520,10 @@ def _optional_integer(
     if value is None:
         return None
 
-    if isinstance(value, bool) or not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(
+        value,
+        int,
+    ):
         raise TypeError(f"{key} must be an integer or null.")
 
     return value
@@ -379,7 +539,10 @@ def _require_string(
 
     value = row[key]
 
-    if not isinstance(value, str):
+    if not isinstance(
+        value,
+        str,
+    ):
         raise TypeError(f"{key} must be a string.")
 
     if preserve_whitespace:
@@ -407,7 +570,10 @@ def _optional_string(
     if value is None:
         return None
 
-    if not isinstance(value, str):
+    if not isinstance(
+        value,
+        str,
+    ):
         raise TypeError(f"{key} must be a string or null.")
 
     normalized_value = value.strip()
