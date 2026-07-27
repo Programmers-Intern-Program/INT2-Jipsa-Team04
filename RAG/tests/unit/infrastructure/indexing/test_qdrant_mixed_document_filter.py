@@ -70,3 +70,57 @@ def test_qdrant_hit_preserves_nested_ocr_metadata() -> None:
 
     assert hit.source_metadata["content_origin"] == "ocr"
     assert hit.source_metadata["image_id"] == "chart-2"
+
+
+def test_qdrant_hit_restores_legacy_top_level_locator_metadata() -> None:
+    """nested metadata가 없는 과거 point도 형식별 위치와 OCR 순번을 복원한다."""
+
+    chunk_id = "22222222-2222-2222-2222-222222222222"
+    point = models.ScoredPoint(
+        id=chunk_id,
+        version=1,
+        score=0.9,
+        payload={
+            "chunk_id": chunk_id,
+            "users_idx": 45,
+            "rag_document_idx": 1002,
+            "file_idx": 303,
+            "folder_idx": 9,
+            "file_name": "발표.pptx",
+            "file_type": "pptx",
+            "chunk_index": 0,
+            "content": "[이미지 OCR]\n도형 텍스트",
+            "token_count": 20,
+            "page": None,
+            "slide_no": 4,
+            "sheet_name": None,
+            "section_title": None,
+            "parser_version": "1.1.0",
+            "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+            "index_version": 2,
+            "is_active": True,
+            "shape_index": 3,
+            "shape_id": 27,
+            "shape_path": "3.2",
+            "shape_name": "성과 차트",
+            "coordinate_space": "group",
+            "content_origin": "ocr",
+            "unit_type": "ocr_image",
+            "image_ordinal": 2,
+            "image_id": "pptx-chart-2",
+        },
+        vector=None,
+    )
+
+    hit = _to_chunk_search_hit(
+        point=point,
+        expected_user_idx=45,
+        expected_reference_file_idxs=frozenset({303}),
+        expected_embedding_model="Qwen/Qwen3-Embedding-0.6B",
+    )
+
+    assert hit.source_metadata["slide_no"] == 4
+    assert hit.source_metadata["shape_path"] == "3.2"
+    assert hit.source_metadata["shape_name"] == "성과 차트"
+    assert hit.source_metadata["image_ordinal"] == 2
+    assert hit.source_metadata["image_id"] == "pptx-chart-2"

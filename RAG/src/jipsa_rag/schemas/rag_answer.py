@@ -1,7 +1,8 @@
 """근거 기반 RAG 답변 생성에서 사용하는 요청 및 응답 스키마를 정의한다."""
 
+import re
 from enum import StrEnum
-from typing import Self
+from typing import Final, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -11,6 +12,16 @@ from jipsa_rag.schemas.reference_files import (
     ReferenceFileIdxs,
 )
 from jipsa_rag.schemas.source_locator import SourceLocator, build_source_locator
+
+_INSUFFICIENT_EVIDENCE_ANSWER: Final[str] = (
+    "제공된 문서 근거만으로는 답변할 수 없습니다."
+)
+_SOURCE_CITATION_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"\[(?P<source_id>SOURCE-[0-9]+)\]"
+)
+_VALID_SOURCE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^SOURCE-[1-9][0-9]*$"
+)
 
 
 class RagAnswerStatus(StrEnum):
@@ -158,7 +169,16 @@ class RagAnswerUsage(BaseModel):
 
 
 class RagAnswerResponse(BaseModel):
-    """근거 기반 답변 또는 근거 부족 결과를 반환하는 응답."""
+    """근거 기반 답변 또는 근거 부족 결과를 반환하는 응답.
+
+    ``cited_source_ids``는 단순한 생성 모델의 선언값이 아니다. 응답 모델은
+    답변 본문의 ``[SOURCE-N]``을 왼쪽부터 읽어 최초 등장 순서를 계산하고,
+    최종 ``sources``의 순서와 정확히 일치하는지 다시 검증한다.
+
+    서비스가 이 필드를 생략한 기존 호출 경로에서는 검증된 본문 인용 순서를
+    자동으로 채운다. 외부 입력이 필드를 명시한 경우에는 자동 교정하지 않고
+    본문 인용 및 ``sources`` 순서와 다르면 거부한다.
+    """
 
     model_config = ConfigDict(
         extra="forbid",
@@ -167,7 +187,16 @@ class RagAnswerResponse(BaseModel):
 
     answer: str = Field(min_length=1)
     status: RagAnswerStatus
-    sources: tuple[RagAnswerSource, ...] = Field(default_factory=tuple)
+    cited_source_ids: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description=(
+            "answer 본문의 SOURCE-N을 중복 없이 최초 등장 순서로 나열한 식별자 목록"
+        ),
+    )
+    sources: tuple[RagAnswerSource, ...] = Field(
+        default_factory=tuple,
+        description="최종 답변 본문에 실제 인용된 출처만 인용 순서대로 포함",
+    )
     model: str | None = Field(default=None, min_length=1, max_length=128)
     usage: RagAnswerUsage | None = None
     stop_reason: str | None = Field(default=None, min_length=1, max_length=100)
@@ -179,6 +208,25 @@ class RagAnswerResponse(BaseModel):
 
         if not value.strip():
             raise ValueError("answer must not be empty.")
+        return value
+
+    @field_validator("cited_source_ids")
+    @classmethod
+    def validate_cited_source_ids(
+        cls,
+        value: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        """공개 응답의 출처 ID 형식과 중복을 검증한다."""
+
+        if any(
+            _VALID_SOURCE_ID_PATTERN.fullmatch(source_id) is None
+            for source_id in value
+        ):
+            raise ValueError(
+                "cited_source_ids must contain only valid SOURCE-N values."
+            )
+        if len(value) != len(set(value)):
+            raise ValueError("cited_source_ids must not contain duplicates.")
         return value
 
     @field_validator("model", "stop_reason")
@@ -195,29 +243,81 @@ class RagAnswerResponse(BaseModel):
 
     @model_validator(mode="after")
     def validate_status_contract(self) -> Self:
-        """답변 상태, 실제 인용 출처 및 생성 메타데이터의 조합을 검증한다."""
+        """상태, 본문 인용, 최종 출처 및 생성 메타데이터를 함께 검증한다."""
 
         source_ids = tuple(source.source_id for source in self.sources)
         chunk_ids = tuple(source.chunk_id for source in self.sources)
 
+        # 중복 오류는 인용 순서 오류보다 먼저 검증한다. 동일 SOURCE 또는 청크가
+        # 조용히 덮어써진 뒤 정상 인용처럼 보이는 상황을 방지하기 위함이다.
         if len(source_ids) != len(set(source_ids)):
             raise ValueError("sources must contain unique source_id values.")
         if len(chunk_ids) != len(set(chunk_ids)):
             raise ValueError("sources must contain unique chunk_id values.")
 
+        body_citation_ids = _extract_unique_source_ids(self.answer)
+
         if self.status is RagAnswerStatus.ANSWERED:
+            # 기존 응답 계약의 필수 요소를 먼저 확인해 기존 오류 의미를 유지한다.
             if not self.sources:
                 raise ValueError("answered responses must contain at least one source.")
             if self.model is None:
                 raise ValueError("answered responses must contain a model.")
             if self.usage is None:
                 raise ValueError("answered responses must contain usage.")
+            if not body_citation_ids:
+                raise ValueError("answered responses must contain answer citations.")
+
+            # sources가 후보 전체를 포함하면 사용하지 않은 원문 발췌문이 외부로
+            # 노출될 수 있다. 본문의 실제 인용 순서와 정확히 같은 출처만 허용한다.
+            if source_ids != body_citation_ids:
+                raise ValueError(
+                    "sources must match answer citations in first appearance order."
+                )
+
+            if "cited_source_ids" in self.model_fields_set:
+                if self.cited_source_ids != body_citation_ids:
+                    raise ValueError(
+                        "cited_source_ids must match answer citations in first "
+                        "appearance order."
+                    )
+            else:
+                # 서비스의 기존 생성 경로는 sources만 전달한다. 해당 경로도 외부
+                # 응답에는 명시적인 cited_source_ids가 포함되도록 안전하게 채운다.
+                object.__setattr__(self, "cited_source_ids", body_citation_ids)
+
             return self
 
+        # 근거 부족 응답은 Claude 최종 호출이 생략된 결과일 수 있으므로 출처,
+        # 인용 선언 및 생성 사용량을 어떤 형태로도 포함하지 않는다.
         if self.sources:
             raise ValueError("insufficient_evidence responses must not contain sources.")
+        if body_citation_ids or self.cited_source_ids:
+            raise ValueError(
+                "insufficient_evidence responses must not contain citations."
+            )
         if self.model is not None or self.usage is not None or self.stop_reason is not None:
             raise ValueError(
                 "insufficient_evidence responses must not contain generation metadata."
             )
+        if self.answer.strip() != _INSUFFICIENT_EVIDENCE_ANSWER:
+            raise ValueError(
+                "insufficient_evidence responses must use the fixed answer."
+            )
         return self
+
+
+def _extract_unique_source_ids(answer: str) -> tuple[str, ...]:
+    """본문 인용을 중복 없이 최초 등장 순서로 반환한다."""
+
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    for match in _SOURCE_CITATION_PATTERN.finditer(answer):
+        source_id = match.group("source_id")
+        if source_id in seen:
+            continue
+        seen.add(source_id)
+        ordered.append(source_id)
+
+    return tuple(ordered)
