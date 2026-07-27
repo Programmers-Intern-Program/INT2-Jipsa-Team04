@@ -1,6 +1,6 @@
 """고정 다중 형식 문서를 실제 OCR·TEI·DB·Qdrant 파이프라인으로 검증한다.
 
-Issue #123의 두 번째 작업 묶음은 첫 번째 묶음에서 저장소에 고정한 실제 문서를
+Issue #123의 두 번째·세 번째 작업 묶음은 첫 번째 묶음에서 저장소에 고정한 실제 문서를
 운영 Local RAG 처리 흐름에 통과시킨다. AWS Backend와 Presigned GET URL의 HTTP
 경계만 결정적인 ``MockTransport``로 교체하고 다음 구성요소는 실제 구현을 사용한다.
 
@@ -9,6 +9,8 @@ Issue #123의 두 번째 작업 묶음은 첫 번째 묶음에서 저장소에 �
 - CUDA TEI 문서·질의 임베딩
 - Local RAG MySQL 또는 MariaDB 문서·청크·색인 실행 이력
 - Qdrant Point, vector, payload, 활성 상태와 사용자·문서 범위
+- 실제 Claude lookup·synthesis 답변과 형식별 source_locator
+- 답변 본문 [SOURCE-N], cited_source_ids 및 sources 순서 일치
 
 실제 GPU 추론과 로컬 인프라 데이터 변경을 동반하므로
 ``JIPSA_RAG_RUN_E2E=1``을 명시한 경우에만 실행한다. 테스트 데이터는 전용 사용자와
@@ -34,6 +36,7 @@ import httpx2
 import pytest
 import torch
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from qdrant_client import AsyncQdrantClient, models
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -47,6 +50,10 @@ from jipsa_rag.core.config import Settings, get_settings
 from jipsa_rag.core.document_processing import (
     DocumentProcessingSettings,
     get_document_processing_settings,
+)
+from jipsa_rag.core.generation_config import (
+    GenerationSettings,
+    get_generation_settings,
 )
 from jipsa_rag.infrastructure.app_server.ingest_client import (
     ApplicationServerIngestClient,
@@ -72,6 +79,7 @@ _RUN_ENV: Final[str] = "JIPSA_RAG_RUN_E2E"
 _FIXTURE_ROOT: Final[Path] = Path(__file__).resolve().parents[1] / "fixtures/e2e_documents"
 _DOCUMENT_MANIFEST_PATH: Final[Path] = _FIXTURE_ROOT / "manifest.json"
 _PIPELINE_EXPECTATIONS_PATH: Final[Path] = _FIXTURE_ROOT / "pipeline_expectations.json"
+_ANSWER_EXPECTATIONS_PATH: Final[Path] = _FIXTURE_ROOT / "answer_expectations.json"
 
 _BACKEND_PATH_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"^/internal/files/(?P<file_idx>[1-9][0-9]*)/"
@@ -82,6 +90,9 @@ _DOWNLOAD_PATH_PATTERN: Final[re.Pattern[str]] = re.compile(
 )
 _SHA256_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9a-f]{64}$")
 _TOKEN_NORMALIZATION_PATTERN: Final[re.Pattern[str]] = re.compile(r"[^A-Z0-9]+")
+_SOURCE_CITATION_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"\[(?P<source_id>SOURCE-[1-9][0-9]*)\]"
+)
 _INDEX_VERSION: Final[int] = 2
 
 _TEXT_CASE_IDS: Final[tuple[str, ...]] = (
@@ -165,6 +176,21 @@ def _bool(mapping: Mapping[str, object], key: str) -> bool:
     return value
 
 
+def _strings(mapping: Mapping[str, object], key: str) -> tuple[str, ...]:
+    """JSON 문자열 배열을 순서와 중복을 그대로 보존하여 읽는다."""
+
+    value = mapping.get(key)
+    if not isinstance(value, list):
+        raise AssertionError(f"{key} must be a JSON array.")
+
+    normalized: list[str] = []
+    for item in cast(list[object], value):
+        if not isinstance(item, str) or not item:
+            raise AssertionError(f"{key} must contain only non-empty strings.")
+        normalized.append(item)
+    return tuple(normalized)
+
+
 def _db_bool(mapping: Mapping[str, object], key: str) -> bool:
     """DB의 bool 또는 0·1 값을 Python bool로 정규화한다."""
 
@@ -244,6 +270,10 @@ _PIPELINE_EXPECTATIONS: Final[dict[str, object]] = _load_json(
     _PIPELINE_EXPECTATIONS_PATH,
     "pipeline expectations",
 )
+_ANSWER_EXPECTATIONS: Final[dict[str, object]] = _load_json(
+    _ANSWER_EXPECTATIONS_PATH,
+    "answer expectations",
+)
 _DOCUMENT_MANIFEST_BY_ID: Final[dict[str, dict[str, object]]] = {
     _str(document, "id"): document for document in _objects(_DOCUMENT_MANIFEST, "documents")
 }
@@ -316,6 +346,69 @@ class FixtureCase:
             "download_url": self.download_url,
             "url_expires_in": 900,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class ExpectedAnswerSource:
+    """답변에 실제 인용돼야 하는 토큰·문서·공통 locator 계약."""
+
+    token: str
+    case_id: str
+    locator: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerScenario:
+    """실제 Claude 답변 한 건의 선택 문서, 질문 및 예상 출처 계약."""
+
+    scenario_id: str
+    case_ids: tuple[str, ...]
+    query: str
+    expected_tokens: tuple[str, ...]
+    expected_sources: tuple[ExpectedAnswerSource, ...]
+
+    @property
+    def cases(self) -> tuple[FixtureCase, ...]:
+        """시나리오가 선택하는 고정 문서를 JSON 선언 순서대로 반환한다."""
+
+        try:
+            return tuple(_CASES_BY_ID[case_id] for case_id in self.case_ids)
+        except KeyError as error:
+            raise AssertionError(
+                f"Unknown answer scenario fixture id: {error.args[0]}"
+            ) from error
+
+    @property
+    def file_idxs(self) -> tuple[int, ...]:
+        """답변 요청 reference_file_idxs에 전달할 실제 File_IDX 목록."""
+
+        return tuple(case.file_idx for case in self.cases)
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerScenarioResult:
+    """한 번만 호출한 실제 Claude 답변을 여러 계약 테스트가 공유하는 결과."""
+
+    scenario: AnswerScenario
+    answer: str
+    cited_source_ids: tuple[str, ...]
+    sources: tuple[Mapping[str, object], ...]
+    model: str
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerRuntime:
+    """lookup·synthesis·OCR 답변 호출 결과를 시나리오 ID로 제공한다."""
+
+    results: Mapping[str, AnswerScenarioResult]
+
+    def result(self, scenario_id: str) -> AnswerScenarioResult:
+        """고정 시나리오 ID의 실제 답변 결과를 반환한다."""
+
+        try:
+            return self.results[scenario_id]
+        except KeyError as error:
+            raise AssertionError(f"Unknown answer result id: {scenario_id}") from error
 
 
 def _build_case(expectation: Mapping[str, object]) -> FixtureCase:
@@ -395,6 +488,97 @@ _OCR_CASES: Final[tuple[FixtureCase, ...]] = tuple(_CASES_BY_ID[value] for value
 _PARTIAL_CASE: Final[FixtureCase] = _CASES_BY_ID[_PARTIAL_CASE_ID]
 _MAIN_FILE_IDXS: Final[tuple[int, ...]] = tuple(case.file_idx for case in _MAIN_CASES)
 _ALL_FILE_IDXS: Final[tuple[int, ...]] = (*_MAIN_FILE_IDXS, _PARTIAL_CASE.file_idx)
+
+
+def _build_answer_scenario(value: Mapping[str, object]) -> AnswerScenario:
+    """JSON 답변 기대값을 참조 범위가 검증된 불변 시나리오로 변환한다."""
+
+    scenario_id = _str(value, "id")
+    case_ids = _strings(value, "case_ids")
+    expected_tokens = _strings(value, "expected_tokens")
+
+    if not case_ids:
+        raise AssertionError(f"{scenario_id} requires at least one fixture case.")
+    if len(case_ids) != len(set(case_ids)):
+        raise AssertionError(f"{scenario_id} case_ids must be unique.")
+    if not expected_tokens:
+        raise AssertionError(f"{scenario_id} requires at least one expected token.")
+
+    unknown_case_ids = tuple(case_id for case_id in case_ids if case_id not in _CASES_BY_ID)
+    if unknown_case_ids:
+        raise AssertionError(
+            f"{scenario_id} references unknown fixtures: {unknown_case_ids!r}."
+        )
+
+    expected_sources: list[ExpectedAnswerSource] = []
+    for source in _objects(value, "expected_sources"):
+        case_id = _str(source, "case_id")
+        token = _str(source, "token")
+        locator = _object(source.get("locator"), "answer source locator")
+
+        if case_id not in case_ids:
+            raise AssertionError(
+                f"{scenario_id} source case {case_id!r} is outside reference scope."
+            )
+        if token not in expected_tokens:
+            raise AssertionError(
+                f"{scenario_id} source token {token!r} is not an expected token."
+            )
+        if not locator:
+            raise AssertionError(f"{scenario_id} source locator must not be empty.")
+
+        expected_sources.append(
+            ExpectedAnswerSource(
+                token=token,
+                case_id=case_id,
+                locator=locator,
+            )
+        )
+
+    if not expected_sources:
+        raise AssertionError(f"{scenario_id} requires expected sources.")
+
+    return AnswerScenario(
+        scenario_id=scenario_id,
+        case_ids=case_ids,
+        query=_str(value, "query"),
+        expected_tokens=expected_tokens,
+        expected_sources=tuple(expected_sources),
+    )
+
+
+def _single_answer_scenario(key: str) -> AnswerScenario:
+    """최상위 JSON 객체 하나를 답변 시나리오로 읽는다."""
+
+    return _build_answer_scenario(_object(_ANSWER_EXPECTATIONS.get(key), key))
+
+
+_LOOKUP_ANSWER_SCENARIOS: Final[tuple[AnswerScenario, ...]] = tuple(
+    _build_answer_scenario(value)
+    for value in _objects(_ANSWER_EXPECTATIONS, "lookup_cases")
+)
+_OCR_LOOKUP_ANSWER_SCENARIOS: Final[tuple[AnswerScenario, ...]] = tuple(
+    _build_answer_scenario(value)
+    for value in _objects(_ANSWER_EXPECTATIONS, "ocr_lookup_cases")
+)
+_SYNTHESIS_ANSWER_SCENARIO: Final[AnswerScenario] = _single_answer_scenario(
+    "synthesis_case"
+)
+_MIXED_TEXT_OCR_ANSWER_SCENARIO: Final[AnswerScenario] = _single_answer_scenario(
+    "mixed_text_ocr_case"
+)
+_ALL_ANSWER_SCENARIOS: Final[tuple[AnswerScenario, ...]] = (
+    *_LOOKUP_ANSWER_SCENARIOS,
+    *_OCR_LOOKUP_ANSWER_SCENARIOS,
+    _SYNTHESIS_ANSWER_SCENARIO,
+    _MIXED_TEXT_OCR_ANSWER_SCENARIO,
+)
+_ANSWER_SCENARIOS_BY_ID: Final[dict[str, AnswerScenario]] = {
+    scenario.scenario_id: scenario for scenario in _ALL_ANSWER_SCENARIOS
+}
+
+if len(_ANSWER_SCENARIOS_BY_ID) != len(_ALL_ANSWER_SCENARIOS):
+    raise AssertionError("Answer scenario IDs must be unique.")
 
 
 def _canonical_token(value: str) -> str:
@@ -823,8 +1007,9 @@ def _uses_test_only_hostname(url: str) -> bool:
 def _validate_real_runtime(
     settings: Settings,
     processing_settings: DocumentProcessingSettings,
+    generation_settings: GenerationSettings,
 ) -> None:
-    """실제 DB·Qdrant·CUDA TEI·CUDA OCR 설정이 준비됐는지 조기 검증한다."""
+    """실제 DB·Qdrant·CUDA TEI·CUDA OCR·Claude 설정을 조기 검증한다."""
 
     if settings.app_env != "test":
         pytest.fail(
@@ -848,6 +1033,17 @@ def _validate_real_runtime(
         pytest.fail("RAG_INGEST_TOKEN is required for real E2E.", pytrace=False)
     if settings.internal_token is None:
         pytest.fail("INTERNAL_TOKEN is required for real E2E.", pytrace=False)
+
+    # synthesis는 선택 문서별 부분 생성 후 최종 종합을 한 번 더 호출한다.
+    # 환경의 답변별 호출 상한이 이 고정 시나리오보다 작으면 테스트 도중 비용을
+    # 사용한 뒤 실패하므로 실제 Claude 호출 전에 명확하게 차단한다.
+    required_synthesis_calls = len(_SYNTHESIS_ANSWER_SCENARIO.case_ids) + 1
+    if generation_settings.anthropic_max_calls_per_answer < required_synthesis_calls:
+        pytest.fail(
+            "JIPSA_RAG_ANTHROPIC_MAX_CALLS_PER_ANSWER must allow at least "
+            f"{required_synthesis_calls} calls for the fixed synthesis E2E.",
+            pytrace=False,
+        )
 
     required_ocr_flags = (
         processing_settings.image_extraction_enabled,
@@ -878,6 +1074,7 @@ class E2eRuntime:
     client: TestClient
     settings: Settings
     processing_settings: DocumentProcessingSettings
+    generation_settings: GenerationSettings
     recorder: BackendRecorder
     responses: Mapping[int, Mapping[str, object]]
     partial_engine: _SelectiveFailureOcrEngine
@@ -970,7 +1167,20 @@ def e2e_runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2eRuntime
 
     settings = get_settings()
     processing_settings = get_document_processing_settings()
-    _validate_real_runtime(settings, processing_settings)
+
+    # 일반 단위 테스트의 잘못된 캐시가 실제 E2E 프로세스 환경을 덮지 않도록
+    # 현재 .env.local 주입 상태에서 Claude 설정을 다시 생성한다. ValidationError
+    # 문자열에는 입력 API Key가 숨겨지지만, 테스트 출력에도 원문을 전달하지 않는다.
+    get_generation_settings.cache_clear()
+    try:
+        generation_settings = get_generation_settings()
+    except ValidationError:
+        pytest.fail(
+            "A valid Anthropic API key and Claude model are required for answer E2E.",
+            pytrace=False,
+        )
+
+    _validate_real_runtime(settings, processing_settings, generation_settings)
 
     failed_image_index = _PARTIAL_CASE.forced_failure_image_index
     if failed_image_index is None:
@@ -1038,6 +1248,7 @@ def e2e_runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2eRuntime
                 client=client,
                 settings=settings,
                 processing_settings=processing_settings,
+                generation_settings=generation_settings,
                 recorder=recorder,
                 responses=responses,
                 partial_engine=selective_engine,
@@ -1050,6 +1261,7 @@ def e2e_runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2eRuntime
             app.dependency_overrides.pop(get_application_server_ingest_client, None)
             app.dependency_overrides.pop(get_file_downloader, None)
             app.dependency_overrides.pop(get_document_parser_factory, None)
+            get_generation_settings.cache_clear()
 
 
 # ============================================================
@@ -1401,3 +1613,456 @@ def test_real_tei_query_embedding_respects_reference_document_scope(
     assert results
     assert {_int(result, "file_idx") for result in results} == {case.file_idx}
     assert any(_contains_token(_str(result, "content"), expected_token) for result in results)
+
+# ============================================================
+# 8. 실제 Claude 답변 호출과 공통 응답 계약
+# ============================================================
+
+
+def _execute_answer_scenario(
+    runtime: E2eRuntime,
+    scenario: AnswerScenario,
+) -> AnswerScenarioResult:
+    """한 시나리오를 실제 lookup 또는 synthesis 경로로 한 번만 실행한다.
+
+    Claude 응답 원문 전체를 Assertion 메시지에 포함하면 질문과 문서 청크가 CI
+    로그에 노출될 수 있다. HTTP 오류 메시지는 상태 코드와 공개 API 오류 code만
+    남기고 body·질문·프롬프트·원문 답변은 출력하지 않는다.
+    """
+
+    response = runtime.client.post(
+        "/api/v1/rag/answers",
+        json={
+            "user_idx": _TEST_USER_IDX,
+            "reference_file_idxs": list(scenario.file_idxs),
+            "query": scenario.query,
+            "top_k": 20,
+            "score_threshold": None,
+        },
+    )
+
+    if response.status_code != 200:
+        error_code = "unknown"
+        try:
+            response_body = _object(response.json(), "RAG answer error response")
+            code_value = response_body.get("code")
+            if isinstance(code_value, str) and code_value:
+                error_code = code_value
+        except (AssertionError, ValueError, TypeError):
+            pass
+        raise AssertionError(
+            f"{scenario.scenario_id} answer failed: "
+            f"status={response.status_code}, code={error_code}"
+        )
+
+    body = _object(response.json(), "RAG answer response")
+    assert _bool(body, "success") is True
+    assert _str(body, "code") == "RAG_ANSWER_COMPLETED"
+    data = _object(body.get("data"), "RAG answer response data")
+
+    assert _str(data, "status") == "answered"
+    model = _str(data, "model")
+    # Claude API는 설정의 별칭을 공급자 정식 모델 ID로 정규화하여 반환할 수 있다.
+    # 특정 별칭 문자열의 완전 일치보다 Claude 모델 식별 계약을 확인하여 모델의
+    # 정상적인 정규화 때문에 E2E가 실패하지 않게 한다.
+    assert model.startswith("claude-")
+    assert runtime.generation_settings.anthropic_model.startswith("claude-")
+
+    usage = _object(data.get("usage"), "RAG answer usage")
+    assert _int(usage, "input_tokens") > 0
+    assert _int(usage, "output_tokens") > 0
+
+    sources = tuple(_objects(data, "sources"))
+    assert sources
+
+    return AnswerScenarioResult(
+        scenario=scenario,
+        answer=_str(data, "answer"),
+        cited_source_ids=_strings(data, "cited_source_ids"),
+        sources=tuple(cast(Mapping[str, object], source) for source in sources),
+        model=model,
+    )
+
+
+@pytest.fixture(scope="module")
+def answer_runtime(e2e_runtime: E2eRuntime) -> AnswerRuntime:
+    """모든 답변 시나리오를 한 번씩 호출하고 결과를 후속 검증에 재사용한다.
+
+    동일 답변을 SOURCE 계약별 테스트에서 반복 호출하면 실제 Claude 비용과 실행
+    시간이 검증 항목 수만큼 증가한다. 이 Fixture는 각 lookup, synthesis, OCR 혼합
+    질문을 정확히 한 번 실행하고 불변 결과를 여러 테스트가 읽도록 한다.
+    """
+
+    results = {
+        scenario.scenario_id: _execute_answer_scenario(e2e_runtime, scenario)
+        for scenario in _ALL_ANSWER_SCENARIOS
+    }
+    return AnswerRuntime(results=results)
+
+
+def _body_source_ids(answer: str) -> tuple[str, ...]:
+    """답변 본문의 SOURCE-N을 중복 없이 최초 등장 순서로 반환한다."""
+
+    return tuple(dict.fromkeys(_SOURCE_CITATION_PATTERN.findall(answer)))
+
+
+def _locator(source: Mapping[str, object]) -> dict[str, object]:
+    """최종 sources 항목에서 필수 공통 source_locator를 읽는다."""
+
+    return _object(source.get("source_locator"), "RAG answer source_locator")
+
+
+
+def _matching_answer_sources(
+    result: AnswerScenarioResult,
+    expected: ExpectedAnswerSource,
+) -> tuple[Mapping[str, object], ...]:
+    """예상 문서와 토큰을 실제 발췌문에 함께 포함하는 인용 출처를 찾는다."""
+
+    case = _CASES_BY_ID[expected.case_id]
+    return tuple(
+        source
+        for source in result.sources
+        if _int(source, "file_idx") == case.file_idx
+        and _contains_token(_str(source, "excerpt"), expected.token)
+    )
+
+
+def _assert_expected_answer_tokens(result: AnswerScenarioResult) -> None:
+    """질문이 요구한 모든 고정 토큰이 실제 Claude 답변에 보존됐는지 확인한다."""
+
+    for token in result.scenario.expected_tokens:
+        assert _contains_token(result.answer, token), (
+            f"{result.scenario.scenario_id} omitted expected token {token!r}."
+        )
+
+
+def _assert_expected_answer_sources(result: AnswerScenarioResult) -> None:
+    """모든 예상 토큰이 올바른 문서·원본 위치 출처에 실제로 연결되는지 확인한다."""
+
+    for expected in result.scenario.expected_sources:
+        matching_sources = _matching_answer_sources(result, expected)
+        assert matching_sources, (
+            f"{result.scenario.scenario_id} did not cite the source containing "
+            f"{expected.token!r}."
+        )
+        assert any(
+            all(
+                _equivalent(_locator(source).get(key), value)
+                for key, value in expected.locator.items()
+            )
+            for source in matching_sources
+        ), (
+            f"{result.scenario.scenario_id} cited {expected.token!r} without "
+            "the expected source locator."
+        )
+
+
+def _assert_source_storage_links(
+    runtime: E2eRuntime,
+    result: AnswerScenarioResult,
+) -> None:
+    """외부 sources의 Chunk_ID가 선택 문서의 실제 Local RAG 원본 청크인지 확인한다."""
+
+    states = {
+        case.file_idx: asyncio.run(_database_state(runtime.settings, case))
+        for case in result.scenario.cases
+    }
+    chunk_ids_by_file = {
+        file_idx: {_str(chunk, "chunk_id") for chunk in state.chunks}
+        for file_idx, state in states.items()
+    }
+
+    selected_file_idxs = frozenset(result.scenario.file_idxs)
+    assert frozenset(_int(source, "file_idx") for source in result.sources) <= (
+        selected_file_idxs
+    )
+
+    for source in result.sources:
+        file_idx = _int(source, "file_idx")
+        case = next(case for case in result.scenario.cases if case.file_idx == file_idx)
+        assert _str(source, "file_name") == case.file_name
+        assert _str(source, "file_type") == case.file_type
+        assert _str(source, "chunk_id") in chunk_ids_by_file[file_idx]
+        assert _str(source, "excerpt")
+
+        locator = _locator(source)
+        assert _str(locator, "file_type") == case.file_type
+
+        # 하위 호환 대표 위치 필드가 존재하면 공통 locator와 반드시 같은 값이어야 한다.
+        for legacy_key, locator_key in (
+            ("page", "page"),
+            ("slide_no", "slide_no"),
+            ("sheet_name", "sheet_name"),
+            ("section_title", "section_title"),
+        ):
+            legacy_value = source.get(legacy_key)
+            locator_value = locator.get(locator_key)
+            if legacy_value is not None and locator_value is not None:
+                assert legacy_value == locator_value
+
+
+# ============================================================
+# 9. 형식별 단일 문서 lookup 답변
+# ============================================================
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    _LOOKUP_ANSWER_SCENARIOS,
+    ids=lambda scenario: scenario.scenario_id,
+)
+def test_format_specific_single_document_lookup_answer(
+    e2e_runtime: E2eRuntime,
+    answer_runtime: AnswerRuntime,
+    scenario: AnswerScenario,
+) -> None:
+    """PDF·DOCX·PPTX·XLSX·TXT 단일 문서 질문이 선택 범위 안에서 답변되는지 검증한다."""
+
+    assert len(scenario.case_ids) == 1
+    result = answer_runtime.result(scenario.scenario_id)
+    _assert_expected_answer_tokens(result)
+    _assert_expected_answer_sources(result)
+    _assert_source_storage_links(e2e_runtime, result)
+    assert {_int(source, "file_idx") for source in result.sources} == {
+        scenario.file_idxs[0]
+    }
+
+
+# ============================================================
+# 10. 여러 형식 synthesis 답변
+# ============================================================
+
+
+def test_multiformat_synthesis_answer_uses_every_selected_format(
+    e2e_runtime: E2eRuntime,
+    answer_runtime: AnswerRuntime,
+) -> None:
+    """다섯 형식의 문서별 부분 답변이 최종 synthesis 답변과 출처에 모두 남는지 검증한다."""
+
+    scenario = _SYNTHESIS_ANSWER_SCENARIO
+    result = answer_runtime.result(scenario.scenario_id)
+    _assert_expected_answer_tokens(result)
+    _assert_expected_answer_sources(result)
+    _assert_source_storage_links(e2e_runtime, result)
+
+    assert len(scenario.case_ids) == len(_TEXT_CASE_IDS)
+    assert {_int(source, "file_idx") for source in result.sources} == set(
+        scenario.file_idxs
+    )
+    assert {_str(source, "file_type") for source in result.sources} == {
+        "pdf",
+        "docx",
+        "pptx",
+        "xlsx",
+        "txt",
+    }
+
+
+# ============================================================
+# 11. 텍스트 청크와 OCR 청크 혼합 답변
+# ============================================================
+
+
+def test_text_and_ocr_chunks_are_used_in_one_answer(
+    e2e_runtime: E2eRuntime,
+    answer_runtime: AnswerRuntime,
+) -> None:
+    """한 혼합 PDF의 텍스트 1페이지와 OCR 2페이지가 같은 lookup 답변에 사용되는지 검증한다."""
+
+    scenario = _MIXED_TEXT_OCR_ANSWER_SCENARIO
+    result = answer_runtime.result(scenario.scenario_id)
+    _assert_expected_answer_tokens(result)
+    _assert_expected_answer_sources(result)
+    _assert_source_storage_links(e2e_runtime, result)
+
+    origins = {_str(_locator(source), "content_origin") for source in result.sources}
+    assert origins == {"text", "ocr"}
+    assert {_int(_locator(source), "page") for source in result.sources} == {1, 2}
+    assert {_int(source, "file_idx") for source in result.sources} == {
+        scenario.file_idxs[0]
+    }
+
+
+# ============================================================
+# 12. SOURCE-N·cited_source_ids·sources 일치
+# ============================================================
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    _ALL_ANSWER_SCENARIOS,
+    ids=lambda scenario: scenario.scenario_id,
+)
+def test_answer_body_cited_source_ids_and_sources_are_identical(
+    answer_runtime: AnswerRuntime,
+    scenario: AnswerScenario,
+) -> None:
+    """본문 최초 인용 순서와 선언·외부 sources 순서가 모든 답변에서 정확히 같은지 검증한다."""
+
+    result = answer_runtime.result(scenario.scenario_id)
+    body_source_ids = _body_source_ids(result.answer)
+    response_source_ids = tuple(_str(source, "source_id") for source in result.sources)
+    chunk_ids = tuple(_str(source, "chunk_id") for source in result.sources)
+
+    assert body_source_ids
+    assert body_source_ids == result.cited_source_ids
+    assert body_source_ids == response_source_ids
+    assert len(response_source_ids) == len(set(response_source_ids))
+    assert len(chunk_ids) == len(set(chunk_ids))
+
+
+# ============================================================
+# 13. PDF 페이지 출처 위치
+# ============================================================
+
+
+def test_pdf_answer_sources_preserve_page_location(answer_runtime: AnswerRuntime) -> None:
+    """PDF 텍스트·표 답변 출처가 원본 1페이지 locator로 반환되는지 검증한다."""
+
+    scenario = _ANSWER_SCENARIOS_BY_ID["lookup-pdf-text-table"]
+    result = answer_runtime.result(scenario.scenario_id)
+    _assert_expected_answer_sources(result)
+
+    for source in result.sources:
+        locator = _locator(source)
+        assert _str(locator, "file_type") == "pdf"
+        assert _str(locator, "kind") == "pdf_page"
+        assert _str(locator, "content_origin") == "text"
+        assert _int(locator, "page") == 1
+
+
+# ============================================================
+# 14. DOCX 문단·표 출처 위치
+# ============================================================
+
+
+def test_docx_answer_sources_distinguish_paragraph_and_table(
+    answer_runtime: AnswerRuntime,
+) -> None:
+    """DOCX 본문과 표 인용이 각자의 block·paragraph 또는 table 위치를 보존하는지 검증한다."""
+
+    scenario = _ANSWER_SCENARIOS_BY_ID["lookup-docx-paragraph-table"]
+    result = answer_runtime.result(scenario.scenario_id)
+    _assert_expected_answer_sources(result)
+
+    expected_unit_types = {"paragraph", "table"}
+    cited_unit_types = {_str(_locator(source), "unit_type") for source in result.sources}
+    assert expected_unit_types <= cited_unit_types
+
+
+# ============================================================
+# 15. PPTX 슬라이드 출처 위치
+# ============================================================
+
+
+def test_pptx_answer_sources_preserve_slide_and_shape_location(
+    answer_runtime: AnswerRuntime,
+) -> None:
+    """PPTX 두 슬라이드의 인용이 slide_no와 shape_path를 구분해 반환하는지 검증한다."""
+
+    scenario = _ANSWER_SCENARIOS_BY_ID["lookup-pptx-slide-shapes"]
+    result = answer_runtime.result(scenario.scenario_id)
+    _assert_expected_answer_sources(result)
+
+    slide_numbers = {_int(_locator(source), "slide_no") for source in result.sources}
+    assert {1, 2} <= slide_numbers
+    assert all(_str(_locator(source), "shape_path") for source in result.sources)
+
+
+# ============================================================
+# 16. XLSX 시트·셀 범위 출처 위치
+# ============================================================
+
+
+def test_xlsx_answer_sources_preserve_sheet_and_cell_range(
+    answer_runtime: AnswerRuntime,
+) -> None:
+    """XLSX 인용이 Overview·Details 시트와 실제 A2:B2 범위를 함께 반환하는지 검증한다."""
+
+    scenario = _ANSWER_SCENARIOS_BY_ID["lookup-xlsx-sheet-cell-ranges"]
+    result = answer_runtime.result(scenario.scenario_id)
+    _assert_expected_answer_sources(result)
+
+    sheet_names = {_str(_locator(source), "sheet_name") for source in result.sources}
+    assert {"Overview", "Details"} <= sheet_names
+    assert all(_str(_locator(source), "cell_range") for source in result.sources)
+
+
+# ============================================================
+# 17. TXT 줄 범위 출처 위치
+# ============================================================
+
+
+def test_txt_answer_sources_preserve_line_and_character_ranges(
+    answer_runtime: AnswerRuntime,
+) -> None:
+    """TXT 2·3번째 줄 인용이 줄 범위와 원본 문자 범위를 정확히 반환하는지 검증한다."""
+
+    scenario = _ANSWER_SCENARIOS_BY_ID["lookup-txt-line-ranges"]
+    result = answer_runtime.result(scenario.scenario_id)
+    _assert_expected_answer_sources(result)
+
+    line_numbers = {_int(_locator(source), "line_number") for source in result.sources}
+    assert {2, 3} <= line_numbers
+    for source in result.sources:
+        locator = _locator(source)
+        assert _int(locator, "line_start") == _int(locator, "line_end")
+        assert _int(locator, "char_end") >= _int(locator, "char_start")
+
+
+# ============================================================
+# 18. OCR 이미지 순번과 원본 위치 출처
+# ============================================================
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    (*_OCR_LOOKUP_ANSWER_SCENARIOS, _MIXED_TEXT_OCR_ANSWER_SCENARIO),
+    ids=lambda scenario: scenario.scenario_id,
+)
+def test_ocr_answer_sources_preserve_image_ordinal_and_original_location(
+    answer_runtime: AnswerRuntime,
+    scenario: AnswerScenario,
+) -> None:
+    """OCR 인용이 이미지 순번과 PDF·DOCX·PPTX·XLSX 원본 위치를 함께 반환하는지 검증한다."""
+
+    result = answer_runtime.result(scenario.scenario_id)
+    _assert_expected_answer_sources(result)
+
+    ocr_sources = tuple(
+        source
+        for source in result.sources
+        if _str(_locator(source), "content_origin") == "ocr"
+    )
+    assert ocr_sources
+
+    for source in ocr_sources:
+        locator = _locator(source)
+        image_ordinal = _int(locator, "image_ordinal")
+        assert image_ordinal == _int(locator, "image_index")
+        assert image_ordinal > 0
+        assert _str(locator, "image_id")
+        assert _str(locator, "image_kind")
+        assert _str(locator, "ocr_engine") == "EASYOCR_CUDA"
+
+        confidence = locator.get("ocr_mean_confidence")
+        assert isinstance(confidence, int | float) and not isinstance(confidence, bool)
+        assert 0.0 < float(confidence) <= 1.0
+
+        file_type = _str(locator, "file_type")
+        if file_type == "pdf":
+            assert _int(locator, "page") > 0
+        elif file_type == "docx":
+            assert any(
+                locator.get(key) is not None
+                for key in ("block_index", "paragraph_index", "table_index")
+            )
+        elif file_type == "pptx":
+            assert _int(locator, "slide_no") > 0
+        elif file_type == "xlsx":
+            assert _str(locator, "sheet_name")
+            assert _str(locator, "cell_range")
+        else:
+            raise AssertionError(f"Unexpected OCR answer file type: {file_type}")
+

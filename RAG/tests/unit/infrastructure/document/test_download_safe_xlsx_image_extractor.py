@@ -14,6 +14,8 @@ from jipsa_rag.infrastructure.document.images.download_safe_xlsx import (
 )
 from jipsa_rag.infrastructure.document.images.models import DocumentImageKind
 from jipsa_rag.infrastructure.document.rendering import OfficeVisualRenderResult
+from jipsa_rag.schemas.file_processing import SupportedFileType
+from jipsa_rag.schemas.source_locator import build_source_locator
 
 
 class _UnavailableRenderer:
@@ -78,10 +80,22 @@ async def test_extracts_xlsx_image_from_downloader_document_extension(tmp_path: 
     extracted = extraction.images[0]
     assert extracted.kind is DocumentImageKind.XLSX_PICTURE
     assert extracted.source_metadata["sheet_index"] == 1
+    # 이미지 추출기의 sheet_index는 이미 1-based다. 공통 Source Locator가
+    # 이를 과거 0-based payload로 오인하지 않도록 표준 sheet_number도 같은
+    # 값으로 명시해야 한다.
+    assert extracted.source_metadata["sheet_number"] == 1
     assert extracted.source_metadata["sheet_name"] == "Images"
     assert extracted.source_metadata["image_index"] == 1
     assert extracted.source_metadata["cell_range"] == "D2"
     assert extracted.source_metadata["shape_path"] == "sheet:Images/image:1/anchor:D2"
+
+    locator = build_source_locator(
+        file_type=SupportedFileType.XLSX,
+        source_metadata=extracted.source_metadata,
+    )
+    assert locator.sheet_number == 1
+    assert locator.sheet_name == "Images"
+    assert locator.cell_range == "D2"
 
     # 어댑터가 원본 다운로드 임시 파일을 삭제하거나 변경해서는 안 된다.
     assert downloaded_path.read_bytes() == workbook_buffer.getvalue()
