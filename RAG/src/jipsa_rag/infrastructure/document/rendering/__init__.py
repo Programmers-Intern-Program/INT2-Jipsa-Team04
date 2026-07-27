@@ -2,6 +2,7 @@
 
 from jipsa_rag.infrastructure.document.rendering.microsoft_office import (
     MicrosoftOfficeComBackend,
+    MicrosoftOfficeProcessBackend,
     MicrosoftOfficeRenderClient,
 )
 from jipsa_rag.infrastructure.document.rendering.models import (
@@ -12,6 +13,7 @@ from jipsa_rag.infrastructure.document.rendering.protocol import OfficeRenderCli
 
 __all__ = [
     "MicrosoftOfficeComBackend",
+    "MicrosoftOfficeProcessBackend",
     "MicrosoftOfficeRenderClient",
     "OfficeRenderClient",
     "OfficeVisualRenderResult",

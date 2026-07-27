@@ -150,13 +150,16 @@ build-backend = "uv_build"
 # 개발 및 테스트 전용 의존성
 # =============================================================
 [dependency-groups]
+# types-openpyxl은 Workbook.active와 Chartsheet 등 일부 공개 API를 실제
+# openpyxl 3.1.5 런타임보다 좁게 선언하여 정상 코드에 잘못된 타입 오류를 만든다.
+# 따라서 해당 비공식 stub은 설치하지 않고, openpyxl import 지점에서만
+# import-untyped를 명시적으로 격리해 프로젝트 내부의 Mypy strict 검사는 유지한다.
 dev = [
     "mypy>=2.2.0,<3.0",
     "pytest>=9.1.1,<10.0",
     "pytest-asyncio>=1.4.0,<2.0",
     "pytest-cov>=7.1.0,<8.0",
     "ruff>=0.15.21,<1.0",
-    "types-openpyxl==3.1.5.20260518",
     "types-pywin32==312.0.0.20260609; sys_platform == 'win32'",
 ]
 
@@ -211,9 +214,3 @@ warn_unused_configs = true
 show_error_codes = true
 pretty = true
 
-
-# PyMuPDF는 현재 py.typed 또는 공식 type stub을 제공하지 않는다.
-# 해당 외부 모듈 경계만 누락 import를 허용하고 프로젝트 내부 코드는 strict를 유지한다.
-[[tool.mypy.overrides]]
-module = ["fitz", "fitz.*"]
-ignore_missing_imports = true

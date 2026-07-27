@@ -14,8 +14,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter
+# openpyxl은 py.typed를 제공하지 않고, 외부 types-openpyxl 패키지는
+# Workbook.active와 Chartsheet 타입을 실제 런타임보다 좁게 선언한다. 프로젝트
+# 내부 타입 검사는 strict로 유지하되 이 외부 라이브러리 import 경계만 명시적으로
+# 격리한다. 이후 동적 객체는 아래의 getattr, cast와 값 검증으로 좁힌다.
+from openpyxl import load_workbook  # type: ignore[import-untyped]
+from openpyxl.utils import get_column_letter  # type: ignore[import-untyped]
 
 from jipsa_rag.core.document_processing import DocumentProcessingSettings
 from jipsa_rag.infrastructure.document.images.common import (
@@ -51,6 +55,7 @@ class _ChartContext:
     sheet_index: int
     sheet_name: str
     chart_index: int
+    anchor_cell: str
     cell_range: str
     context: str
 
@@ -155,12 +160,14 @@ class XlsxImageExtractor:
                 for chart_index, chart in enumerate(worksheet_charts, start=1):
                     if len(chart_contexts) >= self._settings.image_max_count_per_document:
                         break
+                    anchor_cell = _chart_anchor_cell(chart)
                     cell_range = _chart_anchor_range(chart)
                     chart_contexts.append(
                         _ChartContext(
                             sheet_index=sheet_index,
                             sheet_name=worksheet.title,
                             chart_index=chart_index,
+                            anchor_cell=anchor_cell,
                             cell_range=cell_range,
                             context=(_cell_range_context(worksheet, cell_range) or sheet_context),
                         )
@@ -262,13 +269,19 @@ class XlsxImageExtractor:
             context = contexts.get((sheet_index, chart_index))
             source_metadata = dict(visual.source_metadata)
             if context is not None:
-                # COM의 실제 anchor가 있으면 그대로 사용하고, COM이 주소를 제공하지
-                # 못한 경우에만 openpyxl에서 계산한 위치를 보완한다.
-                source_metadata.setdefault("sheet_name", context.sheet_name)
-                source_metadata.setdefault("cell_range", context.cell_range)
-                source_metadata.setdefault(
-                    "anchor_cell",
-                    context.cell_range.split(":", maxsplit=1)[0],
+                # COM TopLeftCell은 Office 버전과 pywin32 동적 바인딩 상태에 따라
+                # 실제 D15 차트를 A1로 반환할 수 있다. 시트·차트 순번은 COM 렌더 결과와
+                # OOXML 구조가 동일하게 대응하므로, 위치 메타데이터는 원본 파일의
+                # drawing anchor를 직접 읽은 openpyxl 값을 권위 있는 값으로 사용한다.
+                office_anchor_cell = _metadata_text(source_metadata.get("anchor_cell"))
+                if office_anchor_cell and office_anchor_cell != context.anchor_cell:
+                    source_metadata["office_anchor_cell"] = office_anchor_cell
+
+                source_metadata["sheet_name"] = context.sheet_name
+                source_metadata["anchor_cell"] = context.anchor_cell
+                source_metadata["cell_range"] = context.cell_range
+                source_metadata["shape_path"] = (
+                    f"sheet:{context.sheet_name}/chart:{chart_index}/anchor:{context.anchor_cell}"
                 )
 
             images.append(
@@ -306,6 +319,31 @@ def _read_openpyxl_image_bytes(image: Any) -> bytes | None:
         return bytes(cast(Callable[[], bytes], data_function)())
     except Exception:
         return None
+
+
+def _chart_anchor_cell(chart: Any) -> str:
+    """openpyxl chart anchor의 정확한 왼쪽 위 셀을 A1 형식으로 반환한다.
+
+    OCR 주변 문맥을 위한 ``cell_range``는 여백을 포함할 수 있지만, 출처 위치인
+    ``anchor_cell``은 사용자가 Excel에서 지정한 실제 셀을 그대로 보존해야 한다.
+    """
+
+    anchor = getattr(chart, "anchor", None)
+    if isinstance(anchor, str) and anchor:
+        row, column = _coordinate_to_row_column(anchor)
+        return f"{get_column_letter(column)}{row}"
+
+    marker = getattr(anchor, "_from", None)
+    if marker is None:
+        return "A1"
+
+    try:
+        row = int(marker.row) + 1
+        column = int(marker.col) + 1
+    except (AttributeError, TypeError, ValueError):
+        return "A1"
+
+    return f"{get_column_letter(column)}{row}"
 
 
 def _chart_anchor_range(chart: Any) -> str:
@@ -507,6 +545,12 @@ def _positive_int(value: object) -> int | None:
         return None
     normalized = int(value)
     return normalized if normalized > 0 else None
+
+
+def _metadata_text(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
 
 
 def _metadata_int(value: object) -> int:

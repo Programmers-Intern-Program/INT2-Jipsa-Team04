@@ -41,7 +41,10 @@ class PdfImageExtractor:
         ensure_regular_file(file_path)
 
         try:
-            import fitz
+            # PyMuPDF는 현재 py.typed marker와 공식 type stub을 제공하지 않는다.
+            # 프로젝트 전체 Mypy strict 검사는 유지하면서, 실제 런타임 import가
+            # 발생하는 이 외부 라이브러리 경계만 import-untyped 예외로 제한한다.
+            import fitz  # type: ignore[import-untyped]
         except ImportError as error:
             raise RuntimeError("PyMuPDF is required for PDF image extraction.") from error
 

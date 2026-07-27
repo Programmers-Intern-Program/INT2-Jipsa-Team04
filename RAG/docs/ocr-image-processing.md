@@ -1,9 +1,9 @@
 # 문서 이미지 추출, Microsoft Office 렌더링 및 CUDA OCR 실행 가이드
 
 이 문서는 Local RAG의 PDF, DOCX, PPTX, XLSX 이미지 추출과 Microsoft Office
-2024 COM 렌더링, EasyOCR 실행에 필요한 의존성, 환경 변수, 모델 준비, 실행 확인
-및 품질 검사를 설명합니다. RAG는 애플리케이션 서버 및 AWS 실행 환경과 분리되어
-Windows 로컬 사용자 세션에서 동작합니다.
+2024 COM 렌더링, EasyOCR 실행에 필요한 의존성, 환경 변수, 모델 준비, 프로세스
+격리, 실행 확인 및 품질 검사를 설명합니다. RAG는 애플리케이션 서버 및 AWS 실행
+환경과 분리된 Windows 로컬 사용자 세션에서 동작합니다.
 
 ## 1. 처리 범위
 
@@ -15,7 +15,7 @@ Windows 로컬 사용자 세션에서 동작합니다.
 - XLSX 삽입 이미지 및 차트 렌더링 이미지
 - 이미지 SHA-256 기반 중복 추출 및 중복 OCR 방지
 - OCR 텍스트 정규화, 구조 문맥 연결 및 검색 가능한 문서 청크 변환
-- 이미지 또는 OCR 부분 실패 시 기존 텍스트 인제스트 유지
+- 이미지, Office 또는 OCR 부분 실패 시 기존 텍스트 인제스트 유지
 
 사진이나 다이어그램의 의미를 해석하지는 않습니다. 이미지 내부의 문자만 OCR로
 인식하여 검색 근거로 사용합니다.
@@ -62,9 +62,14 @@ uv sync --frozen
 - `easyocr`: 한국어·영어 문자 인식
 - `torch==2.8.0`, `torchvision==0.23.0`: CUDA 12.9 OCR 런타임
 - `pywin32`: 설치된 PowerPoint와 Excel의 COM 자동화
-- `types-pywin32`, `types-openpyxl`: Mypy strict 검사용 타입 정보
+- `types-pywin32`: pywin32 공개 API의 Mypy strict 검사 보조
 
-별도의 렌더링 프로그램은 설치하지 않습니다.
+`types-openpyxl`은 설치하지 않습니다. 해당 외부 stub은 `Workbook.active`와
+`Chartsheet` 계약을 실제 openpyxl 런타임과 다르게 선언하여 정상 Worksheet 코드를
+Mypy 오류로 판단했습니다. 프로젝트 내부 strict 검사는 유지하고 openpyxl import
+경계만 `type: ignore[import-untyped]`로 제한합니다.
+
+별도의 렌더링 프로그램과 LibreOffice는 설치하지 않습니다.
 
 ## 4. Microsoft Office 2024 준비
 
@@ -96,15 +101,41 @@ JIPSA_RAG_OFFICE_RENDER_TIMEOUT_SECONDS=120.0
 JIPSA_RAG_OFFICE_RENDER_DPI=160
 ```
 
-Office COM은 한 프로세스에서 직렬 처리합니다. 문서 하나를 열 때 PowerPoint 또는
+Office COM 동시성은 항상 `1`로 유지합니다. 문서 하나를 열 때 PowerPoint 또는
 Excel을 한 번만 실행하고, 해당 문서의 모든 차트·SmartArt를 내보낸 후 문서와 앱을
 종료합니다. 이미지마다 Office를 다시 실행하지 않습니다.
+
+## 5. Office COM 자식 프로세스 격리
+
+Office COM과 pywin32는 종료 순서에 따라 `RPC_E_DISCONNECTED(0x80010108)` 같은
+Windows 네이티브 예외를 발생시킬 수 있습니다. 이 예외는 일반 Python 예외가 아니므로
+현재 API 서버나 pytest 프로세스 안에서 직접 COM을 실행하면 전체 프로세스가 영향을
+받을 수 있습니다.
+
+Local RAG는 다음 구조로 Office 렌더링을 격리합니다.
+
+```text
+부모 RAG 프로세스
+→ 전용 Python 자식 프로세스 실행
+→ 자식 프로세스에서 PowerPoint 또는 Excel COM 실행
+→ PNG와 JSON manifest를 COM 종료 전에 원자적으로 저장
+→ 부모 프로세스가 manifest와 PNG를 검증 후 메모리 결과로 복원
+→ 자식 프로세스 종료 및 신규 Office PID 정리
+```
+
+자식 프로세스가 렌더링 완료 후 COM 정리 단계에서 비정상 종료해도 부모 RAG 프로세스와
+pytest는 종료되지 않습니다. 완전하게 저장된 manifest와 PNG가 있으면 해당 결과를
+사용하고, 결과가 없으면 문서 이미지 렌더링만 부분 실패로 처리합니다.
+
+worker 시작 전에 이미 실행 중이던 사용자의 PowerPoint와 Excel PID를 기록합니다.
+정리 과정에서는 worker가 새로 생성한 PID만 대상으로 하므로 사용자가 직접 열어 둔
+Office 앱을 강제 종료하지 않습니다.
 
 Windows 서비스, SYSTEM 계정, Docker 또는 Linux에서는 Office COM 렌더링을
 실행하지 않습니다. Office 오류는 부분 실패로 처리하여 기존 텍스트 인제스트를
 유지합니다.
 
-## 5. EasyOCR 모델 준비
+## 6. EasyOCR 모델 준비
 
 `.env.local`과 `.env.development`는 최초 로컬 실행에서 모델을 자동으로 받을 수
 있도록 다음 값을 사용합니다.
@@ -128,7 +159,7 @@ JIPSA_RAG_OCR_MODEL_DOWNLOAD_ENABLED=false
 다운로드 금지 모드에서 지정한 디렉터리가 없으면 OCR 엔진은 명확한 모델 오류를
 반환하고, 기존 텍스트 인제스트는 계속 유지합니다.
 
-## 6. CUDA 확인
+## 7. CUDA 확인
 
 RAG 가상환경에서 PyTorch CUDA 인식 상태를 확인합니다.
 
@@ -150,14 +181,14 @@ JIPSA_RAG_OCR_DEVICE=cuda:0
 `OCR_GPU_REQUIRED=true` 상태에서 CUDA를 사용할 수 없으면 OCR 엔진 초기화가
 명시적으로 실패합니다. CPU로 조용히 전환하여 운영 성능 문제를 숨기지 않습니다.
 
-## 7. 자원 제한
+## 8. 자원 제한
 
 이미지 처리에는 다음 제한을 적용합니다.
 
 1. 문서당 이미지 개수
 2. 단일 이미지와 문서 전체 이미지 바이트
 3. 이미지 디코딩 후 최대 픽셀 수
-4. Office 문서 렌더링 시간
+4. Office worker 실행 시간
 5. 단일 이미지 및 문서 전체 OCR 처리 시간
 
 ```dotenv
@@ -175,7 +206,7 @@ JIPSA_RAG_OCR_DOCUMENT_TIMEOUT_SECONDS=600.0
 GPU VRAM이 부족하면 먼저 `JIPSA_RAG_OCR_MAX_CONCURRENCY`를 `1`로 낮춥니다.
 Office COM 동시성은 항상 `1`로 유지합니다.
 
-## 8. 로컬 RAG 실행
+## 9. 로컬 RAG 실행
 
 환경 변수와 OCR 모델 정책을 `.env.local`에 설정한 뒤 실행합니다.
 
@@ -184,9 +215,10 @@ uv run uvicorn jipsa_rag.main:app --host 0.0.0.0 --port 8077
 ```
 
 EasyOCR Reader는 첫 OCR 대상 이미지가 처리될 때 한 번 생성하고 이후 요청에서
-재사용합니다. PowerPoint와 Excel은 렌더링 대상 문서가 있을 때만 실행합니다.
+재사용합니다. PowerPoint와 Excel은 렌더링 대상 문서가 있을 때만 자식 프로세스에서
+실행합니다.
 
-## 9. 코드 품질 및 일반 테스트
+## 10. 코드 품질 및 일반 테스트
 
 RAG 프로젝트 루트에서 다음 순서로 검사합니다.
 
@@ -200,7 +232,7 @@ uv run pytest
 기본 전체 Pytest에서는 실제 Microsoft Office와 외부 서비스가 필요한 테스트가
 명시적으로 skip될 수 있습니다. skip은 성공으로 위장하지 않고 결과에 표시됩니다.
 
-## 10. 실제 Microsoft Office COM 통합 테스트
+## 11. 실제 Microsoft Office COM 통합 테스트
 
 PowerPoint와 Excel이 설치되고 초기 설정이 끝난 Windows 로컬 세션에서만 다음
 통합 테스트를 활성화합니다.
@@ -210,11 +242,11 @@ $env:JIPSA_RAG_RUN_OFFICE_COM_INTEGRATION=1
 uv run pytest -ra tests/integration/test_document_image_extractors.py
 ```
 
-테스트는 `PowerPoint.Application`과 `Excel.Application`을 실제로 실행하여
-PPTX 차트와 XLSX 차트를 PNG로 내보냅니다. opt-in 상태에서 Office COM을 사용할 수
-없으면 skip이 아니라 실패로 처리합니다.
+테스트는 `PowerPoint.Application`과 `Excel.Application`을 자식 프로세스에서
+실제로 실행하여 PPTX 차트와 XLSX 차트를 PNG로 내보냅니다. opt-in 상태에서 Office
+COM을 사용할 수 없으면 skip이 아니라 실패로 처리합니다.
 
-## 11. 로그와 보안
+## 12. 로그와 보안
 
 이미지 추출, Office 렌더링 및 OCR 오류 로그에는 다음 값을 기록하지 않습니다.
 
@@ -224,6 +256,7 @@ PPTX 차트와 XLSX 차트를 PNG로 내보냅니다. opt-in 상태에서 Office
 - 임시 이미지와 렌더링 파일 경로
 - EasyOCR 모델 경로와 파일 내용
 - Office COM 예외의 원문 메시지
+- worker의 stdout 및 stderr 원문
 
-운영 진단에는 문서 형식, 이미지 종류, 오류 클래스, timeout 및 처리 개수처럼
-원문을 복원할 수 없는 메타데이터만 사용합니다.
+운영 진단에는 문서 형식, 이미지 종류, 오류 클래스, worker 종료 코드, timeout 및 처리
+개수처럼 원문을 복원할 수 없는 메타데이터만 사용합니다.

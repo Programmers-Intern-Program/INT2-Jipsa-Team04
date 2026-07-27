@@ -8,12 +8,18 @@ import zipfile
 from pathlib import Path
 from typing import Any, cast
 
-import fitz
+# PyMuPDF는 py.typed marker와 공식 type stub을 제공하지 않는다. 테스트는 실제
+# PDF 파일 생성과 추출 결과로 런타임 계약을 검증하므로 이 import 경계만 격리한다.
+import fitz  # type: ignore[import-untyped]
 import pytest
 from docx import Document
-from openpyxl import Workbook
-from openpyxl.chart import BarChart, Reference
-from openpyxl.drawing.image import Image as XlsxImage
+
+# openpyxl은 py.typed를 제공하지 않고, 외부 types-openpyxl 패키지는 실제
+# Worksheet와 Chartsheet 호출 계약을 부정확하게 선언한다. 테스트 fixture 생성에
+# 사용하는 외부 라이브러리 import 경계만 격리하고 실제 결과는 통합 테스트로 검증한다.
+from openpyxl import Workbook  # type: ignore[import-untyped]
+from openpyxl.chart import BarChart, Reference  # type: ignore[import-untyped]
+from openpyxl.drawing.image import Image as XlsxImage  # type: ignore[import-untyped]
 from PIL import Image, ImageDraw
 from pptx import Presentation
 from pptx.chart.data import ChartData

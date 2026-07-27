@@ -79,9 +79,10 @@ class DocumentProcessingSettings(BaseSettings):
     scan_pdf_image_coverage_ratio: float = Field(default=0.60, ge=0.0, le=1.0)
     scan_pdf_render_dpi: int = Field(default=200, ge=72, le=400)
 
-    # PowerPoint 2024와 Excel 2024를 pywin32 COM으로 제어한다. PPTX 차트와
-    # SmartArt는 Shape.Export, XLSX 차트는 Chart.Export로 대상 객체만 직접 PNG
-    # 출력하므로 전체 문서를 PDF로 변환하는 중간 단계를 사용하지 않는다.
+    # PowerPoint 2024와 Excel 2024를 pywin32 COM으로 제어한다. 실제 COM 호출은
+    # 전용 자식 프로세스에 격리하여 RPC_E_DISCONNECTED 같은 네이티브 종료 오류가
+    # API 서버와 인제스트 작업 전체로 확산되지 않게 한다. PPTX 차트·SmartArt는
+    # Shape.Export, XLSX 차트는 Chart.Export로 대상 객체만 직접 PNG 출력한다.
     office_rendering_enabled: bool = True
     office_rendering_provider: Literal["microsoft_office_com"] = "microsoft_office_com"
     office_com_require_interactive_session: bool = True
