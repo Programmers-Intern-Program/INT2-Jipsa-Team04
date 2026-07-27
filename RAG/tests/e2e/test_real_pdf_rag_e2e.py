@@ -66,9 +66,14 @@ _FILE_IDXS: Final[tuple[int, int]] = (
 # 현재 파일 처리 엔드포인트의 초기 색인 버전과 일치한다.
 _INDEX_VERSION: Final[int] = 2
 
-# 현재 텍스트 레이어 PDF 파서의 저장 계약과 일치한다.
-_PARSER_TYPE: Final[str] = "PDF_TEXT"
-_PARSER_VERSION: Final[str] = "1.0.0"
+# 실제 E2E는 .env.local의 이미지 추출 및 OCR 활성화 설정을 사용한다.
+#
+# DocumentParserFactory는 이 조건에서 기본 PDF 텍스트 파서를
+# OCR 인식 가능 하이브리드 파서로 교체한다. 따라서 Local RAG DB의
+# RAG_Document·RAG_Index_Run과 Qdrant payload에 저장되는 파서 식별자는
+# 아래 운영 계약과 일치해야 한다.
+_PARSER_TYPE: Final[str] = "PDF_HYBRID_OCR"
+_PARSER_VERSION: Final[str] = "2.0.0"
 
 # Claude 답변 본문에 포함되는 SOURCE-N 형식의 인용을 추출한다.
 _SOURCE_PATTERN: Final[re.Pattern[str]] = re.compile(r"\[(SOURCE-[1-9][0-9]*)\]")

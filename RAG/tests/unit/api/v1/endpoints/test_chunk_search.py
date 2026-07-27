@@ -128,7 +128,6 @@ def without_default_internal_token(
 
     if original_token is not None:
         del client.headers["X-Internal-Token"]
-
     try:
         yield
     finally:
@@ -246,36 +245,51 @@ def test_search_chunks_returns_authenticated_search_result(
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "success": True,
-        "code": "CHUNK_SEARCH_COMPLETED",
-        "message": "Relevant document chunks were retrieved.",
-        "data": {
-            "user_idx": TEST_USER_IDX,
-            "result_count": 1,
-            "results": [
-                {
-                    "chunk_id": TEST_CHUNK_ID,
-                    "score": 0.92,
-                    "rag_document_idx": 100,
-                    "file_idx": 123,
-                    "folder_idx": 9,
-                    "file_name": "프로젝트 가이드.pdf",
-                    "file_type": "pdf",
-                    "chunk_index": 0,
-                    "content": ("프로젝트 배포 절차는 로컬 RAG 실행 후 진행합니다."),
-                    "token_count": 64,
-                    "page": 2,
-                    "slide_no": None,
-                    "sheet_name": None,
-                    "section_title": "배포 절차",
-                    "parser_version": "1.0.0",
-                    "embedding_model": "test/embedding-model",
-                    "index_version": 2,
-                }
-            ],
-        },
-    }
+
+    response_body = response.json()
+
+    # 성공 Envelope는 기존 API 계약을 그대로 유지한다.
+    assert response_body["success"] is True
+    assert response_body["code"] == "CHUNK_SEARCH_COMPLETED"
+    assert response_body["message"] == "Relevant document chunks were retrieved."
+
+    response_data = response_body["data"]
+
+    assert response_data["user_idx"] == TEST_USER_IDX
+    assert response_data["result_count"] == 1
+    assert len(response_data["results"]) == 1
+
+    result = response_data["results"][0]
+
+    # 기존 전용 위치 필드는 하위 호환을 위해 계속 반환한다.
+    assert result["chunk_id"] == TEST_CHUNK_ID
+    assert result["score"] == 0.92
+    assert result["rag_document_idx"] == 100
+    assert result["file_idx"] == 123
+    assert result["folder_idx"] == 9
+    assert result["file_name"] == "프로젝트 가이드.pdf"
+    assert result["file_type"] == "pdf"
+    assert result["chunk_index"] == 0
+    assert result["content"] == "프로젝트 배포 절차는 로컬 RAG 실행 후 진행합니다."
+    assert result["token_count"] == 64
+    assert result["page"] == 2
+    assert result["slide_no"] is None
+    assert result["sheet_name"] is None
+    assert result["section_title"] == "배포 절차"
+    assert result["parser_version"] == "1.0.0"
+    assert result["embedding_model"] == "test/embedding-model"
+    assert result["index_version"] == 2
+
+    # Issue #119에서 추가한 공통 Source Locator도 같은 PDF 페이지를
+    # 가리켜야 한다. 전체 선택 필드를 고정하지 않고 외부 소비자가 실제로
+    # 사용하는 식별 필드와 위치 필드를 검증해 형식 확장에 안전하게 만든다.
+    source_locator = result["source_locator"]
+
+    assert source_locator["file_type"] == "pdf"
+    assert source_locator["kind"] == "pdf_page"
+    assert source_locator["content_origin"] == "text"
+    assert source_locator["page"] == 2
+    assert source_locator["structure_path"] == "page:2"
 
     assert len(stub_chunk_search_service.requests) == 1
 

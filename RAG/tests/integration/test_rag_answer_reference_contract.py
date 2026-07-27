@@ -134,12 +134,13 @@ def test_answer_api_applies_added_and_removed_reference_files_per_request(
         (456,),
     )
 
-    # sources가 빈 리스트이므로 Mypy strict 모드에서는 리스트 원소 타입을
-    # 주변 문맥만으로 확정할 수 없다. 응답 JSON 객체라는 사실을 명시해
-    # 빈 컬렉션을 포함한 예상 응답 전체의 타입을 안정적으로 고정한다.
+    # 근거 부족 응답은 본문 인용, 공개 인용 ID, 출처 및 생성 메타데이터를
+    # 모두 비워야 한다. cited_source_ids는 Issue #119에서 공개 응답 계약에
+    # 추가된 필드이므로 기존 회귀 테스트의 예상 응답에도 명시한다.
     expected_data: dict[str, object] = {
         "answer": _INSUFFICIENT_EVIDENCE_ANSWER,
         "status": "insufficient_evidence",
+        "cited_source_ids": [],
         "sources": [],
         "model": None,
         "usage": None,

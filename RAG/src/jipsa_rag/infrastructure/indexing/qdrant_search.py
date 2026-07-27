@@ -1,8 +1,22 @@
-"""사용자, 활성 상태와 참조문서 범위를 강제하여 Qdrant 청크를 검색한다."""
+"""사용자, 활성 상태와 선택 문서 범위를 강제하여 Qdrant 청크를 검색한다.
+
+검색 필터는 호출자가 전달하는 선택 옵션이 아니라 Local RAG의 보안 경계다.
+따라서 Repository가 직접 다음 세 조건을 하나의 AND 필터로 구성한다.
+
+- ``users_idx == 요청 사용자``
+- ``is_active == true``
+- ``file_idx IN 요청 시점 선택 문서``
+
+Qdrant 응답을 받은 뒤에도 같은 범위를 재검증한다. 일반 파서 청크와 OCR 청크는
+동일한 collection에서 검색하며, ``source_metadata``를 보존해 상위 계층이 공통
+Source Locator를 생성할 수 있게 한다.
+"""
+
+from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import ceil
 from typing import Final, cast
 
@@ -20,25 +34,89 @@ from jipsa_rag.infrastructure.indexing.exceptions import (
     VectorDatabaseRejectedError,
     VectorDatabaseUnavailableError,
 )
+from jipsa_rag.infrastructure.indexing.source_metadata import (
+    JsonValue,
+    normalize_source_metadata,
+)
 
-# 검색 결과 payload에서 반드시 존재해야 하는 사용자, 파일 및 활성 상태 필드다.
-#
-# API 요청은 user_idx 단수형을 사용하지만 기존 Qdrant payload 계약은
-# AWS Users 테이블 외부 참조라는 의미로 users_idx 복수형을 사용한다.
 _USERS_IDX_PAYLOAD_KEY: Final[str] = "users_idx"
 _FILE_IDX_PAYLOAD_KEY: Final[str] = "file_idx"
 _IS_ACTIVE_PAYLOAD_KEY: Final[str] = "is_active"
-
-# Qdrant query_points 요청에 허용할 최대 검색 결과 수다.
-#
-# API 요청 스키마의 top_k 상한과 같은 값으로 유지하여
-# 인프라 계층이 API 계층을 거치지 않은 과도한 검색도 방어한다.
 _MAX_SEARCH_LIMIT: Final[int] = 20
+
+# source_metadata가 없는 과거 point에서도 공통 locator를 복원하기 위해 읽는
+# top-level 위치 필드다. 새 point에서는 nested source_metadata가 우선한다.
+_LOCATION_PAYLOAD_KEYS: Final[tuple[str, ...]] = (
+    # 공통 및 PDF
+    "page",
+    "unit_type",
+    "location_kind",
+    "structure_path",
+    "content_origin",
+    # DOCX
+    "section_index",
+    "block_index",
+    "paragraph_index",
+    "table_index",
+    "heading_level",
+    "section_heading_level",
+    "section_title",
+    "row_number",
+    "column_number",
+    "row_count",
+    "column_count",
+    # PPTX
+    "slide_no",
+    "slide_number",
+    "shape_index",
+    "shape_id",
+    "shape_path",
+    "shape_name",
+    "shape_type_name",
+    "coordinate_space",
+    "shape_left_emu",
+    "shape_top_emu",
+    "shape_width_emu",
+    "shape_height_emu",
+    # XLSX
+    "sheet_name",
+    "sheet_number",
+    "sheet_index",
+    "start_row",
+    "end_row",
+    "start_column",
+    "end_column",
+    "start_cell",
+    "end_cell",
+    "cell_range",
+    "cell_coordinates",
+    "merged_ranges",
+    "merged_cell_ranges",
+    # TXT
+    "line_number",
+    "line_start",
+    "line_end",
+    "line_start_number",
+    "line_end_number",
+    "source_char_start",
+    "source_char_end",
+    "text_char_start",
+    "text_char_end",
+    # OCR
+    "image_ordinal",
+    "image_index",
+    "page_image_index",
+    "image_order",
+    "image_id",
+    "image_kind",
+    "ocr_engine",
+    "ocr_mean_confidence",
+)
 
 
 @dataclass(frozen=True, slots=True)
 class ChunkSearchHit:
-    """Qdrant Point payload를 검색 도메인 값으로 변환한 결과."""
+    """검증된 Qdrant Point payload를 서비스 계층 값으로 변환한 결과."""
 
     chunk_id: str
     score: float
@@ -58,115 +136,36 @@ class ChunkSearchHit:
     parser_version: str
     embedding_model: str
     index_version: int
+    source_metadata: dict[str, JsonValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """검색 결과가 서비스 계층으로 전달 가능한 상태인지 검증한다.
+        """서비스 계층으로 전달하기 전에 타입과 범위를 방어적으로 검증한다."""
 
-        서로 다른 타입을 하나의 반복문 변수로 검증하면 strict Mypy가
-        첫 번째 타입으로 변수를 고정하여 이후 타입을 거부할 수 있다.
+        _validate_required_text_value(self.chunk_id, field_name="chunk_id")
+        if not math.isfinite(self.score) or not -1.0 <= self.score <= 1.0:
+            raise ValueError("score must be finite and between -1.0 and 1.0.")
 
-        따라서 정수, 선택적 정수, 문자열 및 선택적 문자열을 각각
-        타입 전용 검증 함수로 분리하여 런타임 검증과 정적 타입 검사를
-        동시에 만족하도록 한다.
-        """
+        _validate_positive_integer(self.users_idx, field_name="users_idx")
+        _validate_positive_integer(self.rag_document_idx, field_name="rag_document_idx")
+        _validate_positive_integer(self.file_idx, field_name="file_idx")
+        _validate_positive_integer(self.index_version, field_name="index_version")
+        _validate_optional_integer(self.folder_idx, field_name="folder_idx", minimum=1)
+        _validate_non_negative_integer(self.chunk_index, field_name="chunk_index")
+        _validate_optional_integer(self.token_count, field_name="token_count", minimum=0)
+        _validate_optional_integer(self.page, field_name="page", minimum=1)
+        _validate_optional_integer(self.slide_no, field_name="slide_no", minimum=1)
 
-        _validate_required_text_value(
-            self.chunk_id,
-            field_name="chunk_id",
-        )
+        _validate_required_text_value(self.file_name, field_name="file_name")
+        _validate_required_text_value(self.file_type, field_name="file_type")
+        _validate_required_text_value(self.content, field_name="content")
+        _validate_required_text_value(self.parser_version, field_name="parser_version")
+        _validate_required_text_value(self.embedding_model, field_name="embedding_model")
+        _validate_optional_text_value(self.sheet_name, field_name="sheet_name")
+        _validate_optional_text_value(self.section_title, field_name="section_title")
 
-        if not math.isfinite(self.score):
-            raise ValueError("score must be finite.")
-
-        if not -1.0 <= self.score <= 1.0:
-            raise ValueError("score must be between -1.0 and 1.0.")
-
-        _validate_positive_integer(
-            self.users_idx,
-            field_name="users_idx",
-        )
-
-        _validate_positive_integer(
-            self.rag_document_idx,
-            field_name="rag_document_idx",
-        )
-
-        _validate_positive_integer(
-            self.file_idx,
-            field_name="file_idx",
-        )
-
-        _validate_positive_integer(
-            self.index_version,
-            field_name="index_version",
-        )
-
-        _validate_optional_integer(
-            self.folder_idx,
-            field_name="folder_idx",
-            minimum=1,
-        )
-
-        _validate_non_negative_integer(
-            self.chunk_index,
-            field_name="chunk_index",
-        )
-
-        _validate_optional_integer(
-            self.token_count,
-            field_name="token_count",
-            minimum=0,
-        )
-
-        _validate_optional_integer(
-            self.page,
-            field_name="page",
-            minimum=1,
-        )
-
-        _validate_optional_integer(
-            self.slide_no,
-            field_name="slide_no",
-            minimum=1,
-        )
-
-        _validate_required_text_value(
-            self.file_name,
-            field_name="file_name",
-        )
-
-        _validate_required_text_value(
-            self.file_type,
-            field_name="file_type",
-        )
-
-        _validate_required_text_value(
-            self.parser_version,
-            field_name="parser_version",
-        )
-
-        _validate_required_text_value(
-            self.embedding_model,
-            field_name="embedding_model",
-        )
-
-        # content는 원문 위치와 LLM 인용 근거로 사용하므로
-        # strip한 문자열로 교체하지 않고 검색 가능한 문자가
-        # 하나 이상 존재하는지만 확인한다.
-        _validate_required_text_value(
-            self.content,
-            field_name="content",
-        )
-
-        _validate_optional_text_value(
-            self.sheet_name,
-            field_name="sheet_name",
-        )
-
-        _validate_optional_text_value(
-            self.section_title,
-            field_name="section_title",
-        )
+        # mutable dict가 frozen dataclass 내부에서 바뀌지 않도록 독립 복사본으로
+        # 고정한다. JSON 호환성은 normalize_source_metadata가 이미 검증한다.
+        object.__setattr__(self, "source_metadata", dict(self.source_metadata))
 
 
 def build_user_active_reference_chunk_filter(
@@ -174,58 +173,31 @@ def build_user_active_reference_chunk_filter(
     user_idx: int,
     reference_file_idxs: tuple[int, ...],
 ) -> models.Filter:
-    """사용자, 활성 상태 및 참조문서 조건을 AND로 결합한다.
+    """사용자, 활성 상태 및 선택 문서 조건을 하나의 AND 필터로 구성한다."""
 
-    세 조건을 하나의 ``must`` 절에 넣어 모든 조건을 동시에 만족하는
-    청크만 검색되도록 한다.
-
-    - users_idx == 요청 user_idx
-    - is_active == true
-    - file_idx IN 요청 reference_file_idxs
-
-    검색 호출자가 임의의 필터를 전달하여 사용자 또는 참조문서 범위를
-    완화할 수 없도록 Repository 내부에서 필터를 직접 생성한다.
-    """
-
-    _validate_positive_integer(
-        user_idx,
-        field_name="user_idx",
-    )
-
-    _validate_reference_file_idxs(
-        reference_file_idxs,
-    )
+    _validate_positive_integer(user_idx, field_name="user_idx")
+    _validate_reference_file_idxs(reference_file_idxs)
 
     return models.Filter(
         must=[
             models.FieldCondition(
                 key=_USERS_IDX_PAYLOAD_KEY,
-                match=models.MatchValue(
-                    value=user_idx,
-                ),
+                match=models.MatchValue(value=user_idx),
             ),
             models.FieldCondition(
                 key=_IS_ACTIVE_PAYLOAD_KEY,
-                match=models.MatchValue(
-                    value=True,
-                ),
+                match=models.MatchValue(value=True),
             ),
             models.FieldCondition(
                 key=_FILE_IDX_PAYLOAD_KEY,
-                # MatchAny는 Qdrant의 IN 조건에 해당한다.
-                #
-                # 외부 요청의 JSON 배열은 스키마 계층에서 불변 tuple로
-                # 변환되므로 Qdrant 모델에 전달할 때만 새 list를 생성한다.
-                match=models.MatchAny(
-                    any=list(reference_file_idxs),
-                ),
+                match=models.MatchAny(any=list(reference_file_idxs)),
             ),
         ]
     )
 
 
 class QdrantChunkSearchRepository:
-    """질의 벡터와 요청별 검색 범위로 활성 청크를 검색한다."""
+    """질의 벡터로 선택된 활성 문서의 일반·OCR 청크를 함께 검색한다."""
 
     def __init__(
         self,
@@ -233,21 +205,7 @@ class QdrantChunkSearchRepository:
         *,
         client: AsyncQdrantClient | None = None,
     ) -> None:
-        """Qdrant 설정과 선택적인 외부 클라이언트를 주입받는다.
-
-        외부 클라이언트가 주입되지 않은 경우 생성자에서는 실제
-        AsyncQdrantClient를 생성하지 않는다.
-
-        요청 스키마 또는 Repository 자체 검증에서 검색이 거부되는 경우에는
-        Qdrant 연결이 필요하지 않다. 따라서 최초 유효한 검색 직전까지
-        클라이언트 생성을 지연하여 불필요한 서버 버전 확인과 호환성 경고를
-        방지한다.
-        """
-
         self._settings = settings
-
-        # 외부에서 주입한 클라이언트는 테스트 또는 상위 생명주기 관리자가
-        # 소유하므로 Repository.close()에서 종료하지 않는다.
         self._owns_client = client is None
         self._client = client
 
@@ -260,49 +218,23 @@ class QdrantChunkSearchRepository:
         limit: int,
         score_threshold: float | None = None,
     ) -> tuple[ChunkSearchHit, ...]:
-        """요청 사용자의 선택된 활성 문서 청크만 관련도 순으로 조회한다."""
+        """현재 사용자와 선택 문서 범위의 활성 청크만 관련도 순으로 반환한다.
 
-        # 모든 입력 및 임베딩 계약을 Qdrant 클라이언트 생성 전에 검증한다.
-        #
-        # 잘못된 검색 요청은 실제 VectorDB 연결이나 서버 버전 확인 없이
-        # Repository 경계에서 즉시 거부한다.
-        _validate_positive_integer(
-            user_idx,
-            field_name="user_idx",
-        )
+        ``content_origin``에 대한 제외 필터를 만들지 않는다. 따라서 일반 파서
+        텍스트와 ``content_origin=ocr`` 청크가 같은 벡터 검색 후보가 된다.
+        """
 
-        _validate_reference_file_idxs(
-            reference_file_idxs,
-        )
+        _validate_positive_integer(user_idx, field_name="user_idx")
+        _validate_reference_file_idxs(reference_file_idxs)
+        _validate_search_limit(limit)
+        _validate_score_threshold(score_threshold)
+        self._validate_query_embedding(query_embedding)
 
-        _validate_search_limit(
-            limit,
-        )
-
-        _validate_score_threshold(
-            score_threshold,
-        )
-
-        self._validate_query_embedding(
-            query_embedding,
-        )
-
-        # 현재 검색 호출의 참조문서 범위를 불변 집합으로 고정한다.
-        #
-        # 필터 생성과 검색 결과 재검증이 같은 스냅샷을 사용하므로,
-        # 다른 질문의 참조문서 목록이나 이후 선택 변경이 현재 검색에
-        # 섞이지 않는다.
         expected_reference_file_idxs = frozenset(reference_file_idxs)
-
-        # 사용자 식별자, 활성 상태 및 참조문서 범위는 요청자가 완화할 수 있는
-        # 선택적 조건이 아니라 검색 보안 경계이므로 Repository가 직접 생성한다.
         query_filter = build_user_active_reference_chunk_filter(
             user_idx=user_idx,
             reference_file_idxs=reference_file_idxs,
         )
-
-        # 모든 로컬 검증과 Filter 생성이 완료된 뒤에만 실제 Qdrant
-        # 클라이언트를 생성한다.
         client = self._get_client()
 
         try:
@@ -313,17 +245,13 @@ class QdrantChunkSearchRepository:
                 limit=limit,
                 score_threshold=score_threshold,
                 with_payload=True,
-                # 검색 응답에 임베딩 벡터를 포함하지 않아
-                # 응답 크기와 민감한 내부 데이터 노출 가능성을 줄인다.
                 with_vectors=False,
             )
-
         except UnexpectedResponse as error:
             raise _convert_unexpected_response(
                 error,
                 operation="search_chunks",
             ) from error
-
         except ResponseHandlingException as error:
             raise VectorDatabaseUnavailableError("search_chunks") from error
 
@@ -338,35 +266,15 @@ class QdrantChunkSearchRepository:
         )
 
     async def close(self) -> None:
-        """Repository가 실제 생성한 Qdrant 클라이언트만 종료한다.
-
-        Repository가 생성되었지만 유효한 검색이 실행되지 않았다면
-        클라이언트는 아직 존재하지 않는다. 이 경우 종료 과정에서도
-        클라이언트를 새로 생성하지 않는다.
-
-        외부에서 주입한 클라이언트의 생명주기는 호출자가 관리한다.
-        """
+        """Repository가 직접 생성한 Qdrant 클라이언트만 종료한다."""
 
         if not self._owns_client or self._client is None:
             return
-
-        # 종료가 성공한 뒤에만 참조를 제거한다.
-        #
-        # close()에서 예외가 발생하면 기존 클라이언트 참조를 유지하여
-        # 상위 계층이 오류를 확인하거나 종료를 다시 시도할 수 있게 한다.
         await self._client.close()
         self._client = None
 
     def _get_client(self) -> AsyncQdrantClient:
-        """최초 유효한 검색에서 소유 Qdrant 클라이언트를 한 번만 생성한다.
-
-        단순 Repository 생성, 요청 검증 실패 및 close() 호출만으로는
-        AsyncQdrantClient를 생성하지 않는다.
-
-        실제 query_points 호출이 필요한 경우 기존과 동일한 설정으로
-        클라이언트를 생성한다. check_compatibility 값을 전달하지 않으므로
-        실제 Qdrant 연결에서는 qdrant-client의 기본 호환성 검사가 유지된다.
-        """
+        """최초 유효 검색 시점에 소유 클라이언트를 지연 생성한다."""
 
         if self._client is None:
             self._client = AsyncQdrantClient(
@@ -378,30 +286,17 @@ class QdrantChunkSearchRepository:
                     if self._settings.qdrant_api_key is not None
                     else None
                 ),
-                # qdrant-client timeout은 정수 초를 사용한다.
-                #
-                # 설정값을 내림하면 관리자가 지정한 시간보다 짧아질 수 있으므로
-                # 올림한 뒤 최소 1초를 보장한다.
-                timeout=max(
-                    1,
-                    ceil(self._settings.qdrant_timeout_seconds),
-                ),
+                timeout=max(1, ceil(self._settings.qdrant_timeout_seconds)),
             )
-
         return self._client
 
-    def _validate_query_embedding(
-        self,
-        query_embedding: QueryEmbedding,
-    ) -> None:
-        """질의 벡터가 현재 Qdrant Collection 계약과 일치하는지 검증한다."""
+    def _validate_query_embedding(self, query_embedding: QueryEmbedding) -> None:
+        """질의 벡터가 현재 collection 모델·차원 계약과 일치하는지 검증한다."""
 
         if query_embedding.embedding_model != self._settings.embedding_model:
             raise VectorCollectionConfigurationError("query_embedding_model_mismatch")
-
         if query_embedding.embedding_dim != self._settings.embedding_dim:
             raise VectorCollectionConfigurationError("query_embedding_dim_mismatch")
-
         if len(query_embedding.vector) != self._settings.embedding_dim:
             raise VectorCollectionConfigurationError("query_vector_dim_mismatch")
 
@@ -413,70 +308,32 @@ def _to_chunk_search_hit(
     expected_reference_file_idxs: frozenset[int],
     expected_embedding_model: str,
 ) -> ChunkSearchHit:
-    """Qdrant ScoredPoint를 검증된 ChunkSearchHit으로 변환한다."""
+    """Qdrant ScoredPoint를 범위와 메타데이터가 검증된 hit으로 변환한다."""
 
     raw_payload = point.payload
-
-    if not isinstance(
-        raw_payload,
-        Mapping,
-    ):
+    if not isinstance(raw_payload, Mapping):
         raise InvalidVectorSearchResultError("invalid_search_result_payload")
+    payload = cast(Mapping[str, object], raw_payload)
 
-    payload = cast(
-        Mapping[str, object],
-        raw_payload,
-    )
+    users_idx = _required_int(payload, _USERS_IDX_PAYLOAD_KEY, minimum=1)
+    file_idx = _required_int(payload, _FILE_IDX_PAYLOAD_KEY, minimum=1)
+    is_active = _required_bool(payload, _IS_ACTIVE_PAYLOAD_KEY)
+    chunk_id = _required_text(payload, "chunk_id")
+    embedding_model = _required_text(payload, "embedding_model")
 
-    users_idx = _required_int(
-        payload,
-        _USERS_IDX_PAYLOAD_KEY,
-        minimum=1,
-    )
-
-    file_idx = _required_int(
-        payload,
-        _FILE_IDX_PAYLOAD_KEY,
-        minimum=1,
-    )
-
-    is_active = _required_bool(
-        payload,
-        _IS_ACTIVE_PAYLOAD_KEY,
-    )
-
-    chunk_id = _required_text(
-        payload,
-        "chunk_id",
-    )
-
-    embedding_model = _required_text(
-        payload,
-        "embedding_model",
-    )
-
-    # Qdrant Filter가 적용되었더라도 검색 결과를 외부 계층으로 넘기기 전에
-    # 사용자와 활성 상태를 다시 확인하여 잘못된 payload나 클라이언트 대역이
-    # 다른 사용자의 청크 또는 비활성 청크를 반환하는 상황을 방어한다.
+    # Qdrant 필터가 적용되었더라도 payload를 다시 검증하여 잘못된 테스트 대역,
+    # 손상 point 또는 향후 구현 변경이 보안 경계를 우회하지 못하게 한다.
     if users_idx != expected_user_idx or not is_active:
         raise InvalidVectorSearchResultError("search_scope_contract_violation")
-
-    # Qdrant MatchAny 필터가 적용되었더라도 file_idx를 다시 검증한다.
-    #
-    # 이를 통해 잘못된 payload, Qdrant 클라이언트 대역 또는 향후 저장소 구현
-    # 변경이 선택하지 않은 문서의 청크를 반환하는 상황을 차단한다.
     if file_idx not in expected_reference_file_idxs:
         raise InvalidVectorSearchResultError("search_reference_file_scope_contract_violation")
-
     if embedding_model != expected_embedding_model:
         raise InvalidVectorSearchResultError("search_embedding_model_mismatch")
-
-    # 색인 계층은 Chunk_ID를 Qdrant Point ID로 그대로 사용한다.
-    # payload와 Point ID가 다르면 Local RAG DB와 VectorDB 연결 계약이 깨진 상태다.
     if str(point.id) != chunk_id:
         raise InvalidVectorSearchResultError("search_chunk_id_mismatch")
 
     try:
+        source_metadata = _extract_source_metadata(payload)
         return ChunkSearchHit(
             chunk_id=chunk_id,
             score=float(point.score),
@@ -487,70 +344,66 @@ def _to_chunk_search_hit(
                 minimum=1,
             ),
             file_idx=file_idx,
-            folder_idx=_optional_int(
-                payload,
-                "folder_idx",
-                minimum=1,
-            ),
-            file_name=_required_text(
-                payload,
-                "file_name",
-            ),
-            file_type=_required_text(
-                payload,
-                "file_type",
-            ),
-            chunk_index=_required_int(
-                payload,
-                "chunk_index",
-                minimum=0,
-            ),
-            content=_required_text(
-                payload,
-                "content",
-                preserve_original=True,
-            ),
-            token_count=_optional_int(
-                payload,
-                "token_count",
-                minimum=0,
-            ),
-            page=_optional_int(
-                payload,
-                "page",
-                minimum=1,
-            ),
-            slide_no=_optional_int(
-                payload,
-                "slide_no",
-                minimum=1,
-            ),
-            sheet_name=_optional_text(
-                payload,
-                "sheet_name",
-            ),
-            section_title=_optional_text(
-                payload,
-                "section_title",
-            ),
-            parser_version=_required_text(
-                payload,
-                "parser_version",
-            ),
+            folder_idx=_optional_int(payload, "folder_idx", minimum=1),
+            file_name=_required_text(payload, "file_name"),
+            file_type=_required_text(payload, "file_type"),
+            chunk_index=_required_int(payload, "chunk_index", minimum=0),
+            content=_required_text(payload, "content", preserve_original=True),
+            token_count=_optional_int(payload, "token_count", minimum=0),
+            page=_optional_int(payload, "page", minimum=1),
+            slide_no=_optional_int(payload, "slide_no", minimum=1),
+            sheet_name=_optional_text(payload, "sheet_name"),
+            section_title=_optional_text(payload, "section_title"),
+            parser_version=_required_text(payload, "parser_version"),
             embedding_model=embedding_model,
-            index_version=_required_int(
-                payload,
-                "index_version",
-                minimum=1,
-            ),
+            index_version=_required_int(payload, "index_version", minimum=1),
+            source_metadata=source_metadata,
         )
-
-    except (
-        TypeError,
-        ValueError,
-    ) as error:
-        # 잘못된 payload 값이나 점수는 외부 응답에 그대로 노출하지 않는다.
+    except (TypeError, ValueError) as error:
         raise InvalidVectorSearchResultError("invalid_search_result_value") from error
+
+
+def _extract_source_metadata(payload: Mapping[str, object]) -> dict[str, JsonValue]:
+    """nested source_metadata를 우선 읽고 legacy top-level 위치를 보완한다."""
+
+    raw_metadata = payload.get("source_metadata")
+    if raw_metadata is None:
+        metadata: dict[str, JsonValue] = {}
+    elif isinstance(raw_metadata, Mapping):
+        try:
+            metadata = normalize_source_metadata(cast(Mapping[str, object], raw_metadata))
+        except ValueError as error:
+            raise InvalidVectorSearchResultError("invalid_search_source_metadata") from error
+    else:
+        raise InvalidVectorSearchResultError("invalid_search_source_metadata")
+
+    # 새 nested 값이 존재하면 절대 top-level 값으로 덮어쓰지 않는다.
+    # legacy page는 source locator builder가 이해하는 page_number로 정규화한다.
+    for key in _LOCATION_PAYLOAD_KEYS:
+        value = payload.get(key)
+        if value is None:
+            continue
+        target_key = "page_number" if key == "page" else key
+        metadata.setdefault(target_key, _normalize_payload_scalar(value))
+
+    return metadata
+
+
+def _normalize_payload_scalar(value: object) -> JsonValue:
+    """legacy top-level 위치 값을 JSON 표준 값으로 검증한다."""
+
+    if value is None or isinstance(value, str | bool | int):
+        return value
+    if isinstance(value, float) and math.isfinite(value):
+        return value
+    if isinstance(value, Mapping):
+        return normalize_source_metadata(cast(Mapping[str, object], value))
+    if isinstance(value, (list, tuple)):
+        normalized: list[JsonValue] = []
+        for item in value:
+            normalized.append(_normalize_payload_scalar(item))
+        return normalized
+    raise InvalidVectorSearchResultError("invalid_search_source_metadata")
 
 
 def _required_int(
@@ -559,13 +412,9 @@ def _required_int(
     *,
     minimum: int,
 ) -> int:
-    """payload에서 지정 최솟값 이상의 필수 정수를 읽는다."""
-
     value = payload.get(key)
-
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise InvalidVectorSearchResultError("invalid_search_result_payload")
-
     return value
 
 
@@ -575,33 +424,18 @@ def _optional_int(
     *,
     minimum: int,
 ) -> int | None:
-    """payload에서 null 또는 지정 최솟값 이상의 정수를 읽는다."""
-
     value = payload.get(key)
-
     if value is None:
         return None
-
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise InvalidVectorSearchResultError("invalid_search_result_payload")
-
     return value
 
 
-def _required_bool(
-    payload: Mapping[str, object],
-    key: str,
-) -> bool:
-    """payload에서 필수 bool 값을 읽는다."""
-
+def _required_bool(payload: Mapping[str, object], key: str) -> bool:
     value = payload.get(key)
-
-    if not isinstance(
-        value,
-        bool,
-    ):
+    if not isinstance(value, bool):
         raise InvalidVectorSearchResultError("invalid_search_result_payload")
-
     return value
 
 
@@ -611,70 +445,33 @@ def _required_text(
     *,
     preserve_original: bool = False,
 ) -> str:
-    """payload에서 비어 있지 않은 필수 문자열을 읽는다."""
-
     value = payload.get(key)
-
-    if not isinstance(
-        value,
-        str,
-    ):
+    if not isinstance(value, str):
         raise InvalidVectorSearchResultError("invalid_search_result_payload")
-
-    normalized_value = value.strip()
-
-    if not normalized_value:
+    normalized = value.strip()
+    if not normalized:
         raise InvalidVectorSearchResultError("invalid_search_result_payload")
-
-    if preserve_original:
-        return value
-
-    return normalized_value
+    return value if preserve_original else normalized
 
 
-def _optional_text(
-    payload: Mapping[str, object],
-    key: str,
-) -> str | None:
-    """payload에서 null 또는 비어 있지 않은 문자열을 읽는다."""
-
+def _optional_text(payload: Mapping[str, object], key: str) -> str | None:
     value = payload.get(key)
-
     if value is None:
         return None
-
-    if not isinstance(
-        value,
-        str,
-    ):
+    if not isinstance(value, str):
         raise InvalidVectorSearchResultError("invalid_search_result_payload")
-
-    normalized_value = value.strip()
-
-    if not normalized_value:
+    normalized = value.strip()
+    if not normalized:
         raise InvalidVectorSearchResultError("invalid_search_result_payload")
+    return normalized
 
-    return normalized_value
 
-
-def _validate_positive_integer(
-    value: int,
-    *,
-    field_name: str,
-) -> None:
-    """bool을 제외한 양의 정수인지 검증한다."""
-
+def _validate_positive_integer(value: int, *, field_name: str) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"{field_name} must be a positive integer.")
 
 
-def _validate_non_negative_integer(
-    value: int,
-    *,
-    field_name: str,
-) -> None:
-    """bool을 제외한 0 이상의 정수인지 검증한다."""
-
+def _validate_non_negative_integer(value: int, *, field_name: str) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{field_name} must be a non-negative integer.")
 
@@ -685,98 +482,51 @@ def _validate_optional_integer(
     field_name: str,
     minimum: int,
 ) -> None:
-    """선택적 정수가 null이거나 지정 최솟값 이상인지 검증한다."""
-
     if value is None:
         return
-
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise ValueError(
             f"{field_name} must be an integer greater than or equal to {minimum}, or null."
         )
 
 
-def _validate_required_text_value(
-    value: str,
-    *,
-    field_name: str,
-) -> None:
-    """필수 문자열에 공백 이외의 문자가 존재하는지 검증한다."""
-
+def _validate_required_text_value(value: str, *, field_name: str) -> None:
     if not value.strip():
         raise ValueError(f"{field_name} must not be empty.")
 
 
-def _validate_optional_text_value(
-    value: str | None,
-    *,
-    field_name: str,
-) -> None:
-    """선택적 문자열이 null이거나 비어 있지 않은 문자열인지 검증한다."""
-
+def _validate_optional_text_value(value: str | None, *, field_name: str) -> None:
     if value is not None and not value.strip():
         raise ValueError(f"{field_name} must not be empty when provided.")
 
 
-def _validate_reference_file_idxs(
-    reference_file_idxs: tuple[int, ...],
-) -> None:
-    """참조문서 범위가 비어 있지 않은 고유한 양의 정수 tuple인지 검증한다.
-
-    요청 스키마가 동일한 계약을 먼저 검증하지만 Repository를 직접 호출하는
-    내부 코드와 테스트 대역도 빈 범위를 전체 문서 검색으로 해석하지 못하도록
-    인프라 경계에서 다시 검증한다.
-    """
+def _validate_reference_file_idxs(reference_file_idxs: tuple[int, ...]) -> None:
+    """빈 선택 범위를 전체 문서 검색으로 해석하지 못하도록 강제한다."""
 
     if not isinstance(reference_file_idxs, tuple) or not reference_file_idxs:
         raise ValueError("reference_file_idxs must be a non-empty tuple.")
-
     seen_file_idxs: set[int] = set()
-
     for file_idx in reference_file_idxs:
-        _validate_positive_integer(
-            file_idx,
-            field_name="reference_file_idx",
-        )
-
+        _validate_positive_integer(file_idx, field_name="reference_file_idx")
         if file_idx in seen_file_idxs:
             raise ValueError("reference_file_idxs must contain unique values.")
-
         seen_file_idxs.add(file_idx)
 
 
-def _validate_search_limit(
-    limit: int,
-) -> None:
-    """Qdrant 검색 결과 수 제한이 허용 범위인지 검증한다."""
-
+def _validate_search_limit(limit: int) -> None:
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= _MAX_SEARCH_LIMIT:
         raise ValueError(f"limit must be between 1 and {_MAX_SEARCH_LIMIT}.")
 
 
-def _validate_score_threshold(
-    score_threshold: float | None,
-) -> None:
-    """선택적 Cosine 점수 임계값이 유한한 -1부터 1 사이 값인지 검증한다."""
-
+def _validate_score_threshold(score_threshold: float | None) -> None:
     if score_threshold is None:
         return
-
-    if isinstance(score_threshold, bool) or not isinstance(
-        score_threshold,
-        (
-            int,
-            float,
-        ),
-    ):
+    if isinstance(score_threshold, bool) or not isinstance(score_threshold, int | float):
         raise ValueError("score_threshold must be numeric or null.")
-
-    normalized_threshold = float(score_threshold)
-
-    if not math.isfinite(normalized_threshold):
+    normalized = float(score_threshold)
+    if not math.isfinite(normalized):
         raise ValueError("score_threshold must be finite.")
-
-    if not -1.0 <= normalized_threshold <= 1.0:
+    if not -1.0 <= normalized <= 1.0:
         raise ValueError("score_threshold must be between -1.0 and 1.0.")
 
 
@@ -785,20 +535,7 @@ def _convert_unexpected_response(
     *,
     operation: str,
 ) -> VectorDatabaseUnavailableError | VectorDatabaseRejectedError:
-    """Qdrant HTTP 오류를 재시도 가능 여부에 따라 분류한다."""
-
     status_code = error.status_code
-
-    if status_code in {
-        408,
-        429,
-    } or (status_code is not None and status_code >= 500):
-        return VectorDatabaseUnavailableError(
-            operation,
-            status_code=status_code,
-        )
-
-    return VectorDatabaseRejectedError(
-        operation,
-        status_code=status_code,
-    )
+    if status_code in {408, 429} or (status_code is not None and status_code >= 500):
+        return VectorDatabaseUnavailableError(operation, status_code=status_code)
+    return VectorDatabaseRejectedError(operation, status_code=status_code)
