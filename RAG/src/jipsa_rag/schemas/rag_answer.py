@@ -13,15 +13,9 @@ from jipsa_rag.schemas.reference_files import (
 )
 from jipsa_rag.schemas.source_locator import SourceLocator, build_source_locator
 
-_INSUFFICIENT_EVIDENCE_ANSWER: Final[str] = (
-    "제공된 문서 근거만으로는 답변할 수 없습니다."
-)
-_SOURCE_CITATION_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"\[(?P<source_id>SOURCE-[0-9]+)\]"
-)
-_VALID_SOURCE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(
-    r"^SOURCE-[1-9][0-9]*$"
-)
+_INSUFFICIENT_EVIDENCE_ANSWER: Final[str] = "제공된 문서 근거만으로는 답변할 수 없습니다."
+_SOURCE_CITATION_PATTERN: Final[re.Pattern[str]] = re.compile(r"\[(?P<source_id>SOURCE-[0-9]+)\]")
+_VALID_SOURCE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"^SOURCE-[1-9][0-9]*$")
 
 
 class RagAnswerStatus(StrEnum):
@@ -125,9 +119,7 @@ class RagAnswerSource(BaseModel):
             self.sheet_name is not None,
         )
         if sum(primary_locations) > 1:
-            raise ValueError(
-                "Only one of page, slide_no, or sheet_name may be provided."
-            )
+            raise ValueError("Only one of page, slide_no, or sheet_name may be provided.")
 
         locator = self.source_locator
         if locator is None:
@@ -189,9 +181,7 @@ class RagAnswerResponse(BaseModel):
     status: RagAnswerStatus
     cited_source_ids: tuple[str, ...] = Field(
         default_factory=tuple,
-        description=(
-            "answer 본문의 SOURCE-N을 중복 없이 최초 등장 순서로 나열한 식별자 목록"
-        ),
+        description=("answer 본문의 SOURCE-N을 중복 없이 최초 등장 순서로 나열한 식별자 목록"),
     )
     sources: tuple[RagAnswerSource, ...] = Field(
         default_factory=tuple,
@@ -218,13 +208,8 @@ class RagAnswerResponse(BaseModel):
     ) -> tuple[str, ...]:
         """공개 응답의 출처 ID 형식과 중복을 검증한다."""
 
-        if any(
-            _VALID_SOURCE_ID_PATTERN.fullmatch(source_id) is None
-            for source_id in value
-        ):
-            raise ValueError(
-                "cited_source_ids must contain only valid SOURCE-N values."
-            )
+        if any(_VALID_SOURCE_ID_PATTERN.fullmatch(source_id) is None for source_id in value):
+            raise ValueError("cited_source_ids must contain only valid SOURCE-N values.")
         if len(value) != len(set(value)):
             raise ValueError("cited_source_ids must not contain duplicates.")
         return value
@@ -271,15 +256,12 @@ class RagAnswerResponse(BaseModel):
             # sources가 후보 전체를 포함하면 사용하지 않은 원문 발췌문이 외부로
             # 노출될 수 있다. 본문의 실제 인용 순서와 정확히 같은 출처만 허용한다.
             if source_ids != body_citation_ids:
-                raise ValueError(
-                    "sources must match answer citations in first appearance order."
-                )
+                raise ValueError("sources must match answer citations in first appearance order.")
 
             if "cited_source_ids" in self.model_fields_set:
                 if self.cited_source_ids != body_citation_ids:
                     raise ValueError(
-                        "cited_source_ids must match answer citations in first "
-                        "appearance order."
+                        "cited_source_ids must match answer citations in first appearance order."
                     )
             else:
                 # 서비스의 기존 생성 경로는 sources만 전달한다. 해당 경로도 외부
@@ -293,17 +275,13 @@ class RagAnswerResponse(BaseModel):
         if self.sources:
             raise ValueError("insufficient_evidence responses must not contain sources.")
         if body_citation_ids or self.cited_source_ids:
-            raise ValueError(
-                "insufficient_evidence responses must not contain citations."
-            )
+            raise ValueError("insufficient_evidence responses must not contain citations.")
         if self.model is not None or self.usage is not None or self.stop_reason is not None:
             raise ValueError(
                 "insufficient_evidence responses must not contain generation metadata."
             )
         if self.answer.strip() != _INSUFFICIENT_EVIDENCE_ANSWER:
-            raise ValueError(
-                "insufficient_evidence responses must use the fixed answer."
-            )
+            raise ValueError("insufficient_evidence responses must use the fixed answer.")
         return self
 
 

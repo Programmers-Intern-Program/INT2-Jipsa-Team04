@@ -4,7 +4,7 @@
 
 | 항목 | 값 |
 |---|---|
-| 계약 버전 | `1.2.0` |
+| 계약 버전 | `1.2.1` |
 | 호출 방향 | AWS Backend → Local RAG |
 | HTTP Method | `POST` |
 | Path | `/api/v1/rag/answers` |
@@ -22,6 +22,7 @@
 | `1.0.0` | 선택 참조문서 기반 검색과 답변 계약 최초 정의 |
 | `1.1.0` | SOURCE-N 검증, 실제 인용 출처 필터링, 근거 부족 응답 정의 |
 | `1.2.0` | 혼합 문서·OCR Source Locator, 공개 cited_source_ids, 부분 실패와 최종 호출 생략 계약 추가 |
+| `1.2.1` | README·API 설명 동기화, 품질 게이트와 문서 회귀 검증 기준 명시 |
 
 ## 2. 시스템 경계
 
@@ -325,3 +326,42 @@ OCR은 원본 형식 위치를 유지하면서 다음 필드를 추가한다.
 
 오류 응답은 공통 envelope를 사용하며 질문, 청크, 프롬프트, Claude 원문 및 내부
 자격 증명을 포함하지 않는다.
+
+## 13. 문서와 OpenAPI 동기화 계약
+
+다음 세 설명은 동일한 요청·응답 의미를 사용해야 한다.
+
+1. FastAPI 엔드포인트의 `summary`, `description`, `responses`
+2. `README.md`의 RAG Answer 설명과 예시
+3. 이 문서와 `rag-answer-contract.md`
+
+문서에는 다음 과거 제한 문구를 다시 추가하지 않는다.
+
+- 텍스트 레이어 PDF만 답변 지원
+- DOCX, PPTX, XLSX, TXT 답변 미지원
+- OCR 답변 미지원
+- synthesis가 PDF별로만 동작
+
+지원 형식, 인용 순서 또는 오류 코드가 변경되면 스키마, OpenAPI 설명, 두 계약
+문서와 문서 회귀 테스트를 같은 변경 단위에서 갱신한다.
+
+## 14. 품질 게이트
+
+이 계약의 변경 완료 여부는 문서 편집만으로 판단하지 않는다. 동일한 commit에서
+다음 검사가 모두 성공해야 한다.
+
+```text
+uv run ruff format --check .
+uv run ruff check .
+uv run mypy src tests
+uv run pytest
+```
+
+표준 진입점은 `scripts/verify-rag-quality.ps1`이다. 일반 전체 Pytest에서 실제
+Claude, CUDA TEI, Qdrant, Local RAG DB 또는 Office COM이 필요한 opt-in E2E가
+skip되면 Pytest 결과에 사유가 표시되어야 한다. 외부 환경이 없어 실행하지 못한
+E2E를 일반 단위 테스트 성공으로 대체해서는 안 된다.
+
+`tests/regression/test_rag_documentation_contract.py`는 README와 두 API 계약 문서가
+혼합 문서, OCR, Source Locator, 부분 실패, 최종 Claude 호출 생략 및 공개 인용
+순서 계약을 계속 설명하는지 검증한다.

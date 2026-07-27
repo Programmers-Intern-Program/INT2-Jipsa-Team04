@@ -326,9 +326,7 @@ def _to_chunk_search_hit(
     if users_idx != expected_user_idx or not is_active:
         raise InvalidVectorSearchResultError("search_scope_contract_violation")
     if file_idx not in expected_reference_file_idxs:
-        raise InvalidVectorSearchResultError(
-            "search_reference_file_scope_contract_violation"
-        )
+        raise InvalidVectorSearchResultError("search_reference_file_scope_contract_violation")
     if embedding_model != expected_embedding_model:
         raise InvalidVectorSearchResultError("search_embedding_model_mismatch")
     if str(point.id) != chunk_id:
@@ -373,13 +371,9 @@ def _extract_source_metadata(payload: Mapping[str, object]) -> dict[str, JsonVal
         metadata: dict[str, JsonValue] = {}
     elif isinstance(raw_metadata, Mapping):
         try:
-            metadata = normalize_source_metadata(
-                cast(Mapping[str, object], raw_metadata)
-            )
+            metadata = normalize_source_metadata(cast(Mapping[str, object], raw_metadata))
         except ValueError as error:
-            raise InvalidVectorSearchResultError(
-                "invalid_search_source_metadata"
-            ) from error
+            raise InvalidVectorSearchResultError("invalid_search_source_metadata") from error
     else:
         raise InvalidVectorSearchResultError("invalid_search_source_metadata")
 
@@ -542,8 +536,6 @@ def _convert_unexpected_response(
     operation: str,
 ) -> VectorDatabaseUnavailableError | VectorDatabaseRejectedError:
     status_code = error.status_code
-    if status_code in {408, 429} or (
-        status_code is not None and status_code >= 500
-    ):
+    if status_code in {408, 429} or (status_code is not None and status_code >= 500):
         return VectorDatabaseUnavailableError(operation, status_code=status_code)
     return VectorDatabaseRejectedError(operation, status_code=status_code)

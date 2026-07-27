@@ -194,6 +194,7 @@ def test_generated_insufficient_evidence_is_returned_as_successful_status(
         "data": {
             "answer": _TEST_INSUFFICIENT_EVIDENCE_ANSWER,
             "status": "insufficient_evidence",
+            "cited_source_ids": [],
             "sources": [],
             "model": None,
             "usage": None,

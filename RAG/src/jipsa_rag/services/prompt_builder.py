@@ -91,9 +91,7 @@ class RagPromptBuilder:
         if max_chunk_chars <= 0:
             raise ValueError("max_chunk_chars must be greater than zero.")
         if not 0 < max_source_excerpt_chars <= 1_000:
-            raise ValueError(
-                "max_source_excerpt_chars must be between 1 and 1000."
-            )
+            raise ValueError("max_source_excerpt_chars must be between 1 and 1000.")
 
         self._max_total_context_chars = max_total_context_chars
         self._max_chunk_chars = max_chunk_chars
@@ -288,11 +286,7 @@ def _serialize_untrusted_json(value: object) -> str:
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    return (
-        serialized.replace("&", "\\u0026")
-        .replace("<", "\\u003c")
-        .replace(">", "\\u003e")
-    )
+    return serialized.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
 
 
 def _truncate_text(value: str, *, max_chars: int) -> str:

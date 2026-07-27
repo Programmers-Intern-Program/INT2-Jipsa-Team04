@@ -190,7 +190,7 @@ def test_create_rag_answer_returns_authenticated_answer(
     client: TestClient,
     stub_rag_answer_service: _StubRagAnswerService,
 ) -> None:
-    """유효한 내부 토큰과 참조문서가 있으면 답변과 출처를 반환한다."""
+    """유효한 내부 토큰과 참조문서가 있으면 인용 순서와 출처를 반환한다."""
 
     response = client.post(
         "/api/v1/rag/answers",
@@ -198,39 +198,54 @@ def test_create_rag_answer_returns_authenticated_answer(
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "success": True,
-        "code": "RAG_ANSWER_COMPLETED",
-        "message": "The RAG answer request was processed.",
-        "data": {
-            "answer": ("참조문서 123의 근거를 사용한 답변입니다. [SOURCE-1]"),
-            "status": "answered",
-            "sources": [
-                {
-                    "source_id": "SOURCE-1",
-                    "chunk_id": ("00000123-1111-1111-1111-111111111111"),
-                    "rag_document_idx": 100,
-                    "file_idx": 123,
-                    "folder_idx": 9,
-                    "file_name": "참조문서-123.pdf",
-                    "file_type": "pdf",
-                    "chunk_index": 0,
-                    "score": 0.92,
-                    "page": 2,
-                    "slide_no": None,
-                    "sheet_name": None,
-                    "section_title": "테스트 근거",
-                    "excerpt": ("참조문서 123의 테스트 근거입니다."),
-                }
-            ],
-            "model": _TEST_MODEL,
-            "usage": {
-                "input_tokens": 120,
-                "output_tokens": 30,
-            },
-            "stop_reason": "end_turn",
-        },
+
+    response_body = response.json()
+
+    assert response_body["success"] is True
+    assert response_body["code"] == "RAG_ANSWER_COMPLETED"
+    assert response_body["message"] == "The RAG answer request was processed."
+
+    response_data = response_body["data"]
+
+    assert response_data["answer"] == ("참조문서 123의 근거를 사용한 답변입니다. [SOURCE-1]")
+    assert response_data["status"] == "answered"
+    assert response_data["cited_source_ids"] == ["SOURCE-1"]
+    assert len(response_data["sources"]) == 1
+
+    source = response_data["sources"][0]
+
+    assert source["source_id"] == "SOURCE-1"
+    assert source["chunk_id"] == "00000123-1111-1111-1111-111111111111"
+    assert source["rag_document_idx"] == 100
+    assert source["file_idx"] == 123
+    assert source["folder_idx"] == 9
+    assert source["file_name"] == "참조문서-123.pdf"
+    assert source["file_type"] == "pdf"
+    assert source["chunk_index"] == 0
+    assert source["score"] == 0.92
+    assert source["page"] == 2
+    assert source["slide_no"] is None
+    assert source["sheet_name"] is None
+    assert source["section_title"] == "테스트 근거"
+    assert source["excerpt"] == "참조문서 123의 테스트 근거입니다."
+
+    # 공통 Source Locator는 기존 PDF page 필드와 같은 원본 위치를
+    # 표현해야 하며, 다른 문서 형식으로 오인될 수 있는 값을 만들면 안 된다.
+    locator = source["source_locator"]
+
+    assert locator["file_type"] == "pdf"
+    assert locator["kind"] == "pdf_page"
+    assert locator["content_origin"] == "text"
+    assert locator["page"] == 2
+    assert locator["section_title"] == "테스트 근거"
+    assert locator["structure_path"] == "page:2"
+
+    assert response_data["model"] == _TEST_MODEL
+    assert response_data["usage"] == {
+        "input_tokens": 120,
+        "output_tokens": 30,
     }
+    assert response_data["stop_reason"] == "end_turn"
 
     # Stub이 적용되지 않았다면 실제 외부 서비스 오류가 먼저 발생하므로,
     # 요청 기록 개수 검증으로 Dependency Override 적용 여부도 확인한다.

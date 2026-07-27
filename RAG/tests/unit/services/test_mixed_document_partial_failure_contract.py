@@ -185,9 +185,7 @@ async def test_no_valid_partial_answer_skips_final_claude_call() -> None:
             103: _valid_docx_response(file_idx=103),
         }
     )
-    generator = _ScriptedGenerationClient(
-        ("제공된 문서 근거만으로는 답변할 수 없습니다.",)
-    )
+    generator = _ScriptedGenerationClient(("제공된 문서 근거만으로는 답변할 수 없습니다.",))
     service = RoutedRagAnswerService(
         chunk_searcher=searcher,
         prompt_builder=RagPromptBuilder(),

@@ -177,7 +177,7 @@ def _valid_request_body(
     query: str = ("프로젝트의 로컬 실행 방법을 알려줘"),
     reference_file_idxs: object = (_TEST_REFERENCE_FILE_IDXS),
 ) -> dict[str, object]:
-    """외부 JSON 계약과 동일한 RAG 답변 요청 본문을 생성한다."""
+    """외부 JSON 계약과 동일한 RAG 답변 요청 본문를 생성한다."""
 
     request_body: dict[str, object] = {
         "user_idx": _TEST_USER_IDX,
@@ -213,7 +213,7 @@ def test_answer_question_returns_answer_and_public_sources(
     client: TestClient,
     stub_rag_answer_service: StubRagAnswerService,
 ) -> None:
-    """정상 답변에 파일명, 페이지, 섹션 및 청크 발췌문을 포함해야 한다."""
+    """정상 답변에 공개 인용 ID와 원본 위치 출처를 포함해야 한다."""
 
     response = client.post(
         "/api/v1/rag/answers",
@@ -221,39 +221,59 @@ def test_answer_question_returns_answer_and_public_sources(
     )
 
     assert response.status_code == 200
-    assert response.json() == {
-        "success": True,
-        "code": "RAG_ANSWER_COMPLETED",
-        "message": ("The RAG answer request was processed."),
-        "data": {
-            "answer": ("로컬 RAG 서버는 PowerShell 시작 스크립트로 실행합니다. [SOURCE-1]"),
-            "status": "answered",
-            "sources": [
-                {
-                    "source_id": "SOURCE-1",
-                    "chunk_id": _TEST_CHUNK_ID,
-                    "rag_document_idx": 100,
-                    "file_idx": 123,
-                    "folder_idx": 9,
-                    "file_name": ("프로젝트 가이드.pdf"),
-                    "file_type": "pdf",
-                    "chunk_index": 0,
-                    "score": 0.92,
-                    "page": 2,
-                    "slide_no": None,
-                    "sheet_name": None,
-                    "section_title": ("로컬 실행 방법"),
-                    "excerpt": ("로컬 RAG 서버는 PowerShell 시작 스크립트로 실행합니다."),
-                }
-            ],
-            "model": "claude-sonnet-5",
-            "usage": {
-                "input_tokens": 120,
-                "output_tokens": 30,
-            },
-            "stop_reason": "end_turn",
-        },
+
+    response_body = response.json()
+
+    assert response_body["success"] is True
+    assert response_body["code"] == "RAG_ANSWER_COMPLETED"
+    assert response_body["message"] == "The RAG answer request was processed."
+
+    response_data = response_body["data"]
+
+    assert response_data["answer"] == (
+        "로컬 RAG 서버는 PowerShell 시작 스크립트로 실행합니다. [SOURCE-1]"
+    )
+    assert response_data["status"] == "answered"
+
+    # 본문의 SOURCE-N 최초 등장 순서를 공개 필드로 반환해야 한다.
+    # sources 배열의 순서도 이 목록과 정확히 일치해야 한다.
+    assert response_data["cited_source_ids"] == ["SOURCE-1"]
+    assert len(response_data["sources"]) == 1
+
+    source = response_data["sources"][0]
+
+    # 기존 전용 위치 필드는 Backend와 기존 UI의 하위 호환을 위해 유지한다.
+    assert source["source_id"] == "SOURCE-1"
+    assert source["chunk_id"] == _TEST_CHUNK_ID
+    assert source["rag_document_idx"] == 100
+    assert source["file_idx"] == 123
+    assert source["folder_idx"] == 9
+    assert source["file_name"] == "프로젝트 가이드.pdf"
+    assert source["file_type"] == "pdf"
+    assert source["chunk_index"] == 0
+    assert source["score"] == 0.92
+    assert source["page"] == 2
+    assert source["slide_no"] is None
+    assert source["sheet_name"] is None
+    assert source["section_title"] == "로컬 실행 방법"
+    assert source["excerpt"] == ("로컬 RAG 서버는 PowerShell 시작 스크립트로 실행합니다.")
+
+    # 공통 Source Locator는 기존 page 필드와 같은 원본 위치를 가리켜야 한다.
+    locator = source["source_locator"]
+
+    assert locator["file_type"] == "pdf"
+    assert locator["kind"] == "pdf_page"
+    assert locator["content_origin"] == "text"
+    assert locator["page"] == 2
+    assert locator["section_title"] == "로컬 실행 방법"
+    assert locator["structure_path"] == "page:2"
+
+    assert response_data["model"] == "claude-sonnet-5"
+    assert response_data["usage"] == {
+        "input_tokens": 120,
+        "output_tokens": 30,
     }
+    assert response_data["stop_reason"] == "end_turn"
 
     assert len(stub_rag_answer_service.requests) == 1
 
@@ -269,7 +289,7 @@ def test_answer_question_returns_insufficient_evidence_response(
     client: TestClient,
     stub_rag_answer_service: StubRagAnswerService,
 ) -> None:
-    """선택 문서 검색 결과가 없으면 생성 메타데이터 없는 응답을 반환해야 한다."""
+    """선택 문서 검색 결과가 없으면 인용·생성 메타데이터 없는 응답을 반환한다."""
 
     stub_rag_answer_service.response = _create_insufficient_evidence_response()
 
@@ -286,6 +306,7 @@ def test_answer_question_returns_insufficient_evidence_response(
         "data": {
             "answer": ("제공된 문서 근거만으로는 답변할 수 없습니다."),
             "status": "insufficient_evidence",
+            "cited_source_ids": [],
             "sources": [],
             "model": None,
             "usage": None,

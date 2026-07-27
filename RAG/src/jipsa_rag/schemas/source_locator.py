@@ -158,23 +158,36 @@ class SourceLocator(BaseModel):
     def validate_location_contract(self) -> Self:
         """형식별 위치 범위와 OCR 이미지 순번 계약을 검증한다."""
 
-        if self.char_start is not None and self.char_end is not None:
-            if self.char_end < self.char_start:
-                raise ValueError("char_end must be greater than or equal to char_start.")
+        # 범위의 시작과 끝이 모두 존재할 때만 역전 여부를 검사한다.
+        # Ruff SIM102 규칙에 맞춰 중첩 조건문을 하나의 명시적인 조건식으로
+        # 결합하되 기존 검증 시점과 예외 메시지는 그대로 유지한다.
+        if (
+            self.char_start is not None
+            and self.char_end is not None
+            and self.char_end < self.char_start
+        ):
+            raise ValueError("char_end must be greater than or equal to char_start.")
 
-        if self.line_start is not None and self.line_end is not None:
-            if self.line_end < self.line_start:
-                raise ValueError("line_end must be greater than or equal to line_start.")
+        if (
+            self.line_start is not None
+            and self.line_end is not None
+            and self.line_end < self.line_start
+        ):
+            raise ValueError("line_end must be greater than or equal to line_start.")
 
-        if self.start_row is not None and self.end_row is not None:
-            if self.end_row < self.start_row:
-                raise ValueError("end_row must be greater than or equal to start_row.")
+        if (
+            self.start_row is not None
+            and self.end_row is not None
+            and self.end_row < self.start_row
+        ):
+            raise ValueError("end_row must be greater than or equal to start_row.")
 
-        if self.start_column is not None and self.end_column is not None:
-            if self.end_column < self.start_column:
-                raise ValueError(
-                    "end_column must be greater than or equal to start_column."
-                )
+        if (
+            self.start_column is not None
+            and self.end_column is not None
+            and self.end_column < self.start_column
+        ):
+            raise ValueError("end_column must be greater than or equal to start_column.")
 
         # image_ordinal이 신규 표준 필드다. 기존 호출자가 image_index만 전달한
         # 경우에는 동일 값을 양쪽에 채워 직렬화 결과와 과거 소비자를 모두 보호한다.
@@ -194,9 +207,7 @@ class SourceLocator(BaseModel):
             # 1-based 순번을 반드시 포함한다. 현재 추출기는 모든 OCR 후보에
             # image_index를 기록하므로 builder가 이를 image_ordinal로 정규화한다.
             if self.image_ordinal is None:
-                raise ValueError(
-                    "OCR source locators must contain image_ordinal."
-                )
+                raise ValueError("OCR source locators must contain image_ordinal.")
 
             # 이미지 순번만 있고 원본 페이지·블록·슬라이드·시트 위치가 없으면
             # 사용자가 실제 문서에서 근거를 찾을 수 없다. 파일 형식에 맞는 대표
@@ -231,18 +242,17 @@ class SourceLocator(BaseModel):
 
         # 한 파일 형식의 locator에 다른 형식의 핵심 위치가 섞이면 최종 응답이
         # 잘못된 UI 링크를 만들 수 있으므로 대표 위치 충돌을 명시적으로 차단한다.
-        if self.file_type is SupportedFileType.PDF:
-            if any(
-                value is not None
-                for value in (
-                    self.slide_no,
-                    self.sheet_name,
-                    self.sheet_number,
-                    self.line_number,
-                    self.line_start,
-                )
-            ):
-                raise ValueError("PDF locators must not contain non-PDF locations.")
+        if self.file_type is SupportedFileType.PDF and any(
+            value is not None
+            for value in (
+                self.slide_no,
+                self.sheet_name,
+                self.sheet_number,
+                self.line_number,
+                self.line_start,
+            )
+        ):
+            raise ValueError("PDF locators must not contain non-PDF locations.")
 
         if self.file_type is SupportedFileType.PPTX and self.page is not None:
             raise ValueError("PPTX locators must not contain a PDF page.")
@@ -292,10 +302,7 @@ def build_source_locator(
     )
 
     page = _first_int(metadata, ("page_number", "page"), minimum=1) or legacy_page
-    slide_no = (
-        _first_int(metadata, ("slide_number", "slide_no"), minimum=1)
-        or legacy_slide_no
-    )
+    slide_no = _first_int(metadata, ("slide_number", "slide_no"), minimum=1) or legacy_slide_no
     sheet_number = _resolve_sheet_number(metadata)
     sheet_name = _optional_text(metadata, "sheet_name") or legacy_sheet_name
     section_title = _optional_text(metadata, "section_title") or legacy_section_title
@@ -446,9 +453,7 @@ def _resolve_locator_kind(
         return SourceLocatorKind.DOCX_BLOCK
     if file_type is SupportedFileType.PPTX:
         return (
-            SourceLocatorKind.PPTX_SHAPE
-            if shape_path is not None
-            else SourceLocatorKind.PPTX_SLIDE
+            SourceLocatorKind.PPTX_SHAPE if shape_path is not None else SourceLocatorKind.PPTX_SLIDE
         )
     if file_type is SupportedFileType.XLSX:
         return SourceLocatorKind.XLSX_CELL_RANGE

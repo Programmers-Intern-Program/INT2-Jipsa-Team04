@@ -89,9 +89,7 @@ class ChunkSearchService:
         except ValueError:
             # Pydantic 오류에 청크 원문이나 OCR 결과가 들어갈 수 있으므로
             # 예외 체인을 외부에 전달하지 않는다.
-            raise InvalidVectorSearchResultError(
-                "invalid_search_response_schema"
-            ) from None
+            raise InvalidVectorSearchResultError("invalid_search_response_schema") from None
 
 
 def _validate_search_hits(
@@ -114,13 +112,9 @@ def _validate_search_hits(
         if hit.users_idx != user_idx:
             raise InvalidVectorSearchResultError("search_user_scope_contract_violation")
         if hit.file_idx not in reference_file_idxs:
-            raise InvalidVectorSearchResultError(
-                "search_reference_file_scope_contract_violation"
-            )
+            raise InvalidVectorSearchResultError("search_reference_file_scope_contract_violation")
         if score_threshold is not None and hit.score < score_threshold:
-            raise InvalidVectorSearchResultError(
-                "search_score_threshold_contract_violation"
-            )
+            raise InvalidVectorSearchResultError("search_score_threshold_contract_violation")
         if previous_score is not None and hit.score > previous_score:
             raise InvalidVectorSearchResultError("search_score_order_contract_violation")
         if hit.chunk_id in seen_chunk_ids:

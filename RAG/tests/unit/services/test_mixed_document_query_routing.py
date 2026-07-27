@@ -156,11 +156,7 @@ def test_context_policy_limits_each_document_and_total_context() -> None:
     limited = policy.apply(groups)
 
     assert sum(len(group.chunks) for group in limited) == 2
-    assert sum(
-        len(chunk.content)
-        for group in limited
-        for chunk in group.chunks
-    ) <= 100
+    assert sum(len(chunk.content) for group in limited for chunk in group.chunks) <= 100
 
 
 @pytest.mark.asyncio

@@ -104,9 +104,7 @@ class ChunkSearchResult(BaseModel):
 
     source_locator: SourceLocator | None = Field(
         default=None,
-        description=(
-            "문서 형식별 원본 위치와 OCR 이미지 위치를 함께 표현하는 공통 출처 위치"
-        ),
+        description=("문서 형식별 원본 위치와 OCR 이미지 위치를 함께 표현하는 공통 출처 위치"),
     )
 
     parser_version: str = Field(min_length=1, max_length=100)
