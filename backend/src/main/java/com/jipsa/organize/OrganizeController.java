@@ -5,6 +5,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -32,9 +33,9 @@ public class OrganizeController {
 
     /** AI에게 제안을 생성시킨다 — 반환되는 OrganizeProposal은 이미 검증을 통과한 상태다. */
     @PostMapping("/propose")
-    public OrganizeProposal propose() {
+    public OrganizeProposal propose(@RequestParam(value = "allowRename", required = false, defaultValue = "false") boolean allowRename) {
         Long userId = currentUserProvider.requireUserId();
-        return organizeService.generateProposal(userId);
+        return organizeService.generateProposal(userId, allowRename);
     }
 
     /**

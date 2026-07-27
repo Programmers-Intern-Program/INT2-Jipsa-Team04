@@ -147,13 +147,6 @@ export default function FileDetailPanel({ fileId, folders, onClose, onTagsChange
                                 <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-bold bg-surface-container text-on-surface">{detail.status}</span>
                             </div>
                             <div>
-                                <p className="text-[11px] font-bold text-outline mb-1">보안 등급</p>
-                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold ${detail.securityRank === "기밀" ? "bg-rose-50 text-rose-600" : "bg-cyan-50 text-cyan-600"}`}>
-                  {detail.securityRank === "기밀" && <ShieldAlert className="w-3 h-3" />}
-                                    {detail.securityRank}
-                </span>
-                            </div>
-                            <div>
                                 <p className="text-[11px] font-bold text-outline mb-1">폴더</p>
                                 <p className="flex items-center gap-1 text-on-surface"><FolderClosed className="w-3.5 h-3.5 text-outline" />{getFolderPath(detail.folderId, folders) || "미분류"}</p>
                             </div>

@@ -92,8 +92,8 @@ export default function SemanticSearchView({ onNavigateToChat, initialSearch, on
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="예: 프로젝트 배포 절차가 어디에 있지?"
-          className="w-full bg-surface-container-low border border-outline-variant rounded-full py-3.5 pl-12 pr-28 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-body-md font-medium transition-all"
+          placeholder="예: 지난 분기 매출 보고서 요약이 있는 문서"
+          className="w-full bg-surface-container-low border border-outline-variant rounded-full py-3.5 pl-14 pr-28 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-body-md font-medium transition-all"
           id="semantic-search-input"
         />
         <button

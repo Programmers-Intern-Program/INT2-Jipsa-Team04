@@ -11,6 +11,8 @@ import com.jipsa.folder.FolderRepository;
 import com.jipsa.folder.FolderResponse;
 import com.jipsa.folder.FolderService;
 import com.jipsa.user.UserSettingService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,6 +38,8 @@ import java.util.stream.Collectors;
  */
 @Service
 public class OrganizeService {
+
+    private static final Logger log = LoggerFactory.getLogger(OrganizeService.class);
 
     private final FolderRepository folderRepository;
     private final FileRepository fileRepository;
@@ -86,16 +90,48 @@ public class OrganizeService {
      * 짧은 트랜잭션으로 처리하므로 여기서 하나로 묶을 필요가 없다.
      */
     public OrganizeProposal generateProposal(Long userId) {
+        return generateProposal(userId, true);
+    }
+
+    public OrganizeProposal generateProposal(Long userId, boolean allowRename) {
         List<FolderTreeNode> currentTree = getCurrentFolderTree(userId);
         List<OrganizeFileInput> files = organizeInputAssembler.assemble(userId);
 
         OrganizeProposal proposal = aiOrganizeClient.proposeOrganization(currentTree, files);
         List<ProposedFolder> newFolders = proposal.newFolders() == null ? List.of() : proposal.newFolders();
         List<FileMapping> mappings = proposal.mappings() == null ? List.of() : proposal.mappings();
+        if (!allowRename) {
+            mappings = mappings.stream()
+                    .map(m -> new FileMapping(m.fileId(), m.targetFolderId(), m.targetTempId(), null, m.confidence()))
+                    .toList();
+        }
 
         validate(userId, newFolders, mappings);
 
         return new OrganizeProposal(newFolders, mappings);
+    }
+
+    public void autoRenameFiles(Long userId, List<Long> fileIds) {
+        if (fileIds == null || fileIds.isEmpty()) {
+            return;
+        }
+        Set<Long> targets = new HashSet<>(fileIds);
+        try {
+            List<FolderTreeNode> currentTree = getCurrentFolderTree(userId);
+            List<OrganizeFileInput> files = organizeInputAssembler.assemble(userId);
+            OrganizeProposal proposal = aiOrganizeClient.proposeOrganization(currentTree, files);
+            List<FileMapping> mappings = proposal.mappings() == null ? List.of() : proposal.mappings();
+            for (FileMapping mapping : mappings) {
+                if (mapping.fileId() != null
+                        && targets.contains(mapping.fileId())
+                        && mapping.newName() != null
+                        && !mapping.newName().isBlank()) {
+                    fileService.rename(userId, mapping.fileId(), mapping.newName());
+                }
+            }
+        } catch (RuntimeException e) {
+            log.warn("자동 파일명 정리 실패 (files {}): {}", fileIds, e.getMessage());
+        }
     }
 
     /**

@@ -52,7 +52,7 @@ interface UploadContextValue {
     isBusy: boolean;
     uploadedSignal: number;
     enqueue: (files: File[], folderId: number | null) => void;
-    startAll: () => void;
+    startAll: (autoRename?: boolean) => void;
     removeItem: (id: string) => void;
     retryItem: (id: string) => void;
     clearSettled: () => void;
@@ -79,7 +79,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         [commit]
     );
 
-    const pump = useCallback(async () => {
+    const pump = useCallback(async (autoRename: boolean) => {
         if (runningRef.current) return;
         runningRef.current = true;
         try {
@@ -101,7 +101,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
                     try {
                         const result = await uploadOne(file, folderId, (loaded, total) => {
                             patch(id, { progress: total > 0 ? Math.round((loaded / total) * 100) : 0 });
-                        });
+                        }, autoRename);
                         patch(id, { status: "UPLOADED", progress: 100, fileId: result.fileIds[0] });
                         setUploadedSignal((n) => n + 1);
                     } catch (e) {
@@ -144,8 +144,8 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         [commit]
     );
 
-    const startAll = useCallback(() => {
-        void pump();
+    const startAll = useCallback((autoRename = false) => {
+        void pump(autoRename);
     }, [pump]);
 
     const removeItem = useCallback(
@@ -158,7 +158,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     const retryItem = useCallback(
         (id: string) => {
             patch(id, { status: "QUEUED", error: undefined });
-            void pump();
+            void pump(false);
         },
         [patch, pump]
     );

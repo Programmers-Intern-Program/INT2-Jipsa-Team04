@@ -157,6 +157,7 @@ export default function App() {
   const [settingsError, setSettingsError] = useState(false);
   const [settingsReloadKey, setSettingsReloadKey] = useState(0);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [isNewUploadOpen, setIsNewUploadOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
   const [globalSearchSubmit, setGlobalSearchSubmit] = useState<{ query: string; token: number } | null>(null);
 
@@ -532,7 +533,7 @@ export default function App() {
 
   const handleUploadClickOnSidebar = () => {
     setActiveTab("documents");
-    setIsUploadOpen(true);
+    setIsNewUploadOpen(true);
   };
 
   // OAuth 콜백 처리/세션 복원 중에는 로딩 화면(랜딩·메인 깜빡임 방지).
@@ -697,7 +698,7 @@ export default function App() {
                 value={globalSearch}
                 onChange={handleGlobalSearchChange}
                 onKeyDown={handleGlobalSearchSubmit}
-                placeholder="어느 화면에서든 파일 제목 또는 AI 추출 단어를 검색..."
+                placeholder="파일 제목이나 AI 태그로 검색하세요"
                 className="w-full bg-surface-container-low border border-outline-variant rounded-full py-2 pl-11 pr-4 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-body-sm font-medium transition-all"
                 id="global-search-input"
               />
@@ -712,7 +713,6 @@ export default function App() {
               title="알림"
             >
               <Bell className="w-5 h-5" />
-              <span className="absolute top-2.5 right-2.5 w-1.5 h-1.5 bg-rose-500 rounded-full animate-ping"></span>
             </button>
             <button
               onClick={() => alert("협업 중인 타 부서 공유 드라이브 링크 모음")}
@@ -727,7 +727,7 @@ export default function App() {
             <div className="flex items-center gap-3 pl-1" id="user-info-badge">
               <div className="text-right">
                 <p className="font-bold text-label-md text-on-surface leading-none">{user?.name || "사용자"}님</p>
-                <p className="text-[10px] text-outline font-extrabold uppercase mt-1 tracking-wider">{user?.role || "USERS"}</p>
+                <p className="text-[10px] text-outline font-extrabold uppercase mt-1 tracking-wider">{user?.role === "USERS" ? "USER" : (user?.role || "USER")}</p>
               </div>
             </div>
           </div>
@@ -765,6 +765,8 @@ export default function App() {
                   onNavigateToChat={handleNavigateToChat}
                   isUploadOpen={isUploadOpen}
                   setIsUploadOpen={setIsUploadOpen}
+                  isNewUploadOpen={isNewUploadOpen}
+                  setIsNewUploadOpen={setIsNewUploadOpen}
                   onUpdateDocuments={setDocuments}
                   sensitivity={committedSettings?.sensitivity ?? 0.85}
                 />

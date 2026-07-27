@@ -22,7 +22,6 @@ import {
   Star,
   Clock,
   Trash2,
-  ShieldAlert,
   Undo2,
   Pencil,
   Info
@@ -53,6 +52,8 @@ interface MyDocumentsViewProps {
   onNavigateToChat: (docIds: string[]) => void;
   isUploadOpen: boolean;
   setIsUploadOpen: (open: boolean) => void;
+  isNewUploadOpen: boolean;
+  setIsNewUploadOpen: (open: boolean) => void;
   onUpdateDocuments: React.Dispatch<React.SetStateAction<Document[]>>;
   /** 스마트 정리 미리보기에서 confidence 미달 매핑/폴더를 미리 가려서 보여주는 데 쓰는 사용자의
    * 자동 분류 민감도(0~1). 실제 필터링은 서버(OrganizeService)가 하고, 여기선 그 결과를 미리
@@ -65,6 +66,8 @@ export default function MyDocumentsView({
   onNavigateToChat,
   isUploadOpen,
   setIsUploadOpen,
+  isNewUploadOpen,
+  setIsNewUploadOpen,
   onUpdateDocuments,
   sensitivity
 }: MyDocumentsViewProps) {
@@ -72,7 +75,6 @@ export default function MyDocumentsView({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedFolder, setSelectedFolder] = useState<number | null>(null);
   const [selectedType, setSelectedType] = useState<string | null>(null);
-  const [selectedSecurity, setSelectedSecurity] = useState<string | null>(null);
   const [selectedDocumentType, setSelectedDocumentType] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState("");
   const [dateFromFilter, setDateFromFilter] = useState("");
@@ -106,7 +108,6 @@ export default function MyDocumentsView({
     targetFolderId: number | null;
     summary: string;
     tags: string[];
-    security: string;
   } | null>(null);
 
   // New document form state
@@ -114,7 +115,9 @@ export default function MyDocumentsView({
   const [uploadContent, setUploadContent] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [isNewUploadOpen, setIsNewUploadOpen] = useState(false);
+  const [newUploaderSmartMode, setNewUploaderSmartMode] = useState(false);
+  const [autoRename, setAutoRename] = useState(true);
+  const [isRenamePromptOpen, setIsRenamePromptOpen] = useState(false);
   const { items: uploadQueue, isBusy: isNewUploaderBusy, enqueue, startAll, removeItem: removeUploadQueueItem, retryItem, refreshRecent } = useUploads();
 
   useEffect(() => {
@@ -186,7 +189,7 @@ export default function MyDocumentsView({
   const [expandedFolders, setExpandedFolders] = useState<Record<number, boolean>>({});
 
   // Google Drive Mimicry States
-  const [currentTab, setCurrentTab] = useState<"mydrive" | "starred" | "secure" | "recent" | "trash">("mydrive");
+  const [currentTab, setCurrentTab] = useState<"mydrive" | "starred" | "recent" | "trash">("mydrive");
   const [isMyDriveExpanded, setIsMyDriveExpanded] = useState(true);
 
   // Document checkbox selection state for batch actions
@@ -296,8 +299,6 @@ export default function MyDocumentsView({
             isDescendantOrSelf(doc.folderId, selectedFolder, folders);
       } else if (currentTab === "starred") {
         matchesTabAndFolder = !!doc.star;
-      } else if (currentTab === "secure") {
-        matchesTabAndFolder = doc.securityRank === "기밀";
       } else if (currentTab === "recent") {
         matchesTabAndFolder = true;
       } else if (currentTab === "trash") {
@@ -305,15 +306,14 @@ export default function MyDocumentsView({
       }
 
       const matchesType = !selectedType || doc.fileType === selectedType;
-      const matchesSecurity = !selectedSecurity || doc.securityRank === selectedSecurity;
       const matchesDocumentType = !selectedDocumentType || doc.documentType === selectedDocumentType;
       const matchesTag = !tagFilter.trim() || (doc.tags ?? []).some((t) => t.toLowerCase().includes(tagFilter.trim().toLowerCase()));
       const docDate = (doc.modifiedAt ?? "").slice(0, 10);
       const matchesDate = (!dateFromFilter || docDate >= dateFromFilter) && (!dateToFilter || docDate <= dateToFilter);
 
-      return matchesSearch && matchesTabAndFolder && matchesType && matchesSecurity && matchesDocumentType && matchesTag && matchesDate;
+      return matchesSearch && matchesTabAndFolder && matchesType && matchesDocumentType && matchesTag && matchesDate;
     });
-  }, [documents, trashDocs, searchQuery, selectedFolder, selectedType, selectedSecurity, selectedDocumentType, tagFilter, dateFromFilter, dateToFilter, currentTab, folders]);
+  }, [documents, trashDocs, searchQuery, selectedFolder, selectedType, selectedDocumentType, tagFilter, dateFromFilter, dateToFilter, currentTab, folders]);
 
   const sortedFilteredDocuments = useMemo(() => {
     if (currentTab === "recent") {
@@ -537,7 +537,7 @@ export default function MyDocumentsView({
     e.target.value = "";
   };
 
-  const runNewUploaderUpload = () => startAll();
+  const runNewUploaderUpload = () => startAll(newUploaderSmartMode && autoRename);
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -576,7 +576,6 @@ export default function MyDocumentsView({
             targetFolderId: detail.folderId,
             summary: detail.summary,
             tags: detail.tags ?? [],
-            security: detail.securityRank,
           });
           setIsUploadOpen(false);
           setShowAutoResultModal(true);
@@ -610,7 +609,7 @@ export default function MyDocumentsView({
   // Trigger folder reorganization sequence — POST /api/v1/organize/propose 호출.
   // 비로그인 상태면 401이 나는 게 정상 — 안내만 하고 종료한다. 폴더 목록처럼
   // mock으로 폴백할 수 없다(AI 제안 자체가 서버에서만 생성 가능하므로).
-  const handleOrganizeFolders = async () => {
+  const handleOrganizeFolders = async (allowRename: boolean) => {
     setIsOrganizing(true);
     setOrganizeStep(1);
 
@@ -619,7 +618,7 @@ export default function MyDocumentsView({
     const step2 = setTimeout(() => setOrganizeStep(3), 1600);
 
     try {
-      const proposal = await proposeOrganization();
+      const proposal = await proposeOrganization(allowRename);
       // apply 재시도(응답 유실 후 재요청 등) 시 서버가 같은 요청인지 판단할 수 있도록,
       // 이 제안을 승인 대상으로 받는 시점에 키를 한 번만 만들어 붙여둔다 — 재시도해도
       // handleApplyOrganization은 이 organizeResult를 그대로 재사용하므로 키가 바뀌지 않는다.
@@ -747,11 +746,6 @@ export default function MyDocumentsView({
     }
 
     return { currentName, currentPath, targetPath, newName: mapping.newName, confidence: mapping.confidence ?? null };
-  };
-
-  const handleSmartUploadTrigger = () => {
-    setIsSpecialUploadMode(true);
-    setIsUploadOpen(true);
   };
 
   /**
@@ -1021,12 +1015,12 @@ export default function MyDocumentsView({
         <div className="flex items-center gap-4 flex-wrap" id="doc-toolbar-actions">
           <button
               type="button"
-              onClick={() => setIsNewUploadOpen(true)}
+              onClick={() => { setNewUploaderSmartMode(false); setIsNewUploadOpen(true); }}
               className="flex items-center gap-2 bg-white border-2 border-primary/40 text-primary font-extrabold py-3 px-5 rounded-xl shadow-sm hover:bg-primary/5 hover:scale-[1.01] transition-all cursor-pointer text-body-sm active:scale-95"
               id="btn-new-multi-uploader"
           >
             <Upload className="w-4 h-4" />
-            새 업로더 (다중·베타)
+            새 업로더
           </button>
           {/* AI 스마트 정리 Dropdown Trigger Button */}
           <div className="relative">
@@ -1061,7 +1055,7 @@ export default function MyDocumentsView({
                       <button
                         onClick={() => {
                           setIsSmartMenuOpen(false);
-                          handleOrganizeFolders();
+                          setIsRenamePromptOpen(true);
                         }}
                         className="w-full text-left p-3.5 rounded-xl hover:bg-primary/5 transition-colors flex gap-3.5 cursor-pointer group"
                       >
@@ -1079,7 +1073,9 @@ export default function MyDocumentsView({
                       <button 
                         onClick={() => {
                           setIsSmartMenuOpen(false);
-                          handleSmartUploadTrigger();
+                          setNewUploaderSmartMode(true);
+                          setAutoRename(true);
+                          setIsNewUploadOpen(true);
                         }}
                         className="w-full text-left p-3.5 rounded-xl hover:bg-primary/5 transition-colors flex gap-3.5 cursor-pointer group"
                       >
@@ -1098,16 +1094,6 @@ export default function MyDocumentsView({
             </AnimatePresence>
           </div>
 
-          {/* Quick Upload Action */}
-          <button 
-            onClick={() => {
-              setIsSpecialUploadMode(false);
-              setIsUploadOpen(true);
-            }}
-            className="py-3 px-5 bg-surface-container text-primary rounded-xl font-bold text-body-sm flex items-center gap-2 hover:bg-surface-container-high transition-colors cursor-pointer border border-outline-variant/30"
-          >
-            <Plus className="w-4 h-4 stroke-[2.5]" /> 문서 직접 추가
-          </button>
         </div>
       </div>
 
@@ -1202,31 +1188,6 @@ export default function MyDocumentsView({
                   currentTab === "starred" ? "bg-primary/20 text-primary" : "bg-surface-container-low text-outline"
                 }`}>
                   {documents.filter((d) => d.star).length}
-                </span>
-              </div>
-
-              {/* Security Vault (보안 격리소) */}
-              <div 
-                onClick={() => {
-                  setCurrentTab("secure");
-                  setSelectedFolder(null);
-                }}
-                className={`group py-2.5 px-3 rounded-r-full flex items-center justify-between cursor-pointer gap-2 transition-all mr-1.5 ${
-                  currentTab === "secure"
-                    ? "bg-primary/10 text-primary font-bold border-l-4 border-primary pl-2" 
-                    : "text-on-surface hover:bg-surface-container-low pl-3"
-                }`}
-                id="nav-secure"
-              >
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <span className="w-5 h-5 shrink-0" />
-                  <ShieldAlert className={`w-4 h-4 shrink-0 ${currentTab === "secure" ? "text-rose-600" : "text-outline group-hover:text-rose-600 transition-colors"}`} />
-                  <span className="text-[13px] font-semibold truncate">보안 격리소</span>
-                </div>
-                <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold shrink-0 ${
-                  currentTab === "secure" ? "bg-primary/20 text-primary" : "bg-surface-container-low text-outline"
-                }`}>
-                  {documents.filter(d => d.securityRank === "기밀").length}
                 </span>
               </div>
 
@@ -1327,7 +1288,6 @@ export default function MyDocumentsView({
                     <ChevronRight className="w-3 h-3 text-outline-variant shrink-0" />
                     <span className="text-primary bg-primary/5 px-2.5 py-1 rounded-full border border-primary/10">
                       {currentTab === "starred" ? "중요 문서함"
-                        : currentTab === "secure" ? "보안 격리소"
                         : currentTab === "recent" ? "최근 문서함"
                         : "휴지통"}
                     </span>
@@ -1378,17 +1338,6 @@ export default function MyDocumentsView({
                 <option value="txt">TEXT 텍스트</option>
               </select>
 
-              {/* Security Level Filter */}
-              <select 
-                value={selectedSecurity || ""} 
-                onChange={(e) => setSelectedSecurity(e.target.value || null)}
-                className="bg-white border border-outline-variant rounded-xl py-2 px-3 text-xs font-semibold text-on-surface-variant focus:ring-2 focus:ring-primary/10 outline-none cursor-pointer hover:border-outline transition-colors"
-              >
-                <option value="">보안 조치 등급 전체</option>
-                <option value="일반">일반 등급</option>
-                <option value="기밀">기밀 등급 (PII 감지)</option>
-              </select>
-
               <select
                   value={selectedDocumentType || ""}
                   onChange={(e) => setSelectedDocumentType(e.target.value || null)}
@@ -1423,12 +1372,11 @@ export default function MyDocumentsView({
               />
 
               {/* Filter Reset */}
-              {(selectedFolder || selectedType || selectedSecurity || searchQuery || selectedDocumentType || tagFilter || dateFromFilter || dateToFilter) && (
+              {(selectedFolder || selectedType || searchQuery || selectedDocumentType || tagFilter || dateFromFilter || dateToFilter) && (
                 <button 
                   onClick={() => {
                     setSelectedFolder(null);
                     setSelectedType(null);
-                    setSelectedSecurity(null);
                     setSearchQuery("");
                     setSelectedDocumentType(null);
                     setTagFilter("");
@@ -1468,7 +1416,6 @@ export default function MyDocumentsView({
                   {currentTab === "mydrive" 
                     ? (selectedFolder !== null ? `[${getFolderPath(selectedFolder, folders)}] 내부 파일` : "내 드라이브 전체 문서")
                     : currentTab === "starred" ? "중요 문서함 (Starred)"
-                    : currentTab === "secure" ? "보안 격리소 내부 기밀문서"
                     : currentTab === "recent" ? "최근 수정된 문서"
                     : "휴지통"
                   }
@@ -1548,7 +1495,6 @@ export default function MyDocumentsView({
                   onClick={() => {
                     setSelectedFolder(null);
                     setSelectedType(null);
-                    setSelectedSecurity(null);
                     setSearchQuery("");
                   }}
                   className="mt-4 px-4 py-2 text-primary font-bold border border-primary rounded-xl hover:bg-primary/5 transition-colors cursor-pointer text-xs"
@@ -1726,11 +1672,6 @@ export default function MyDocumentsView({
                                     <p className="text-[10px] text-outline mt-1 font-sans truncate">{formatBytes(doc.sizeBytes)} · {getFolderPath(doc.folderId, folders) || "미분류"}</p>
                                   </div>
                                 </div>
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold shrink-0 ${
-                                  doc.securityRank === "기밀" ? "bg-rose-50 text-rose-600 border border-rose-100 animate-pulse" : "bg-cyan-50 text-cyan-600 border border-cyan-100"
-                                }`}>
-                                  {doc.securityRank}
-                                </span>
                               </div>
 
                               {/* AI Summary block */}
@@ -1869,7 +1810,6 @@ export default function MyDocumentsView({
                       <th className="px-6 py-4 whitespace-nowrap">AI 추출 태그</th>
                       <th className="px-6 py-4 whitespace-nowrap">최종 수정일</th>
                       <th className="px-6 py-4 whitespace-nowrap">용량</th>
-                      <th className="px-6 py-4 whitespace-nowrap">보안 상태</th>
                       <th className="px-6 py-4 text-center whitespace-nowrap">작업</th>
                     </tr>
                   </thead>
@@ -1904,14 +1844,9 @@ export default function MyDocumentsView({
                           <td className="px-6 py-4 text-xs font-semibold text-outline font-sans whitespace-nowrap">
                             -
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-outline bg-surface-container px-2 py-0.5 rounded whitespace-nowrap">
-                              폴더
-                            </span>
-                          </td>
                           <td className="px-6 py-4 text-center whitespace-nowrap">
                             <div className="flex items-center justify-center gap-2">
-                              <button 
+                              <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -1955,11 +1890,6 @@ export default function MyDocumentsView({
                         </td>
                         <td className="px-6 py-4 text-xs font-semibold text-outline font-sans whitespace-nowrap">-</td>
                         <td className="px-6 py-4 text-xs font-semibold text-outline font-sans whitespace-nowrap">-</td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-outline bg-surface-container px-2 py-0.5 rounded whitespace-nowrap">
-                            폴더
-                          </span>
-                        </td>
                         <td className="px-6 py-4 text-center whitespace-nowrap">
                           <div className="flex items-center justify-center gap-2">
                             <button
@@ -2053,14 +1983,6 @@ export default function MyDocumentsView({
                           </td>
                           <td className="px-6 py-4 text-xs font-semibold text-on-surface-variant font-sans whitespace-nowrap">
                             {formatBytes(doc.sizeBytes)}
-                          </td>
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            <span className={`inline-flex items-center gap-1 text-[11px] font-extrabold whitespace-nowrap ${
-                              doc.securityRank === "기밀" ? "text-error" : "text-secondary"
-                            }`}>
-                              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${doc.securityRank === "기밀" ? "bg-error animate-ping" : "bg-secondary"}`}></span>
-                              {doc.securityRank}
-                            </span>
                           </td>
                           <td className="px-6 py-4 text-center whitespace-nowrap">
                             <div className="flex items-center justify-center gap-1.5">
@@ -2482,12 +2404,6 @@ export default function MyDocumentsView({
                     <p className="text-on-surface font-semibold leading-relaxed bg-white p-3 rounded-xl border border-outline-variant/30">
                       💡 {autoResultData.summary}
                     </p>
-                    <div className="flex justify-between items-center pt-1.5 text-[11px]">
-                      <span className="text-outline font-bold">보안 조치 수준:</span>
-                      <span className={`px-2 py-0.5 rounded font-extrabold ${
-                        autoResultData.security === "기밀" ? "bg-rose-50 text-rose-600 border border-rose-100" : "bg-cyan-50 text-cyan-600"
-                      }`}>{autoResultData.security}</span>
-                    </div>
                     <div className="flex flex-wrap gap-1 pt-1.5">
                       {autoResultData.tags.map((t, idx) => (
                         <span key={idx} className="bg-primary/5 text-primary text-[9px] font-bold px-2 py-0.5 rounded">
@@ -2653,10 +2569,10 @@ export default function MyDocumentsView({
                 <div className="flex items-center justify-between border-b border-outline-variant pb-3">
                   <div className="flex items-center gap-2 text-primary">
                     <Upload className="w-5 h-5" />
-                    <h3 className="text-base font-bold">다중 파일 업로드 <span className="text-[10px] font-bold text-secondary align-middle">BETA</span></h3>
+                    <h3 className="text-base font-bold">{newUploaderSmartMode ? "업로드 후 AI 자동 정리" : "다중 파일 업로드"}</h3>
                   </div>
                   <button
-                      onClick={() => setIsNewUploadOpen(false)}
+                      onClick={() => { setIsNewUploadOpen(false); setNewUploaderSmartMode(false); }}
                       className="p-1 hover:bg-surface-container rounded-full text-outline hover:text-on-surface cursor-pointer disabled:opacity-40"
                   >
                     <X className="w-4 h-4" />
@@ -2731,6 +2647,18 @@ export default function MyDocumentsView({
                     </div>
                 )}
 
+                {newUploaderSmartMode && (
+                    <label className="flex items-start gap-2 px-1 text-[11px] text-on-surface-variant cursor-pointer select-none">
+                      <input
+                          type="checkbox"
+                          checked={autoRename}
+                          onChange={(e) => setAutoRename(e.target.checked)}
+                          className="mt-0.5 accent-primary cursor-pointer"
+                      />
+                      <span>업로드 후 AI가 기존 파일명 규칙에 맞춰 파일 이름을 자동으로 정리합니다.</span>
+                    </label>
+                )}
+
                 <div className="pt-3 border-t border-outline-variant/30 flex items-center justify-between gap-2.5">
                   <p className="text-[11px] text-outline font-semibold">
                     {uploadQueue.filter((i) => i.status === "UPLOADED" || i.status === "READY").length} / {uploadQueue.filter((i) => i.status !== "INVALID").length} 완료
@@ -2738,7 +2666,7 @@ export default function MyDocumentsView({
                   <div className="flex gap-2.5">
                     <button
                         type="button"
-                        onClick={() => setIsNewUploadOpen(false)}
+                        onClick={() => { setIsNewUploadOpen(false); setNewUploaderSmartMode(false); }}
                         className="px-4 py-2 bg-surface-container hover:bg-surface-container-high rounded-xl text-xs font-bold text-on-surface cursor-pointer disabled:opacity-40"
                     >
                       닫기
@@ -2752,6 +2680,43 @@ export default function MyDocumentsView({
                       {isNewUploaderBusy ? "업로드 중..." : "업로드 시작"}
                     </button>
                   </div>
+                </div>
+              </motion.div>
+            </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isRenamePromptOpen && (
+            <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+              <motion.div
+                  initial={{ scale: 0.95, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.95, opacity: 0 }}
+                  className="bg-white rounded-3xl w-full max-w-md p-6 shadow-2xl border border-outline-variant space-y-4"
+              >
+                <div className="flex items-center gap-2 text-primary">
+                  <Sparkles className="w-5 h-5 fill-secondary/20" />
+                  <h3 className="text-base font-bold text-on-surface">파일 이름도 AI가 제안할까요?</h3>
+                </div>
+                <p className="text-body-sm text-on-surface-variant leading-relaxed">
+                  기존 드라이브의 파일명 규칙을 참고해 새 이름을 제안합니다. 제안은 미리보기에서 확인 후 승인할 때만 반영됩니다.
+                </p>
+                <div className="flex justify-end gap-2.5 pt-1">
+                  <button
+                      type="button"
+                      onClick={() => { setIsRenamePromptOpen(false); void handleOrganizeFolders(false); }}
+                      className="px-4 py-2 bg-surface-container hover:bg-surface-container-high rounded-xl text-xs font-bold text-on-surface cursor-pointer"
+                  >
+                    아니요, 이동만 제안
+                  </button>
+                  <button
+                      type="button"
+                      onClick={() => { setIsRenamePromptOpen(false); void handleOrganizeFolders(true); }}
+                      className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-opacity-95 shadow-md shadow-primary/10 cursor-pointer"
+                  >
+                    네, 이름도 제안
+                  </button>
                 </div>
               </motion.div>
             </div>

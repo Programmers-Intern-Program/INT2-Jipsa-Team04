@@ -5,6 +5,7 @@ import com.jipsa.auth.RefreshTokenService;
 import com.jipsa.auth.UserRoleCache;
 import com.jipsa.common.CurrentUserProvider;
 import com.jipsa.common.exception.UploadLimitExceededException;
+import com.jipsa.organize.OrganizeService;
 import com.jipsa.user.UsersRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,6 +33,9 @@ class UploadControllerTest {
 
     @MockitoBean
     private UploadService uploadService;
+
+    @MockitoBean
+    private OrganizeService organizeService;
 
     @MockitoBean
     private CurrentUserProvider currentUserProvider;

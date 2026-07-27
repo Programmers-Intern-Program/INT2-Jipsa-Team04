@@ -1,6 +1,7 @@
 package com.jipsa.upload;
 
 import com.jipsa.common.CurrentUserProvider;
+import com.jipsa.organize.OrganizeService;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -19,11 +20,14 @@ import java.util.List;
 public class UploadController {
 
     private final UploadService uploadService;
+    private final OrganizeService organizeService;
     private final CurrentUserProvider currentUserProvider;
 
     public UploadController(UploadService uploadService,
+                            OrganizeService organizeService,
                             CurrentUserProvider currentUserProvider) {
         this.uploadService = uploadService;
+        this.organizeService = organizeService;
         this.currentUserProvider = currentUserProvider;
     }
 
@@ -32,9 +36,14 @@ public class UploadController {
     public UploadResponse upload(
             @RequestParam(value = "files", required = false) List<MultipartFile> files,
             @RequestParam(value = "folderId", required = false) Long folderId,
+            @RequestParam(value = "autoRename", required = false, defaultValue = "false") boolean autoRename,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
         Long userId = currentUserProvider.requireUserId();
-        return uploadService.upload(userId, files, folderId, idempotencyKey);
+        UploadResponse response = uploadService.upload(userId, files, folderId, idempotencyKey);
+        if (autoRename) {
+            organizeService.autoRenameFiles(userId, response.fileIds());
+        }
+        return response;
     }
 
     @GetMapping("/{id}/status")

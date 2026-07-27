@@ -70,6 +70,12 @@ public class AnthropicOrganizeClient implements AiOrganizeClient {
               파일을 이미 "미분류"로 표시하므로, 그런 이름의 폴더를 실제로 만들면 오히려 혼란만
               생깁니다. 확신이 낮은 파일도 mappings에서 빼지 말고, 그나마 가장 그럴듯한 기존
               폴더나 새 폴더를 targetFolderId/targetTempId로 채운 뒤 confidence만 낮게 주세요.
+            - newName(파일명 제안):
+              · 먼저 "파일 목록"의 기존 파일명들을 살펴 일관된 명명 규칙(접두사, 날짜 형식, 구분자,
+                카테고리 등)이 있는지 파악하세요. 규칙이 뚜렷하면 대상 파일의 newName을 그 규칙에 맞춰 제안하세요.
+              · 이미 그 규칙에 맞고 적절한 이름이라면 newName을 null로 두세요(불필요한 변경 금지).
+              · 일관된 규칙이 없으면 해당 문서 유형에 표준적인, 내용을 명확히 나타내는 이름을 newName으로 제안하세요.
+              · 확장자는 바꾸지 말고 원래 확장자를 유지하세요.
             """;
 
     private final AnthropicClient anthropicClient;

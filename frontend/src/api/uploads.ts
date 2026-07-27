@@ -58,12 +58,14 @@ export function getUploadStatus(uploadId: number): Promise<UploadStatusResponse>
 export function uploadOne(
     file: File,
     folderId: number | null,
-    onProgress?: (loaded: number, total: number) => void
+    onProgress?: (loaded: number, total: number) => void,
+    autoRename = false
 ): Promise<UploadResult> {
     return new Promise((resolve, reject) => {
         const form = new FormData();
         form.append("files", file);
         if (folderId != null) form.append("folderId", String(folderId));
+        if (autoRename) form.append("autoRename", "true");
 
         const token = localStorage.getItem(TOKEN_STORAGE_KEY);
         const xhr = new XMLHttpRequest();

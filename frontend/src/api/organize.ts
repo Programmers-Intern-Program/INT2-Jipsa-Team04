@@ -9,8 +9,8 @@ export function getCurrentOrganizeTree(): Promise<OrganizeFolderTreeNode[]> {
 }
 
 /** POST /api/v1/organize/propose — AI 제안 생성. 반환되는 OrganizeProposal은 이미 검증을 통과한 상태. */
-export function proposeOrganization(): Promise<OrganizeProposal> {
-  return apiFetch<OrganizeProposal>("/organize/propose", { method: "POST" });
+export function proposeOrganization(allowRename: boolean): Promise<OrganizeProposal> {
+  return apiFetch<OrganizeProposal>(`/organize/propose?allowRename=${allowRename}`, { method: "POST" });
 }
 
 /**
