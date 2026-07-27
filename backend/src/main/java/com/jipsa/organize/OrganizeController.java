@@ -38,6 +38,15 @@ public class OrganizeController {
         return organizeService.generateProposal(userId, allowRename);
     }
 
+    /** 방금 업로드된 파일(fileIds)만 이동/이름변경 대상으로 삼는 스코프 제안(업로드 후 정리 미리보기). */
+    @PostMapping("/propose-for-upload")
+    public OrganizeProposal proposeForUpload(
+            @RequestBody ProposeForUploadRequest request,
+            @RequestParam(value = "allowRename", required = false, defaultValue = "false") boolean allowRename) {
+        Long userId = currentUserProvider.requireUserId();
+        return organizeService.generateProposalForFiles(userId, request == null ? null : request.fileIds(), allowRename);
+    }
+
     /**
      * 제안(OrganizeProposal)을 검증하고, 통과하면 confidence가 사용자 민감도 이상인 매핑만
      * 실제 파일 이동/이름변경 및 새 폴더 생성으로 반영한다. 민감도 미달 매핑은 응답의

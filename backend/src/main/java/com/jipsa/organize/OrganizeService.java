@@ -11,8 +11,6 @@ import com.jipsa.folder.FolderRepository;
 import com.jipsa.folder.FolderResponse;
 import com.jipsa.folder.FolderService;
 import com.jipsa.user.UserSettingService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,8 +36,6 @@ import java.util.stream.Collectors;
  */
 @Service
 public class OrganizeService {
-
-    private static final Logger log = LoggerFactory.getLogger(OrganizeService.class);
 
     private final FolderRepository folderRepository;
     private final FileRepository fileRepository;
@@ -111,27 +107,28 @@ public class OrganizeService {
         return new OrganizeProposal(newFolders, mappings);
     }
 
-    public void autoRenameFiles(Long userId, List<Long> fileIds) {
-        if (fileIds == null || fileIds.isEmpty()) {
-            return;
+    public OrganizeProposal generateProposalForFiles(Long userId, List<Long> targetFileIds, boolean allowRename) {
+        Set<Long> targets = targetFileIds == null ? Set.of() : new HashSet<>(targetFileIds);
+        if (targets.isEmpty()) {
+            return new OrganizeProposal(List.of(), List.of());
         }
-        Set<Long> targets = new HashSet<>(fileIds);
-        try {
-            List<FolderTreeNode> currentTree = getCurrentFolderTree(userId);
-            List<OrganizeFileInput> files = organizeInputAssembler.assemble(userId);
-            OrganizeProposal proposal = aiOrganizeClient.proposeOrganization(currentTree, files);
-            List<FileMapping> mappings = proposal.mappings() == null ? List.of() : proposal.mappings();
-            for (FileMapping mapping : mappings) {
-                if (mapping.fileId() != null
-                        && targets.contains(mapping.fileId())
-                        && mapping.newName() != null
-                        && !mapping.newName().isBlank()) {
-                    fileService.rename(userId, mapping.fileId(), mapping.newName());
-                }
-            }
-        } catch (RuntimeException e) {
-            log.warn("자동 파일명 정리 실패 (files {}): {}", fileIds, e.getMessage());
-        }
+        List<FolderTreeNode> currentTree = getCurrentFolderTree(userId);
+        List<OrganizeFileInput> files = organizeInputAssembler.assemble(userId);
+
+        OrganizeProposal proposal = aiOrganizeClient.proposeForNewFiles(currentTree, files, targets, allowRename);
+        List<ProposedFolder> newFolders = proposal.newFolders() == null ? List.of() : proposal.newFolders();
+        List<FileMapping> mappings = (proposal.mappings() == null ? List.<FileMapping>of() : proposal.mappings()).stream()
+                .filter(m -> m.fileId() != null && targets.contains(m.fileId()))
+                .map(m -> allowRename ? m : new FileMapping(m.fileId(), m.targetFolderId(), m.targetTempId(), null, m.confidence()))
+                .toList();
+
+        Set<String> keepTempIds = resolveTempIdsToCreate(mappings, newFolders);
+        List<ProposedFolder> keptFolders = newFolders.stream()
+                .filter(f -> keepTempIds.contains(f.tempId()))
+                .toList();
+
+        validate(userId, keptFolders, mappings);
+        return new OrganizeProposal(keptFolders, mappings);
     }
 
     /**
@@ -181,8 +178,9 @@ public class OrganizeService {
         for (FileMapping mapping : appliedMappings) {
             Long resolvedFolderId = resolveTargetFolderId(mapping, tempIdToRealFolderId);
             fileService.moveToFolder(userId, mapping.fileId(), resolvedFolderId);
-            if (mapping.newName() != null && !mapping.newName().isBlank()) {
-                fileService.rename(userId, mapping.fileId(), mapping.newName());
+            String safeName = sanitizeProposedName(mapping.newName());
+            if (safeName != null) {
+                fileService.rename(userId, mapping.fileId(), safeName);
             }
         }
 
@@ -224,6 +222,17 @@ public class OrganizeService {
     }
 
     /** 실제 반영되는 매핑이 참조하는 새 폴더 + 그 조상(parentTempId 체인)까지 tempId를 모은다. */
+    private String sanitizeProposedName(String newName) {
+        if (newName == null) {
+            return null;
+        }
+        String trimmed = newName.trim();
+        if (trimmed.isBlank()) {
+            return null;
+        }
+        return trimmed.length() > 200 ? trimmed.substring(0, 200) : trimmed;
+    }
+
     private Set<String> resolveTempIdsToCreate(List<FileMapping> appliedMappings, List<ProposedFolder> newFolders) {
         Map<String, String> parentTempIdByTempId = new HashMap<>();
         for (ProposedFolder folder : newFolders) {

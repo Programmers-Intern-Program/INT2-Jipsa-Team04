@@ -14,6 +14,17 @@ export function proposeOrganization(allowRename: boolean): Promise<OrganizePropo
 }
 
 /**
+ * POST /api/v1/organize/propose-for-upload — 방금 업로드된 파일(fileIds)만 이동/이름변경 대상으로
+ * 삼는 스코프 제안. 나머지 파일은 컨텍스트로만 쓰인다. 업로드 완료 후 한 번만 호출한다.
+ */
+export function proposeForUpload(fileIds: number[], allowRename: boolean): Promise<OrganizeProposal> {
+  return apiFetch<OrganizeProposal>(`/organize/propose-for-upload?allowRename=${allowRename}`, {
+    method: "POST",
+    body: { fileIds },
+  });
+}
+
+/**
  * POST /api/v1/organize/apply — 제안을 검증 후 실제 파일 이동/이름변경 및 새 폴더 생성에 반영.
  * confidence가 사용자의 자동 분류 민감도보다 낮은 매핑은 반영되지 않고 응답의 held로 돌아오므로,
  * 호출부가 그 목록을 보고 사용자에게 알려줄 수 있도록 응답을 그대로 반환한다(과거엔 버렸음).

@@ -41,7 +41,7 @@ import {
   permanentDeleteFolder,
 } from "../api/folders";
 import { deleteFile, downloadFile, getDocumentTypes, getFileDetail, getFileStatus, getStorageUsage, listAllFiles, listAllTrash, moveFiles, permanentDeleteFile, renameFile, restoreFile, toggleStar } from "../api/files";
-import { proposeOrganization, applyOrganization } from "../api/organize";
+import { proposeOrganization, proposeForUpload, applyOrganization } from "../api/organize";
 import { ApiError } from "../api/client";
 import FileDetailPanel from "./FileDetailPanel";
 import { uploadFiles, getUploadStatus } from "../api/uploads";
@@ -118,14 +118,17 @@ export default function MyDocumentsView({
   const [newUploaderSmartMode, setNewUploaderSmartMode] = useState(false);
   const [autoRename, setAutoRename] = useState(true);
   const [isRenamePromptOpen, setIsRenamePromptOpen] = useState(false);
-  const { items: uploadQueue, isBusy: isNewUploaderBusy, enqueue, startAll, removeItem: removeUploadQueueItem, retryItem, refreshRecent } = useUploads();
+  const [smartUploading, setSmartUploading] = useState(false);
+  const [smartFlowActive, setSmartFlowActive] = useState(false);
+  const { items: uploadQueue, isBusy: isNewUploaderBusy, enqueue, startAll, uploadQueuedAndWait, clearPending, removeItem: removeUploadQueueItem, retryItem, refreshRecent } = useUploads();
 
   useEffect(() => {
     if (!isNewUploadOpen) return;
+    clearPending();
     refreshRecent();
     const timer = setInterval(refreshRecent, 5000);
     return () => clearInterval(timer);
-  }, [isNewUploadOpen, refreshRecent]);
+  }, [isNewUploadOpen, clearPending, refreshRecent]);
   const [newUploaderDragActive, setNewUploaderDragActive] = useState(false);
   const newUploaderInputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -537,7 +540,42 @@ export default function MyDocumentsView({
     e.target.value = "";
   };
 
-  const runNewUploaderUpload = () => startAll(newUploaderSmartMode && autoRename);
+  const runNewUploaderUpload = () => startAll();
+
+  // 스마트 경로: 업로드가 모두 끝난 뒤 딱 한 번, 방금 올린 파일 전체를 대상으로 정리 제안을 만들어
+  // 기존 스마트 정리 미리보기(organizeResult) 화면으로 넘긴다. 승인해야만 이동/이름변경이 반영된다.
+  const runSmartUpload = async () => {
+    setSmartUploading(true);
+    let fileIds: number[];
+    try {
+      fileIds = await uploadQueuedAndWait();
+    } finally {
+      setSmartUploading(false);
+    }
+    setIsNewUploadOpen(false);
+    setNewUploaderSmartMode(false);
+    if (fileIds.length === 0) {
+      alert("업로드된 파일이 없어 정리를 진행하지 않았습니다.");
+      return;
+    }
+    setIsOrganizing(true);
+    setOrganizeStep(1);
+    const step1 = setTimeout(() => setOrganizeStep(2), 800);
+    const step2 = setTimeout(() => setOrganizeStep(3), 1600);
+    try {
+      const proposal = await proposeForUpload(fileIds, autoRename);
+      setSmartFlowActive(true);
+      setOrganizeResult({ ...proposal, idempotencyKey: crypto.randomUUID() });
+    } catch (err) {
+      console.warn("[organize] 업로드 후 정리 제안 생성 실패:", err);
+      onUpdateDocuments(await listAllFiles());
+      alert("업로드는 완료되었으나 정리 제안 생성에 실패했습니다. 파일은 루트에 그대로 있습니다.");
+    } finally {
+      clearTimeout(step1);
+      clearTimeout(step2);
+      setIsOrganizing(false);
+    }
+  };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -669,6 +707,10 @@ export default function MyDocumentsView({
   const closeOrganizeModal = () => {
     setOrganizeResult(null);
     setApplyResult(null);
+    if (smartFlowActive) {
+      setSmartFlowActive(false);
+      listAllFiles().then(onUpdateDocuments).catch(() => {});
+    }
   };
 
   // newFolders 중 실제로 생성되는(=하나 이상의 "적용되는" 매핑이 직접 또는 자식 폴더를 통해
@@ -1055,6 +1097,7 @@ export default function MyDocumentsView({
                       <button
                         onClick={() => {
                           setIsSmartMenuOpen(false);
+                          setAutoRename(true);
                           setIsRenamePromptOpen(true);
                         }}
                         className="w-full text-left p-3.5 rounded-xl hover:bg-primary/5 transition-colors flex gap-3.5 cursor-pointer group"
@@ -1084,7 +1127,7 @@ export default function MyDocumentsView({
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="font-bold text-xs text-on-surface group-hover:text-primary transition-colors">2) 업로드한 파일 자동 정리하기</p>
-                          <p className="text-[10px] text-outline mt-0.5 leading-relaxed">새 서류를 올리면 AI가 문서를 완전 해독하여 적합한 폴더에 자동 배치합니다.</p>
+                          <p className="text-[10px] text-outline mt-0.5 leading-relaxed">새 서류를 올린 뒤 AI가 적합한 폴더 배치(및 이름)를 제안하고, 미리보기에서 확인 후 반영합니다.</p>
                         </div>
                       </button>
                     </div>
@@ -2572,8 +2615,9 @@ export default function MyDocumentsView({
                     <h3 className="text-base font-bold">{newUploaderSmartMode ? "업로드 후 AI 자동 정리" : "다중 파일 업로드"}</h3>
                   </div>
                   <button
+                      disabled={smartUploading}
                       onClick={() => { setIsNewUploadOpen(false); setNewUploaderSmartMode(false); }}
-                      className="p-1 hover:bg-surface-container rounded-full text-outline hover:text-on-surface cursor-pointer disabled:opacity-40"
+                      className="p-1 hover:bg-surface-container rounded-full text-outline hover:text-on-surface cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -2653,9 +2697,10 @@ export default function MyDocumentsView({
                           type="checkbox"
                           checked={autoRename}
                           onChange={(e) => setAutoRename(e.target.checked)}
+                          disabled={smartUploading}
                           className="mt-0.5 accent-primary cursor-pointer"
                       />
-                      <span>업로드 후 AI가 기존 파일명 규칙에 맞춰 파일 이름을 자동으로 정리합니다.</span>
+                      <span>폴더 이동과 함께 AI가 파일 이름도 제안합니다 (미리보기에서 확인 후 반영).</span>
                     </label>
                 )}
 
@@ -2666,18 +2711,19 @@ export default function MyDocumentsView({
                   <div className="flex gap-2.5">
                     <button
                         type="button"
+                        disabled={smartUploading}
                         onClick={() => { setIsNewUploadOpen(false); setNewUploaderSmartMode(false); }}
-                        className="px-4 py-2 bg-surface-container hover:bg-surface-container-high rounded-xl text-xs font-bold text-on-surface cursor-pointer disabled:opacity-40"
+                        className="px-4 py-2 bg-surface-container hover:bg-surface-container-high rounded-xl text-xs font-bold text-on-surface cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       닫기
                     </button>
                     <button
                         type="button"
-                        onClick={runNewUploaderUpload}
-                        disabled={isNewUploaderBusy || uploadQueue.every((i) => i.status !== "QUEUED")}
+                        onClick={newUploaderSmartMode ? runSmartUpload : runNewUploaderUpload}
+                        disabled={smartUploading || isNewUploaderBusy || uploadQueue.every((i) => i.status !== "QUEUED")}
                         className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-opacity-95 shadow-md shadow-primary/10 cursor-pointer flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      {isNewUploaderBusy ? "업로드 중..." : "업로드 시작"}
+                      {smartUploading || isNewUploaderBusy ? "업로드 중..." : newUploaderSmartMode ? "업로드 및 정리 시작" : "업로드 시작"}
                     </button>
                   </div>
                 </div>
@@ -2697,25 +2743,34 @@ export default function MyDocumentsView({
               >
                 <div className="flex items-center gap-2 text-primary">
                   <Sparkles className="w-5 h-5 fill-secondary/20" />
-                  <h3 className="text-base font-bold text-on-surface">파일 이름도 AI가 제안할까요?</h3>
+                  <h3 className="text-base font-bold text-on-surface">현재 폴더 정리</h3>
                 </div>
                 <p className="text-body-sm text-on-surface-variant leading-relaxed">
-                  기존 드라이브의 파일명 규칙을 참고해 새 이름을 제안합니다. 제안은 미리보기에서 확인 후 승인할 때만 반영됩니다.
+                  AI가 폴더 구조를 재편해 파일을 이동할 위치를 제안합니다. 제안은 미리보기에서 확인 후 승인할 때만 반영됩니다.
                 </p>
+                <label className="flex items-start gap-2 text-[13px] text-on-surface-variant cursor-pointer select-none">
+                  <input
+                      type="checkbox"
+                      checked={autoRename}
+                      onChange={(e) => setAutoRename(e.target.checked)}
+                      className="mt-0.5 accent-primary cursor-pointer"
+                  />
+                  <span>폴더 이동과 함께 AI가 파일 이름도 제안합니다.</span>
+                </label>
                 <div className="flex justify-end gap-2.5 pt-1">
                   <button
                       type="button"
-                      onClick={() => { setIsRenamePromptOpen(false); void handleOrganizeFolders(false); }}
+                      onClick={() => setIsRenamePromptOpen(false)}
                       className="px-4 py-2 bg-surface-container hover:bg-surface-container-high rounded-xl text-xs font-bold text-on-surface cursor-pointer"
                   >
-                    아니요, 이동만 제안
+                    취소
                   </button>
                   <button
                       type="button"
-                      onClick={() => { setIsRenamePromptOpen(false); void handleOrganizeFolders(true); }}
+                      onClick={() => { setIsRenamePromptOpen(false); void handleOrganizeFolders(autoRename); }}
                       className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-opacity-95 shadow-md shadow-primary/10 cursor-pointer"
                   >
-                    네, 이름도 제안
+                    정리 시작
                   </button>
                 </div>
               </motion.div>

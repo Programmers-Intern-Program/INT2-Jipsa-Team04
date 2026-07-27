@@ -26,6 +26,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -468,6 +469,60 @@ class OrganizeServiceTest {
 
         assertThat(result.newFolders()).isEmpty();
         assertThat(result.mappings()).isEmpty();
+    }
+
+    // ---- 업로드 후 스코프 제안(generateProposalForFiles) ----
+
+    @Test
+    void generateProposalForFiles_대상_파일만_남기고_컨텍스트_파일_매핑은_버린다() {
+        when(folderService.list(USER)).thenReturn(List.of());
+        when(organizeInputAssembler.assemble(USER)).thenReturn(List.of());
+        when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(ownedFile(10L)));
+
+        OrganizeProposal aiResponse = new OrganizeProposal(
+                List.of(),
+                List.of(new FileMapping(10L, null, null, "새이름.pdf", 0.9),
+                        new FileMapping(20L, null, null, "건드리면안됨.pdf", 0.9)));
+        when(aiOrganizeClient.proposeForNewFiles(any(), any(), any(), anyBoolean())).thenReturn(aiResponse);
+
+        OrganizeProposal result = organizeService.generateProposalForFiles(USER, List.of(10L), true);
+
+        assertThat(result.mappings()).hasSize(1);
+        assertThat(result.mappings().get(0).fileId()).isEqualTo(10L);
+        assertThat(result.mappings().get(0).newName()).isEqualTo("새이름.pdf");
+    }
+
+    @Test
+    void generateProposalForFiles_allowRename_false면_newName을_제거한다() {
+        when(folderService.list(USER)).thenReturn(List.of());
+        when(organizeInputAssembler.assemble(USER)).thenReturn(List.of());
+        when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(ownedFile(10L)));
+
+        OrganizeProposal aiResponse = new OrganizeProposal(
+                List.of(),
+                List.of(new FileMapping(10L, null, null, "새이름.pdf", 0.9)));
+        when(aiOrganizeClient.proposeForNewFiles(any(), any(), any(), anyBoolean())).thenReturn(aiResponse);
+
+        OrganizeProposal result = organizeService.generateProposalForFiles(USER, List.of(10L), false);
+
+        assertThat(result.mappings()).hasSize(1);
+        assertThat(result.mappings().get(0).newName()).isNull();
+    }
+
+    @Test
+    void applyProposal_빈_newName은_이름변경을_건너뛴다() {
+        when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(ownedFile(10L)));
+        givenSensitivity("0.0");
+
+        OrganizeProposal proposal = new OrganizeProposal(
+                List.of(),
+                List.of(new FileMapping(10L, null, null, "   ", 0.9)));
+
+        OrganizeApplyResponse response = organizeService.applyProposal(USER, proposal);
+
+        verify(fileService).moveToFolder(USER, 10L, null);
+        verify(fileService, never()).rename(any(), any(), any());
+        assertThat(response.success()).isTrue();
     }
 
     // ---- 재시도 중복 반영 방지(idempotencyKey) ----

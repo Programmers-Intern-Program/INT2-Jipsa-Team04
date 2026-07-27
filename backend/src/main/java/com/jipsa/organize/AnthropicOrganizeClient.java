@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -71,10 +72,12 @@ public class AnthropicOrganizeClient implements AiOrganizeClient {
               생깁니다. 확신이 낮은 파일도 mappings에서 빼지 말고, 그나마 가장 그럴듯한 기존
               폴더나 새 폴더를 targetFolderId/targetTempId로 채운 뒤 confidence만 낮게 주세요.
             - newName(파일명 제안):
+              · 문서 본문 내용은 제공되지 않습니다. 파일명·확장자·크기·업로드 시각과 드라이브의 기존
+                파일명들만 근거로 삼으세요.
               · 먼저 "파일 목록"의 기존 파일명들을 살펴 일관된 명명 규칙(접두사, 날짜 형식, 구분자,
                 카테고리 등)이 있는지 파악하세요. 규칙이 뚜렷하면 대상 파일의 newName을 그 규칙에 맞춰 제안하세요.
               · 이미 그 규칙에 맞고 적절한 이름이라면 newName을 null로 두세요(불필요한 변경 금지).
-              · 일관된 규칙이 없으면 해당 문서 유형에 표준적인, 내용을 명확히 나타내는 이름을 newName으로 제안하세요.
+              · 일관된 규칙이 없으면 파일명에 담긴 정보를 활용해 명확하고 이해하기 쉬운 이름을 newName으로 제안하세요.
               · 확장자는 바꾸지 말고 원래 확장자를 유지하세요.
             """;
 
@@ -88,8 +91,18 @@ public class AnthropicOrganizeClient implements AiOrganizeClient {
 
     @Override
     public OrganizeProposal proposeOrganization(List<FolderTreeNode> currentTree, List<OrganizeFileInput> files) {
-        String prompt = buildUserPrompt(currentTree, files);
+        return call(buildUserPrompt(currentTree, files));
+    }
 
+    @Override
+    public OrganizeProposal proposeForNewFiles(List<FolderTreeNode> currentTree,
+                                               List<OrganizeFileInput> files,
+                                               Set<Long> targetFileIds,
+                                               boolean allowRename) {
+        return call(buildScopedUserPrompt(currentTree, files, targetFileIds, allowRename));
+    }
+
+    private OrganizeProposal call(String prompt) {
         MessageCreateParams params = MessageCreateParams.builder()
                 .model(Model.CLAUDE_SONNET_5)
                 .maxTokens(MAX_TOKENS)
@@ -114,6 +127,21 @@ public class AnthropicOrganizeClient implements AiOrganizeClient {
         } catch (JsonProcessingException e) {
             throw new AiResponseParseException("프롬프트 입력을 JSON으로 직렬화하는 데 실패했습니다.", e);
         }
+    }
+
+    private String buildScopedUserPrompt(List<FolderTreeNode> currentTree,
+                                         List<OrganizeFileInput> files,
+                                         Set<Long> targetFileIds,
+                                         boolean allowRename) {
+        StringBuilder sb = new StringBuilder(buildUserPrompt(currentTree, files));
+        sb.append("\n\n대상 파일 ID: ").append(targetFileIds);
+        sb.append("\n- 위 '대상 파일 ID'에 해당하는 파일만 mappings에 포함하세요(이동/이름변경 대상).");
+        sb.append("\n- 나머지 파일은 기존 명명 규칙과 폴더 구조를 파악하기 위한 컨텍스트일 뿐입니다. 절대 mappings에 넣지 말고, 옮기거나 이름을 바꾸지 마세요.");
+        sb.append("\n- 규칙의 '모든 파일을 반드시 포함'은 대상 파일에만 적용됩니다.");
+        if (!allowRename) {
+            sb.append("\n- 이번 요청에서는 이름을 바꾸지 않습니다. 모든 mappings의 newName은 null로 두세요.");
+        }
+        return sb.toString();
     }
 
     private String extractText(Message message) {
