@@ -1,8 +1,11 @@
 # Issue #123 고정 E2E 문서 Fixture
 
-이 디렉터리는 Local RAG 문서 입력 경계의 결정적 회귀 테스트에 사용합니다.
-테스트 실행 중 문서를 생성하지 않고 저장소에 커밋된 실제 바이너리를 그대로 사용합니다.
-각 파일의 SHA-256, 크기, 원문 토큰, 원본 위치 및 예상 실패 단계는 `manifest.json`에 고정합니다.
+이 디렉터리는 Local RAG 문서 입력 경계와 전체 색인 파이프라인의 결정적 회귀 테스트에
+사용합니다. 테스트 실행 중 문서를 생성하지 않고 저장소에 커밋된 실제 바이너리를 그대로
+사용합니다.
+
+- `manifest.json`: 파일 SHA-256, 크기, 원문 구조, 이미지 위치 및 실패 단계 계약
+- `pipeline_expectations.json`: 실제 OCR, CUDA TEI, Local RAG DB와 Qdrant 검증 계약
 
 ## 디렉터리 구성
 
@@ -19,6 +22,7 @@ valid/images/
   docx_with_image.docx
   pptx_with_image.pptx
   xlsx_with_image.xlsx
+  pdf_partial_ocr.pdf
 
 valid/scanned/
   scanned_document.pdf
@@ -33,17 +37,51 @@ invalid/
 
 ## 고정 계약
 
-- `valid/text`: PDF 페이지, DOCX 문단·표, PPTX 슬라이드·도형·표,
-  XLSX 시트·행·셀 범위, TXT 줄·문자 범위를 검증합니다.
+- `valid/text`: PDF 페이지 텍스트와 표 셀, DOCX 문단·표, PPTX 슬라이드·도형·표,
+  XLSX 시트·행·셀 범위, TXT 인코딩·줄·문자 범위를 검증합니다.
 - `valid/images`: PDF, DOCX, PPTX, XLSX의 실제 삽입 이미지와 문서 내부 위치를 검증합니다.
-- `valid/scanned`: 텍스트 레이어가 없는 스캔 PDF와 혼합 PDF의 이미지 전용 페이지를 검증합니다.
+- `pdf_partial_ocr.pdf`: 서로 다른 이미지 두 개를 포함하며, 두 번째 이미지 OCR만 강제로
+  실패시켜 첫 번째 이미지의 실제 EasyOCR·TEI·DB·Qdrant 색인이 유지되는지 검증합니다.
+- `valid/scanned`: 텍스트 레이어가 없는 스캔 PDF와 혼합 PDF의 이미지 전용 페이지를
+  검증합니다.
 - `invalid`: 빈 파일, 손상 PDF, 암호화 PDF, 확장자·실제 내용 불일치를 검증합니다.
+
+## 테스트 계층
+
+### 결정적 입력 계약
+
+`tests/e2e/test_fixed_document_fixture_contract_e2e.py`는 외부 인프라 없이 다음 항목을
+항상 검증합니다.
+
+- 파일 바이트와 SHA-256
+- MIME Type, Magic Byte와 OOXML 루트
+- 형식별 텍스트·표·위치 메타데이터
+- 삽입 이미지와 스캔 페이지 탐지
+- 손상·빈·암호화·잘못된 확장자 문서 방어
+
+### 실제 Local RAG 전체 파이프라인
+
+`tests/e2e/test_fixed_document_full_pipeline_e2e.py`는
+`JIPSA_RAG_RUN_E2E=1`에서 다음 실제 구성요소를 사용합니다.
+
+- CUDA EasyOCR 인식 결과와 원본 이미지 위치
+- OCR 일부 실패 시 나머지 이미지 부분 성공
+- CUDA TEI 문서 및 질의 임베딩
+- Local RAG DB 문서·청크·색인 실행 이력
+- Qdrant Point, vector, payload, 활성 상태와 사용자·문서 범위
+
+AWS Backend manifest·완료 callback과 Presigned GET URL의 HTTP 경계만 결정적인
+`MockTransport`로 대체합니다. AWS 자격 증명이나 Backend DB는 사용하지 않습니다.
 
 ## 유지보수 규칙
 
 1. 기존 Fixture를 Office나 PDF 편집기로 열어 다시 저장하지 않습니다.
-2. 원문, 구조 또는 바이너리를 변경하면 `manifest.json`의 SHA-256과 예상값을 함께 갱신합니다.
-3. 위치 메타데이터 계약이 바뀌면 파서 버전 및 기존 색인 호환성도 함께 검토합니다.
-4. OCR 문구는 ASCII 대문자·숫자·하이픈으로 유지하여 GPU 및 OCR 모델 버전 간 오차를 줄입니다.
-5. 실제 Claude, CUDA TEI, Local RAG DB와 Qdrant를 사용하는 비용성 E2E는 기존 실행 스크립트로
-   별도 수행하며, 이 Fixture 계약 테스트는 일반 Pytest에서 항상 실행 가능해야 합니다.
+2. 원문, 구조 또는 바이너리를 변경하면 `manifest.json` 또는
+   `pipeline_expectations.json`의 SHA-256과 예상값을 함께 갱신합니다.
+3. 위치 메타데이터 계약이 바뀌면 파서 버전과 기존 색인 호환성도 함께 검토합니다.
+4. OCR 문구는 ASCII 대문자·숫자·하이픈으로 유지하여 GPU와 OCR 모델 버전 간 오차를
+   줄입니다.
+5. 실제 E2E는 전용 사용자·파일 ID 범위만 정리하며 반드시
+   `JIPSA_RAG_APP_ENV=test`에서 실행합니다.
+6. Presigned URL, 인증 토큰, OCR 원문 전체, 임시 파일 경로와 임베딩 벡터는 로그에
+   남기지 않습니다.
