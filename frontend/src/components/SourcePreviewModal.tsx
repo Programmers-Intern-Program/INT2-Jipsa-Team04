@@ -15,41 +15,141 @@ function normalize(text: string): string {
     return text.replace(/\s+/g, " ").trim();
 }
 
+function decodeTextBytes(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+        return new TextDecoder("utf-8").decode(buffer);
+    }
+    if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+        return new TextDecoder("utf-16le").decode(buffer);
+    }
+    if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+        return new TextDecoder("utf-16be").decode(buffer);
+    }
+    try {
+        return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    } catch {
+        return new TextDecoder("euc-kr").decode(buffer);
+    }
+}
+
+function blockContainer(node: Node): Element | null {
+    let el = node.parentElement;
+    while (el) {
+        if (!getComputedStyle(el).display.startsWith("inline")) return el;
+        if (!el.parentElement) return el;
+        el = el.parentElement;
+    }
+    return null;
+}
+
+interface SourcePosition {
+    node: Text;
+    offset: number;
+}
+
+function collectNormalized(container: HTMLElement): { norm: string; positions: SourcePosition[] } {
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const positions: SourcePosition[] = [];
+    let norm = "";
+    let started = false;
+    let prevBlock: Element | null = null;
+    let pendingWhitespace = false;
+    let whitespaceAnchor: SourcePosition | null = null;
+    let current: Node | null;
+    while ((current = walker.nextNode())) {
+        const textNode = current as Text;
+        const block = blockContainer(textNode);
+        if (started && prevBlock && block !== prevBlock) {
+            pendingWhitespace = true;
+            if (!whitespaceAnchor) whitespaceAnchor = { node: textNode, offset: 0 };
+        }
+        prevBlock = block;
+        const data = textNode.data;
+        for (let k = 0; k < data.length; k++) {
+            if (/\s/.test(data[k])) {
+                if (started) {
+                    pendingWhitespace = true;
+                    if (!whitespaceAnchor) whitespaceAnchor = { node: textNode, offset: k };
+                }
+                continue;
+            }
+            if (pendingWhitespace) {
+                norm += " ";
+                positions.push(whitespaceAnchor ?? { node: textNode, offset: k });
+                pendingWhitespace = false;
+                whitespaceAnchor = null;
+            }
+            norm += data[k];
+            positions.push({ node: textNode, offset: k });
+            started = true;
+        }
+    }
+    return { norm, positions };
+}
+
+function wrapRange(container: HTMLElement, start: SourcePosition, end: SourcePosition): boolean {
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = [];
+    let collecting = false;
+    let current: Node | null;
+    while ((current = walker.nextNode())) {
+        const textNode = current as Text;
+        if (textNode === start.node) collecting = true;
+        if (collecting) nodes.push(textNode);
+        if (textNode === end.node) break;
+    }
+    let firstMark: HTMLElement | null = null;
+    for (const textNode of nodes) {
+        const from = textNode === start.node ? start.offset : 0;
+        const to = textNode === end.node ? end.offset + 1 : textNode.data.length;
+        if (to <= from) continue;
+        if (textNode.data.slice(from, to).trim().length === 0) continue;
+        const range = document.createRange();
+        range.setStart(textNode, from);
+        range.setEnd(textNode, to);
+        const mark = document.createElement("mark");
+        mark.className = "source-highlight";
+        range.surroundContents(mark);
+        if (!firstMark) firstMark = mark;
+    }
+    if (firstMark) {
+        firstMark.scrollIntoView({ block: "center" });
+        return true;
+    }
+    return false;
+}
+
 function highlightExcerpt(container: HTMLElement, excerpt: string | null, sectionTitle: string | null): void {
     const candidates: string[] = [];
     if (excerpt) {
         const full = normalize(excerpt);
         if (full) candidates.push(full);
         if (full.length > 120) candidates.push(full.slice(0, 120));
-        const firstSentence = full.split(/[.!?。\n]/)[0];
+        const firstSentence = full.split(/[.!?。]/)[0];
         if (firstSentence && firstSentence.length >= 10) candidates.push(firstSentence);
     }
     if (sectionTitle) candidates.push(normalize(sectionTitle));
 
+    const { norm, positions } = collectNormalized(container);
     for (const needle of candidates) {
         if (!needle) continue;
-        const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-        let node: Node | null;
-        while ((node = walker.nextNode())) {
-            const text = node.textContent ?? "";
-            if (text.trim().length === 0) continue;
-            if (normalize(text).includes(needle)) {
-                const mark = document.createElement("mark");
-                mark.className = "source-highlight";
-                mark.textContent = text;
-                node.parentNode?.replaceChild(mark, node);
-                mark.scrollIntoView({ block: "center" });
-                return;
-            }
-        }
+        const idx = norm.indexOf(needle);
+        if (idx < 0) continue;
+        const start = positions[idx];
+        const end = positions[idx + needle.length - 1];
+        if (!start || !end) continue;
+        if (wrapRange(container, start, end)) return;
     }
 }
 
 export default function SourcePreviewModal({ citation, fileName, fileType, onClose }: SourcePreviewModalProps) {
-    const [status, setStatus] = useState<"loading" | "pdf" | "docx" | "unsupported" | "error">("loading");
+    const [status, setStatus] = useState<"loading" | "pdf" | "docx" | "txt" | "unsupported" | "error">("loading");
     const [blobUrl, setBlobUrl] = useState<string | null>(null);
     const [html, setHtml] = useState<string>("");
+    const [text, setText] = useState<string>("");
     const docxRef = useRef<HTMLDivElement>(null);
+    const txtRef = useRef<HTMLDivElement>(null);
     const type = fileType.toLowerCase();
 
     useEffect(() => {
@@ -70,6 +170,11 @@ export default function SourcePreviewModal({ citation, fileName, fileType, onClo
                     if (!active) return;
                     setHtml(result.value);
                     setStatus("docx");
+                } else if (type === "txt") {
+                    const buffer = await blob.arrayBuffer();
+                    if (!active) return;
+                    setText(decodeTextBytes(buffer));
+                    setStatus("txt");
                 } else {
                     setStatus("unsupported");
                 }
@@ -86,6 +191,9 @@ export default function SourcePreviewModal({ citation, fileName, fileType, onClo
     useEffect(() => {
         if (status === "docx" && docxRef.current) {
             highlightExcerpt(docxRef.current, citation.excerpt, citation.sectionTitle);
+        }
+        if (status === "txt" && txtRef.current) {
+            highlightExcerpt(txtRef.current, citation.excerpt, citation.sectionTitle);
         }
     }, [status, citation.excerpt, citation.sectionTitle]);
 
@@ -108,6 +216,7 @@ export default function SourcePreviewModal({ citation, fileName, fileType, onClo
         .docx-preview td, .docx-preview th { border: 1px solid #d1d5db; padding: 4px 8px; }
         .docx-preview img { max-width: 100%; height: auto; }
         .docx-preview mark.source-highlight { background: #fde68a; padding: 1px 2px; border-radius: 2px; }
+        .txt-preview mark.source-highlight { background: #fde68a; padding: 1px 2px; border-radius: 2px; }
       `}</style>
             <div
                 className="bg-white rounded-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden shadow-2xl"
@@ -167,6 +276,16 @@ export default function SourcePreviewModal({ citation, fileName, fileType, onClo
                             className="docx-preview h-full overflow-y-auto px-8 py-6 bg-white text-on-surface leading-relaxed"
                             dangerouslySetInnerHTML={{ __html: html }}
                         />
+                    )}
+                    {status === "txt" && (
+                        <div
+                            ref={txtRef}
+                            className="txt-preview h-full overflow-y-auto px-8 py-6 bg-white text-on-surface text-sm leading-relaxed font-mono whitespace-pre-wrap break-words"
+                        >
+                            {text.split("\n").map((line, i) => (
+                                <div key={i}>{line === "" ? " " : line}</div>
+                            ))}
+                        </div>
                     )}
                     {(status === "unsupported" || status === "error") && (
                         <div className="h-full flex flex-col items-center justify-center gap-3 text-center px-6">

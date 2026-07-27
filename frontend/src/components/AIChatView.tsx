@@ -8,6 +8,7 @@ import {
   User,
   FileText,
   FileSpreadsheet,
+  Presentation,
   PlusCircle,
   Link2,
   Check,
@@ -145,6 +146,8 @@ export default function AIChatView({
                     <FileText className="w-9 h-9 text-rose-500 bg-rose-50 p-2 rounded-lg shrink-0" />
                   ) : doc.fileType === "xlsx" ? (
                     <FileSpreadsheet className="w-9 h-9 text-emerald-500 bg-emerald-50 p-2 rounded-lg shrink-0" />
+                  ) : doc.fileType === "pptx" ? (
+                    <Presentation className="w-9 h-9 text-orange-500 bg-orange-50 p-2 rounded-lg shrink-0" />
                   ) : (
                     <FileText className="w-9 h-9 text-blue-500 bg-blue-50 p-2 rounded-lg shrink-0" />
                   )}

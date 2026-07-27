@@ -6,7 +6,8 @@ import {
   Folder,
   FileText,
   TrendingUp,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Presentation
 } from "lucide-react";
 import type { Document, Folder as FolderType } from "../types";
 import { formatBytes } from "../utils/formatBytes";
@@ -150,6 +151,8 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
                         <FileText className="w-6 h-6 text-rose-500 shrink-0" />
                       ) : doc.fileType === "xlsx" ? (
                         <FileSpreadsheet className="w-6 h-6 text-emerald-500 shrink-0" />
+                      ) : doc.fileType === "pptx" ? (
+                        <Presentation className="w-6 h-6 text-orange-500 shrink-0" />
                       ) : (
                         <FileText className="w-6 h-6 text-blue-500 shrink-0" />
                       )}
