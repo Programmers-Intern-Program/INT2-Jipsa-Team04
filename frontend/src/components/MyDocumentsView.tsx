@@ -1698,6 +1698,12 @@ export default function MyDocumentsView({
                             <div>
                               <div className="flex justify-between items-start mb-4 gap-2 min-w-0 pl-7">
                                 <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setDetailFileId(Number(doc.id)); }}
+                                    className="shrink-0 cursor-pointer"
+                                    title="미리보기 열기"
+                                  >
                                   {doc.fileType === "pdf" ? (
                                     <FileText className="w-10 h-10 text-rose-500 bg-rose-50 p-2 rounded-xl shrink-0" />
                                   ) : doc.fileType === "xlsx" ? (
@@ -1707,6 +1713,7 @@ export default function MyDocumentsView({
                                   ) : (
                                     <FileText className="w-10 h-10 text-blue-500 bg-blue-50 p-2 rounded-xl shrink-0" />
                                   )}
+                                  </button>
                                   <div className="min-w-0 flex-1">
                                     <div className="flex items-center gap-1.5">
                                       <p className="font-bold text-body-sm text-on-surface leading-tight truncate cursor-text" title="더블클릭하여 이름 변경" onDoubleClick={() => handleRenameDocument(doc.id, doc.name)}>{doc.name}</p>
@@ -2002,6 +2009,12 @@ export default function MyDocumentsView({
                                 <Star className={`w-3.5 h-3.5 ${doc.star ? "text-amber-500 fill-amber-400 stroke-amber-500" : "text-outline-variant group-hover:text-amber-500"}`} />
                               </button>
 
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setDetailFileId(Number(doc.id)); }}
+                                className="shrink-0 cursor-pointer"
+                                title="미리보기 열기"
+                              >
                               {doc.fileType === "pdf" ? (
                                 <FileText className="w-6 h-6 text-rose-500 shrink-0" />
                               ) : doc.fileType === "xlsx" ? (
@@ -2011,6 +2024,7 @@ export default function MyDocumentsView({
                               ) : (
                                 <FileText className="w-6 h-6 text-blue-500 shrink-0" />
                               )}
+                              </button>
                               <div className="truncate flex-1">
                                 <p className="font-bold text-xs text-on-surface leading-tight truncate cursor-text" title="더블클릭하여 이름 변경" onDoubleClick={() => handleRenameDocument(doc.id, doc.name)}>{doc.name}</p>
                                 <p className="text-[10px] text-outline mt-1 font-sans truncate">
