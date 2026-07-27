@@ -22,6 +22,7 @@ import AIChatView from "./components/AIChatView";
 import SettingsView from "./components/SettingsView";
 import LandingView from "./components/LandingView";
 import AdminView from "./components/AdminView";
+import SemanticSearchView from "./components/SemanticSearchView";
 
 // Import types
 import type { Document, AISettings, ChatMessage, ChatSession, SessionUser, MeResponse } from "./types";
@@ -633,6 +634,18 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => setActiveTab("search")}
+            className={`flex items-center gap-3.5 px-4 py-3.5 rounded-xl font-semibold text-label-md transition-all cursor-pointer ${
+              activeTab === "search"
+                ? "bg-surface-variant text-primary border-l-4 border-secondary shadow-sm"
+                : "text-on-surface-variant hover:bg-surface-container-low"
+            }`}
+          >
+            <Search className="w-5 h-5" />
+            의미 검색
+          </button>
+
+          <button
             onClick={() => setActiveTab("settings")}
             className={`flex items-center gap-3.5 px-4 py-3.5 rounded-xl font-semibold text-label-md transition-all cursor-pointer ${
               activeTab === "settings"
@@ -790,6 +803,18 @@ export default function App() {
                   onRetry={handleRetryChat}
                   onFeedback={handleFeedback}
                 />
+              </motion.div>
+            )}
+
+            {activeTab === "search" && (
+              <motion.div
+                key="search"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                transition={{ duration: 0.25 }}
+              >
+                <SemanticSearchView onNavigateToChat={handleNavigateToChat} />
               </motion.div>
             )}
 
