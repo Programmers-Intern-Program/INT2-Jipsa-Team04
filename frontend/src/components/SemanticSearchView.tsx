@@ -1,10 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Search, Loader2, FileText, MessageSquare, SearchX } from "lucide-react";
 import { searchDocuments, type SearchResultItem } from "../api/search";
 import { ApiError } from "../api/client";
 
 interface SemanticSearchViewProps {
   onNavigateToChat: (docIds: string[]) => void;
+  /** 상단 전역 검색창이 넘겨준 질의. token으로 매 제출마다 새 identity를 만들어 자동 실행을 트리거한다. */
+  initialSearch?: { query: string; token: number } | null;
+  /** 전역 검색 질의를 소비했음을 부모에 알려, 사이드바 재진입 시 옛 질의가 다시 실행되지 않게 한다. */
+  onSearchConsumed?: () => void;
 }
 
 function describeSearchError(err: unknown): string {
@@ -18,31 +22,52 @@ function describeSearchError(err: unknown): string {
   return "검색 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.";
 }
 
-export default function SemanticSearchView({ onNavigateToChat }: SemanticSearchViewProps) {
+export default function SemanticSearchView({ onNavigateToChat, initialSearch, onSearchConsumed }: SemanticSearchViewProps) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResultItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
 
-  const runSearch = async () => {
-    const trimmed = query.trim();
-    if (!trimmed || isLoading) return;
+  // 진행 중 요청이 있어도 새 질의를 즉시 시작하고, 마지막 요청 결과만 반영한다(last-wins).
+  const requestSeq = useRef(0);
+  // StrictMode(dev)의 effect 2회 실행이나 동일 제출의 재처리를 막기 위해 마지막 처리 token을 기록한다.
+  const lastHandledToken = useRef<number | null>(null);
 
+  const runSearch = async (term?: string) => {
+    const trimmed = (term ?? query).trim();
+    if (!trimmed) return;
+
+    const seq = ++requestSeq.current;
     setIsLoading(true);
     setError(null);
     try {
       const response = await searchDocuments({ query: trimmed });
+      if (seq !== requestSeq.current) return;
       setResults(response.items);
       setHasSearched(true);
     } catch (err) {
+      if (seq !== requestSeq.current) return;
       setError(describeSearchError(err));
       setResults([]);
       setHasSearched(true);
     } finally {
-      setIsLoading(false);
+      if (seq === requestSeq.current) setIsLoading(false);
     }
   };
+
+  // 전역 검색창에서 넘어온 질의는 입력창에 채우고 즉시 실행한다.
+  // 같은 token(StrictMode 재실행·동일 제출)은 무시하여 중복 요청을 막는다.
+  useEffect(() => {
+    if (!initialSearch) return;
+    if (initialSearch.token === lastHandledToken.current) return;
+    lastHandledToken.current = initialSearch.token;
+    setQuery(initialSearch.query);
+    void runSearch(initialSearch.query);
+    onSearchConsumed?.();
+    // token 변경(=새 전역 검색 제출) 시에만 실행한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSearch]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {

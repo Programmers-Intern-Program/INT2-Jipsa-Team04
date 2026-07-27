@@ -152,9 +152,13 @@ export default function App() {
     createChatSession(getInitialSelectedDocIds([]))
   ]);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string>(() => chatSessions[0].id);
-  const [committedSettings, setCommittedSettings] = useState<AISettings>({ sensitivity: 0.85, voiceModel: "Nova (명확하고 신뢰감 있는)", responseStyle: "간결형", instantSummary: true, autoHighlight: false, pushNotification: true });
+  // 서버에서 실제 설정을 받기 전에는 null(로딩 중). 하드코딩 기본값을 사용자 설정처럼 보여주지 않는다.
+  const [committedSettings, setCommittedSettings] = useState<AISettings | null>(null);
+  const [settingsError, setSettingsError] = useState(false);
+  const [settingsReloadKey, setSettingsReloadKey] = useState(0);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
+  const [globalSearchSubmit, setGlobalSearchSubmit] = useState<{ query: string; token: number } | null>(null);
 
   // StrictMode(dev)에서 아래 useEffect가 2번 실행돼 같은 authorization code가 두 번
   // 교환(POST /auth/oauth/google)되는 것을 막는다. ref는 StrictMode의 mount→cleanup→mount
@@ -253,15 +257,21 @@ export default function App() {
   // 중이라 토큰이 저장되기 전)는 아예 시도하지 않고 건너뛴다. user가 채워지는 시점
   // (로그인 완료/세션 복원)에 맞춰 시도하도록 [user] 의존성을 쓴다. 이 시점엔 로그인이
   // 확정된 상태라 실패하면 "비로그인이라 401"이 아니라 진짜 오류이므로, mock으로 조용히
-  // 가리지 않고 재시도(fetchWithRetry)한다 — 그래도 실패하면 fallback 기본값을 유지한다.
+  // 가리지 않고 재시도(fetchWithRetry)한다 — 그래도 실패하면 오류 상태로 두고(하드코딩 기본값 미표시)
+  // 설정 화면에서 재시도 UI를 제공한다. settingsReloadKey가 바뀌면 다시 조회한다.
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
+    setSettingsError(false);
     fetchWithRetry(getUserSettings)
-      .then(setCommittedSettings)
+      .then((s) => { if (!cancelled) setCommittedSettings(s); })
       .catch((err) => {
+        if (cancelled) return;
         console.error("[settings] GET /api/v1/users/me/settings 재시도 후에도 실패:", err);
+        setSettingsError(true);
       });
-  }, [user]);
+    return () => { cancelled = true; };
+  }, [user, settingsReloadKey]);
 
   // 실제 문서 목록 조회 시도 — 위 설정 조회와 같은 이유로 [user] 의존성과 재시도를 쓴다.
   // 로그인이 확정된 뒤의 실패는 실제 오류이므로, mock 파일 목록으로 가리는 대신 재시도하고
@@ -330,41 +340,18 @@ export default function App() {
     setUser(null);
   };
 
-  // Sync global search into documents tab
+  // 전역 검색: 입력은 로컬 상태만 갱신하고, Enter 시 "의미 검색" 탭으로 이동해
+  // 입력 질의로 실제 의미 검색(POST /api/v1/search)을 자동 실행한다.
   const handleGlobalSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setGlobalSearch(e.target.value);
-    if (activeTab !== "documents" && activeTab !== "chat") {
-      setActiveTab("documents");
-    }
   };
 
-  // Upload document (mock: API 연동 전까지는 로컬 상태에만 반영)
-  const handleUploadDocument = async (docData: { name: string; content: string; type: string }) => {
-    const newDocument: Document = {
-      id: `doc-${Date.now()}`,
-      name: docData.name,
-      content: docData.content,
-      sizeBytes: new Blob([docData.content]).size,
-      fileType: docData.type,
-      folderId: null, // 미분류(루트)
-      tags: [],
-      modifiedAt: new Date().toLocaleDateString("ko-KR"),
-      ownerName: user?.name || "사용자",
-      securityRank: "일반",
-      summary: "AI 분류 대기 중인 문서입니다. (mock 데이터, 백엔드 연동 전)",
-      piiDetected: false
-    };
-
-    setDocuments((prevDocs) => [newDocument, ...prevDocs]);
-    setChatSessions((prev) =>
-      prev.map((session) =>
-        session.id === activeChatSessionId
-          ? { ...session, selectedDocIds: [newDocument.id, ...session.selectedDocIds] }
-          : session
-      )
-    );
-
-    alert(`AI 분류 성공! (mock)\n\n• 파일명: ${newDocument.name}\n• 분류된 폴더: [미분류]\n• 보안 조치 등급: [${newDocument.securityRank}]`);
+  const handleGlobalSearchSubmit = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter") return;
+    const query = globalSearch.trim();
+    if (!query) return;
+    setGlobalSearchSubmit({ query, token: Date.now() });
+    setActiveTab("search");
   };
 
   // Toggle RAG document selection (활성 채팅 탭 기준)
@@ -480,15 +467,17 @@ export default function App() {
   };
 
   // Save Settings — 로컬 상태 먼저 반영(데모 흐름 유지) 후 실제 API 호출 시도.
-  // 비로그인 상태면 PATCH가 401로 실패하는 게 정상이며, 그 경우
-  // 로컬 상태만 갱신된 채로 남는다(Folder의 create/delete와 동일한 폴백 패턴).
+  // PATCH 성공을 확인한 뒤에만 committedSettings를 갱신한다. 실패는 삼키지 않고
+  // 그대로 전파해, SettingsView가 거짓 성공 대신 오류를 표시하고 값을 되돌리도록 한다.
   const handleSaveSettings = async (newSettings: AISettings) => {
+    await updateUserSettings(newSettings);
     setCommittedSettings(newSettings);
-    try {
-      await updateUserSettings(newSettings);
-    } catch (err) {
-      console.warn("[settings] PATCH /api/v1/users/me/settings 실패 - 로컬 상태만 갱신됨(비로그인 상태면 정상):", err);
-    }
+  };
+
+  const handleRetrySettings = () => {
+    setCommittedSettings(null);
+    setSettingsError(false);
+    setSettingsReloadKey((k) => k + 1);
   };
 
   // Smart navigation from Dashboard/Documents: 지정 문서로 새 채팅 탭을 열어 이동
@@ -707,6 +696,7 @@ export default function App() {
                 type="text"
                 value={globalSearch}
                 onChange={handleGlobalSearchChange}
+                onKeyDown={handleGlobalSearchSubmit}
                 placeholder="어느 화면에서든 파일 제목 또는 AI 추출 단어를 검색..."
                 className="w-full bg-surface-container-low border border-outline-variant rounded-full py-2 pl-11 pr-4 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-body-sm font-medium transition-all"
                 id="global-search-input"
@@ -772,12 +762,11 @@ export default function App() {
               >
                 <MyDocumentsView
                   documents={documents}
-                  onUploadDocument={handleUploadDocument}
                   onNavigateToChat={handleNavigateToChat}
                   isUploadOpen={isUploadOpen}
                   setIsUploadOpen={setIsUploadOpen}
                   onUpdateDocuments={setDocuments}
-                  sensitivity={committedSettings.sensitivity}
+                  sensitivity={committedSettings?.sensitivity ?? 0.85}
                 />
               </motion.div>
             )}
@@ -814,7 +803,11 @@ export default function App() {
                 exit={{ opacity: 0, y: -15 }}
                 transition={{ duration: 0.25 }}
               >
-                <SemanticSearchView onNavigateToChat={handleNavigateToChat} />
+                <SemanticSearchView
+                  onNavigateToChat={handleNavigateToChat}
+                  initialSearch={globalSearchSubmit}
+                  onSearchConsumed={() => setGlobalSearchSubmit(null)}
+                />
               </motion.div>
             )}
 
@@ -829,6 +822,8 @@ export default function App() {
                 <SettingsView
                   user={user}
                   committedSettings={committedSettings}
+                  hasError={settingsError}
+                  onRetry={handleRetrySettings}
                   onSaveSettings={handleSaveSettings}
                 />
               </motion.div>

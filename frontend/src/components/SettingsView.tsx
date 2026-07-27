@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { 
-  Edit, 
-  Laptop, 
-  HardDrive, 
-  Bell, 
-  ChevronDown, 
-  Zap
+import {
+  Edit,
+  Laptop,
+  HardDrive,
+  Bell,
+  ChevronDown,
+  Zap,
+  Loader2,
+  AlertTriangle,
+  RefreshCw
 } from "lucide-react";
 import type { AISettings, SessionUser } from "../types";
 import { getStorageUsage } from "../api/files";
@@ -14,11 +17,19 @@ import { formatBytes } from "../utils/formatBytes";
 
 interface SettingsViewProps {
   user: SessionUser | null;
+  committedSettings: AISettings | null;
+  hasError: boolean;
+  onRetry: () => void;
+  onSaveSettings: (settings: AISettings) => Promise<void>;
+}
+
+interface SettingsFormProps {
+  user: SessionUser | null;
   committedSettings: AISettings;
   onSaveSettings: (settings: AISettings) => Promise<void>;
 }
 
-export default function SettingsView({ user, committedSettings, onSaveSettings }: SettingsViewProps) {
+function SettingsForm({ user, committedSettings, onSaveSettings }: SettingsFormProps) {
   const [localSettings, setLocalSettings] = useState<AISettings>({ ...committedSettings });
   const [isSaving, setIsSaving] = useState(false);
   const [storage, setStorage] = useState<{ usedBytes: number; quotaBytes: number } | null>(null);
@@ -387,6 +398,53 @@ export default function SettingsView({ user, committedSettings, onSaveSettings }
           </motion.div>
         )}
       </AnimatePresence>
+    </motion.div>
+  );
+}
+
+export default function SettingsView({ user, committedSettings, hasError, onRetry, onSaveSettings }: SettingsViewProps) {
+  // 서버 설정을 받은 경우에만 폼을 렌더한다(하드코딩 기본값을 사용자 설정처럼 보여주지 않음).
+  if (committedSettings) {
+    return (
+      <SettingsForm user={user} committedSettings={committedSettings} onSaveSettings={onSaveSettings} />
+    );
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 15 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -15 }}
+      className="space-y-8"
+      id="settings-view-wrapper"
+    >
+      <div id="settings-title-block">
+        <h2 className="text-3xl font-bold tracking-tight text-on-surface font-sans">계정 및 환경 설정</h2>
+        <p className="text-body-md text-on-surface-variant font-sans mt-1">AI Drive의 클라우드 경험을 개인화하고 작업 효율을 한층 더 높이세요.</p>
+      </div>
+
+      {hasError ? (
+        <div className="bg-white/80 backdrop-blur-md p-10 rounded-3xl border border-outline-variant shadow-sm flex flex-col items-center text-center gap-4" id="settings-error-state">
+          <AlertTriangle className="w-10 h-10 text-error" />
+          <div>
+            <p className="font-bold text-body-lg text-on-surface">설정을 불러오지 못했습니다</p>
+            <p className="text-body-sm text-outline mt-1">일시적인 오류일 수 있습니다. 잠시 후 다시 시도해 주세요.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="flex items-center gap-2 bg-primary text-white font-semibold text-label-md px-5 py-2.5 rounded-xl hover:bg-primary/90 transition-all cursor-pointer"
+          >
+            <RefreshCw className="w-4 h-4" />
+            다시 시도
+          </button>
+        </div>
+      ) : (
+        <div className="bg-white/80 backdrop-blur-md p-16 rounded-3xl border border-outline-variant shadow-sm flex flex-col items-center text-center gap-3 text-outline" id="settings-loading-state">
+          <Loader2 className="w-8 h-8 animate-spin" />
+          <p className="text-body-sm font-medium">설정을 불러오는 중...</p>
+        </div>
+      )}
     </motion.div>
   );
 }
