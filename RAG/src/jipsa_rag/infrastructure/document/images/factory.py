@@ -2,11 +2,13 @@
 
 from jipsa_rag.core.document_processing import DocumentProcessingSettings
 from jipsa_rag.infrastructure.document.images.docx import DocxImageExtractor
+from jipsa_rag.infrastructure.document.images.download_safe_pptx import (
+    DownloadSafePptxImageExtractor,
+)
 from jipsa_rag.infrastructure.document.images.download_safe_xlsx import (
     DownloadSafeXlsxImageExtractor,
 )
 from jipsa_rag.infrastructure.document.images.pdf import PdfImageExtractor
-from jipsa_rag.infrastructure.document.images.pptx import PptxImageExtractor
 from jipsa_rag.infrastructure.document.images.protocol import DocumentImageExtractor
 from jipsa_rag.infrastructure.document.models import DocumentType
 from jipsa_rag.infrastructure.document.rendering import MicrosoftOfficeRenderClient
@@ -20,10 +22,12 @@ class DocumentImageExtractorFactory:
         extractors: tuple[DocumentImageExtractor, ...] = (
             PdfImageExtractor(settings),
             DocxImageExtractor(settings),
-            PptxImageExtractor(settings, renderer),
             # HttpFileDownloader는 모든 원본을 ``*.document``로 저장한다.
-            # openpyxl의 경로 확장자 검사를 우회하면서 기존 XLSX 이미지·차트
-            # 추출 계약을 유지하는 다운로드 안전 어댑터를 등록한다.
+            # PowerPoint COM과 ZIP/XML 분석이 같은 ``source.pptx`` 복사본을 사용하도록
+            # 다운로드 안전 PPTX 어댑터를 등록한다.
+            DownloadSafePptxImageExtractor(settings, renderer),
+            # openpyxl과 Excel COM이 같은 ``source.xlsx`` 복사본을 사용하도록 공통
+            # Office 경로 정규화 계층을 적용한 XLSX 어댑터를 등록한다.
             DownloadSafeXlsxImageExtractor(settings, renderer),
         )
         self._extractors = {extractor.file_type: extractor for extractor in extractors}
