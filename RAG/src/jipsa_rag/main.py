@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from jipsa_rag.api.ingest import router as ingest_router
 from jipsa_rag.api.v1.router import router as api_v1_router
 from jipsa_rag.core.config import get_settings
+from jipsa_rag.core.document_processing import get_document_processing_settings
 from jipsa_rag.core.exception_handlers import register_exception_handlers
 from jipsa_rag.core.logging import configure_logging
 from jipsa_rag.core.middleware import RequestLoggingMiddleware
@@ -15,6 +16,7 @@ from jipsa_rag.infrastructure.database.session import (
     check_database_connection,
     close_database,
 )
+from jipsa_rag.infrastructure.document.parser_factory import DocumentParserFactory
 from jipsa_rag.infrastructure.indexing.qdrant_store import (
     close_qdrant_vector_store,
 )
@@ -23,38 +25,53 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    """애플리케이션 전역 자원의 시작 및 종료 생명주기를 관리한다."""
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    """애플리케이션 전역 자원의 시작 및 종료 생명주기를 관리한다.
+
+    문서 Parser Factory는 요청마다 생성하지 않고 lifespan당 한 번만 생성한다. 이미지
+    OCR이 활성화된 경우 Factory 내부의 EasyOCR process pool과 Enricher도 모든 파일
+    처리 요청이 공유한다. 실제 worker와 CUDA 모델은 첫 OCR 요청에서 지연 시작하며,
+    shutdown에서는 timeout·취소 여부와 관계없이 반드시 종료한다.
+    """
 
     settings = get_settings()
+    processing_settings = get_document_processing_settings()
+    parser_factory = DocumentParserFactory(settings=processing_settings)
+
+    # FastAPI dependency는 Request.app.state에서 이 Factory를 조회한다. 따라서 PDF,
+    # DOCX, PPTX, XLSX 요청과 /ingest 경로가 동일한 OCR 엔진·worker pool·전역
+    # 동시성 제한을 사용한다.
+    application.state.document_parser_factory = parser_factory
 
     logger.info(
         "Application startup initiated.",
         extra={
             "event": "application_startup_initiated",
             "database_check_on_startup": settings.database_check_on_startup,
-        },
-    )
-
-    # 현재 실행 환경에서 시작 시 데이터베이스 연결 검사가
-    # 활성화된 경우에만 Local RAG MySQL 연결을 확인한다.
-    #
-    # 기본값은 False이므로 외부 DB가 아직 준비되지 않은
-    # 로컬 개발 및 단위 테스트 환경에서도 서버를 실행할 수 있다.
-    #
-    # 실제 연결 검사는 특정 테이블을 조회하지 않고
-    # SELECT 1만 실행하므로 데이터 변경이 발생하지 않는다.
-    if settings.database_check_on_startup:
-        await check_database_connection()
-
-    logger.info(
-        "Application startup completed.",
-        extra={
-            "event": "application_startup_completed",
+            "ocr_enabled": processing_settings.ocr_enabled,
+            "ocr_max_concurrency": processing_settings.ocr_max_concurrency,
         },
     )
 
     try:
+        # 현재 실행 환경에서 시작 시 데이터베이스 연결 검사가
+        # 활성화된 경우에만 Local RAG MySQL 연결을 확인한다.
+        #
+        # 기본값은 False이므로 외부 DB가 아직 준비되지 않은
+        # 로컬 개발 및 단위 테스트 환경에서도 서버를 실행할 수 있다.
+        #
+        # 실제 연결 검사는 특정 테이블을 조회하지 않고
+        # SELECT 1만 실행하므로 데이터 변경이 발생하지 않는다.
+        if settings.database_check_on_startup:
+            await check_database_connection()
+
+        logger.info(
+            "Application startup completed.",
+            extra={
+                "event": "application_startup_completed",
+            },
+        )
+
         yield
     finally:
         logger.info(
@@ -64,20 +81,29 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             },
         )
 
-        # Qdrant 저장소는 실제 파일 색인 요청이 발생한 경우에만
-        # 지연 생성되므로 사용하지 않은 실행 환경에서도 안전하게 종료할 수 있다.
-        #
-        # Qdrant 종료 중 오류가 발생하더라도 SQLAlchemy 연결 풀은 반드시
-        # 정리해야 하므로 try/finally로 두 외부 자원의 종료를 분리한다.
+        # OCR worker는 CUDA context와 자식 프로세스를 소유하므로 DB·Qdrant보다 먼저
+        # 종료한다. OCR 종료 중 예외가 발생하더라도 나머지 외부 자원은 반드시 정리한다.
         try:
-            await close_qdrant_vector_store()
+            await parser_factory.close()
         finally:
-            # SQLAlchemy AsyncEngine이 관리하는 연결 풀을 종료한다.
+            # 더 이상 dependency가 종료된 Factory를 반환하지 않도록 state 참조를 제거한다.
+            if getattr(application.state, "document_parser_factory", None) is parser_factory:
+                del application.state.document_parser_factory
+
+            # Qdrant 저장소는 실제 파일 색인 요청이 발생한 경우에만
+            # 지연 생성되므로 사용하지 않은 실행 환경에서도 안전하게 종료할 수 있다.
             #
-            # 실제 데이터베이스 연결이 한 번도 생성되지 않은 경우에도
-            # close_database()가 안전하게 실행될 수 있도록
-            # infrastructure.database.session 계층에서 처리한다.
-            await close_database()
+            # Qdrant 종료 중 오류가 발생하더라도 SQLAlchemy 연결 풀은 반드시
+            # 정리해야 하므로 try/finally로 두 외부 자원의 종료를 분리한다.
+            try:
+                await close_qdrant_vector_store()
+            finally:
+                # SQLAlchemy AsyncEngine이 관리하는 연결 풀을 종료한다.
+                #
+                # 실제 데이터베이스 연결이 한 번도 생성되지 않은 경우에도
+                # close_database()가 안전하게 실행될 수 있도록
+                # infrastructure.database.session 계층에서 처리한다.
+                await close_database()
 
         logger.info(
             "Application shutdown completed.",

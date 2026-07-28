@@ -23,3 +23,12 @@ class OcrImageDecodeError(OcrError):
 
 class OcrRecognitionError(OcrError):
     """OCR 엔진의 실제 추론 호출에 실패한 경우의 예외."""
+
+
+class OcrTimeoutError(OcrError, TimeoutError):
+    """격리된 OCR worker가 단일 이미지 제한 시간 안에 응답하지 못한 경우의 예외.
+
+    ``TimeoutError``도 함께 상속하여 기존 ``OcrDocumentEnricher``의 단일 이미지
+    timeout 부분 실패 처리와 호환된다. 동시에 ``OcrError`` 계층에도 속하므로 OCR
+    전용 예외를 처리하는 다른 호출자에서도 안전하게 분류할 수 있다.
+    """

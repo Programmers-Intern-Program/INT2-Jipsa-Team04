@@ -12,11 +12,25 @@
 """
 
 import os
+import sys
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Final
 
 import pytest
 from fastapi.testclient import TestClient
+
+# Pytest의 importlib 모드는 테스트 디렉터리를 sys.path에 자동 추가하지 않는다.
+# Windows multiprocessing spawn은 자식 프로세스에서 target 함수가 정의된 테스트
+# 모듈을 일반 import로 다시 읽으므로, 프로젝트 루트를 부모 프로세스의 import
+# 경로에 명시적으로 등록한다. spawn은 이 sys.path를 자식에게 그대로 전달한다.
+#
+# tests/__init__.py와 함께 사용하면 다음과 같은 target 경로를 자식이 복원할 수 있다.
+# - tests.unit.infrastructure.ocr.test_easyocr_process_manager._fake_worker_main
+_TEST_PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parent.parent
+_TEST_PROJECT_ROOT_TEXT: Final[str] = str(_TEST_PROJECT_ROOT)
+if _TEST_PROJECT_ROOT_TEXT not in sys.path:
+    sys.path.insert(0, _TEST_PROJECT_ROOT_TEXT)
 
 # 테스트에서만 사용하는 백엔드 -> RAG 인제스트 인증 토큰이다.
 #
