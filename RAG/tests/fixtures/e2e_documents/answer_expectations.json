@@ -1,0 +1,416 @@
+{
+  "schema_version": 1,
+  "fixture_set": "jipsa-rag-issue-123-answer-source-v1",
+  "issue": 123,
+  "source_branch": "test/123",
+  "lookup_cases": [
+    {
+      "id": "lookup-pdf-text-table",
+      "case_ids": ["pdf-text-table"],
+      "query": "선택한 PDF 문서의 PDF-PARAGRAPH-TOKEN-101과 PDF-TABLE-CELL-TOKEN-102를 원문 그대로 각각 답하고, 각 값 뒤에 해당 출처를 인용해 주세요.",
+      "expected_tokens": [
+        "PDF-PARAGRAPH-TOKEN-101",
+        "PDF-TABLE-CELL-TOKEN-102"
+      ],
+      "expected_sources": [
+        {
+          "token": "PDF-PARAGRAPH-TOKEN-101",
+          "case_id": "pdf-text-table",
+          "locator": {
+            "file_type": "pdf",
+            "kind": "pdf_page",
+            "content_origin": "text",
+            "page": 1,
+            "structure_path": "page:1"
+          }
+        },
+        {
+          "token": "PDF-TABLE-CELL-TOKEN-102",
+          "case_id": "pdf-text-table",
+          "locator": {
+            "file_type": "pdf",
+            "kind": "pdf_page",
+            "content_origin": "text",
+            "page": 1,
+            "structure_path": "page:1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lookup-docx-paragraph-table",
+      "case_ids": ["docx-structure"],
+      "query": "선택한 DOCX 문서의 본문 값 DOCX-PARAGRAPH-TOKEN-201과 표 값 DOCX-TABLE-CELL-TOKEN-202를 원문 그대로 구분하여 답하고, 각 값 뒤에 출처를 인용해 주세요.",
+      "expected_tokens": [
+        "DOCX-PARAGRAPH-TOKEN-201",
+        "DOCX-TABLE-CELL-TOKEN-202"
+      ],
+      "expected_sources": [
+        {
+          "token": "DOCX-PARAGRAPH-TOKEN-201",
+          "case_id": "docx-structure",
+          "locator": {
+            "file_type": "docx",
+            "kind": "docx_block",
+            "content_origin": "text",
+            "unit_type": "paragraph",
+            "section_index": 1,
+            "block_index": 2,
+            "paragraph_index": 2,
+            "structure_path": "section:1/block:2"
+          }
+        },
+        {
+          "token": "DOCX-TABLE-CELL-TOKEN-202",
+          "case_id": "docx-structure",
+          "locator": {
+            "file_type": "docx",
+            "kind": "docx_block",
+            "content_origin": "text",
+            "unit_type": "table",
+            "section_index": 1,
+            "block_index": 3,
+            "table_index": 1,
+            "row_count": 2,
+            "column_count": 2,
+            "structure_path": "section:1/block:3"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lookup-pptx-slide-shapes",
+      "case_ids": ["pptx-structure"],
+      "query": "선택한 PPTX 문서의 첫 번째 슬라이드 값 PPTX-SLIDE-1-TOKEN-301과 두 번째 슬라이드 값 PPTX-SLIDE-2-TOKEN-303을 원문 그대로 각각 답하고, 각 값 뒤에 출처를 인용해 주세요.",
+      "expected_tokens": [
+        "PPTX-SLIDE-1-TOKEN-301",
+        "PPTX-SLIDE-2-TOKEN-303"
+      ],
+      "expected_sources": [
+        {
+          "token": "PPTX-SLIDE-1-TOKEN-301",
+          "case_id": "pptx-structure",
+          "locator": {
+            "file_type": "pptx",
+            "kind": "pptx_shape",
+            "content_origin": "text",
+            "unit_type": "shape_text",
+            "slide_no": 1,
+            "shape_index": 1,
+            "shape_path": "1",
+            "structure_path": "slide:1/shape:1"
+          }
+        },
+        {
+          "token": "PPTX-SLIDE-2-TOKEN-303",
+          "case_id": "pptx-structure",
+          "locator": {
+            "file_type": "pptx",
+            "kind": "pptx_shape",
+            "content_origin": "text",
+            "unit_type": "shape_text",
+            "slide_no": 2,
+            "shape_index": 1,
+            "shape_path": "1",
+            "structure_path": "slide:2/shape:1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lookup-xlsx-sheet-cell-ranges",
+      "case_ids": ["xlsx-structure"],
+      "query": "선택한 XLSX 문서의 Overview 시트 값 XLSX-ROW-TOKEN-401과 Details 시트 값 XLSX-SHEET-2-TOKEN-402를 원문 그대로 각각 답하고, 각 값 뒤에 출처를 인용해 주세요.",
+      "expected_tokens": [
+        "XLSX-ROW-TOKEN-401",
+        "XLSX-SHEET-2-TOKEN-402"
+      ],
+      "expected_sources": [
+        {
+          "token": "XLSX-ROW-TOKEN-401",
+          "case_id": "xlsx-structure",
+          "locator": {
+            "file_type": "xlsx",
+            "kind": "xlsx_cell_range",
+            "content_origin": "text",
+            "unit_type": "table_row",
+            "sheet_number": 1,
+            "sheet_name": "Overview",
+            "row_number": 2,
+            "start_cell": "A2",
+            "end_cell": "B2",
+            "cell_range": "A2:B2",
+            "structure_path": "sheet:Overview/range:A2:B2"
+          }
+        },
+        {
+          "token": "XLSX-SHEET-2-TOKEN-402",
+          "case_id": "xlsx-structure",
+          "locator": {
+            "file_type": "xlsx",
+            "kind": "xlsx_cell_range",
+            "content_origin": "text",
+            "unit_type": "row",
+            "sheet_number": 2,
+            "sheet_name": "Details",
+            "row_number": 2,
+            "start_cell": "A2",
+            "end_cell": "B2",
+            "cell_range": "A2:B2",
+            "structure_path": "sheet:Details/range:A2:B2"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lookup-txt-line-ranges",
+      "case_ids": ["txt-lines-utf8"],
+      "query": "선택한 TXT 문서의 2번째 줄 값 TXT-LINE-2-TOKEN-501과 3번째 줄 값 TXT-LINE-3-TRAILING을 원문 그대로 각각 답하고, 각 값 뒤에 출처를 인용해 주세요.",
+      "expected_tokens": [
+        "TXT-LINE-2-TOKEN-501",
+        "TXT-LINE-3-TRAILING"
+      ],
+      "expected_sources": [
+        {
+          "token": "TXT-LINE-2-TOKEN-501",
+          "case_id": "txt-lines-utf8",
+          "locator": {
+            "file_type": "txt",
+            "kind": "txt_line",
+            "content_origin": "text",
+            "unit_type": "line",
+            "line_number": 2,
+            "line_start": 2,
+            "line_end": 2,
+            "char_start": 20,
+            "char_end": 40,
+            "structure_path": "line:2"
+          }
+        },
+        {
+          "token": "TXT-LINE-3-TRAILING",
+          "case_id": "txt-lines-utf8",
+          "locator": {
+            "file_type": "txt",
+            "kind": "txt_line",
+            "content_origin": "text",
+            "unit_type": "line",
+            "line_number": 3,
+            "line_start": 3,
+            "line_end": 3,
+            "char_start": 41,
+            "char_end": 60,
+            "structure_path": "line:3"
+          }
+        }
+      ]
+    }
+  ],
+  "ocr_lookup_cases": [
+    {
+      "id": "lookup-pdf-ocr-image",
+      "case_ids": ["pdf-with-image"],
+      "query": "선택한 PDF 이미지에서 OCR로 인식된 OCR-PDF-IMAGE-301 값을 원문 그대로 답하고, 이미지 출처를 인용해 주세요.",
+      "expected_tokens": ["OCR-PDF-IMAGE-301"],
+      "expected_sources": [
+        {
+          "token": "OCR-PDF-IMAGE-301",
+          "case_id": "pdf-with-image",
+          "locator": {
+            "file_type": "pdf",
+            "kind": "pdf_page",
+            "content_origin": "ocr",
+            "unit_type": "ocr_image",
+            "page": 1,
+            "image_ordinal": 1,
+            "image_index": 1,
+            "image_kind": "pdf_embedded",
+            "structure_path": "page:1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lookup-docx-ocr-image",
+      "case_ids": ["docx-with-image"],
+      "query": "선택한 DOCX 이미지에서 OCR로 인식된 OCR-DOCX-IMAGE-302 값을 원문 그대로 답하고, 이미지 출처를 인용해 주세요.",
+      "expected_tokens": ["OCR-DOCX-IMAGE-302"],
+      "expected_sources": [
+        {
+          "token": "OCR-DOCX-IMAGE-302",
+          "case_id": "docx-with-image",
+          "locator": {
+            "file_type": "docx",
+            "kind": "docx_block",
+            "content_origin": "ocr",
+            "unit_type": "ocr_image",
+            "section_index": 1,
+            "block_index": 3,
+            "paragraph_index": 3,
+            "image_ordinal": 1,
+            "image_index": 1,
+            "image_kind": "docx_inline",
+            "structure_path": "section:1/block:3"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lookup-pptx-ocr-image",
+      "case_ids": ["pptx-with-image"],
+      "query": "선택한 PPTX 이미지에서 OCR로 인식된 OCR-PPTX-IMAGE-303 값을 원문 그대로 답하고, 이미지 출처를 인용해 주세요.",
+      "expected_tokens": ["OCR-PPTX-IMAGE-303"],
+      "expected_sources": [
+        {
+          "token": "OCR-PPTX-IMAGE-303",
+          "case_id": "pptx-with-image",
+          "locator": {
+            "file_type": "pptx",
+            "kind": "pptx_shape",
+            "content_origin": "ocr",
+            "unit_type": "ocr_image",
+            "slide_no": 1,
+            "shape_path": "picture:1",
+            "image_ordinal": 1,
+            "image_index": 1,
+            "image_kind": "pptx_picture",
+            "structure_path": "slide:1/shape:picture:1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lookup-xlsx-ocr-image",
+      "case_ids": ["xlsx-with-image"],
+      "query": "선택한 XLSX 이미지에서 OCR로 인식된 OCR-XLSX-IMAGE-304 값을 원문 그대로 답하고, 이미지 출처를 인용해 주세요.",
+      "expected_tokens": ["OCR-XLSX-IMAGE-304"],
+      "expected_sources": [
+        {
+          "token": "OCR-XLSX-IMAGE-304",
+          "case_id": "xlsx-with-image",
+          "locator": {
+            "file_type": "xlsx",
+            "kind": "xlsx_cell_range",
+            "content_origin": "ocr",
+            "unit_type": "ocr_image",
+            "sheet_number": 1,
+            "sheet_name": "Images",
+            "cell_range": "D2",
+            "image_ordinal": 1,
+            "image_index": 1,
+            "image_kind": "xlsx_picture",
+            "structure_path": "sheet:Images/range:D2"
+          }
+        }
+      ]
+    }
+  ],
+  "synthesis_case": {
+    "id": "synthesis-five-text-formats",
+    "case_ids": [
+      "pdf-text-table",
+      "docx-structure",
+      "pptx-structure",
+      "xlsx-structure",
+      "txt-lines-utf8"
+    ],
+    "query": "선택한 PDF, DOCX, PPTX, XLSX, TXT 각 문서에 기록된 대표 검증 토큰을 파일 형식별로 종합해 주세요. PDF-PARAGRAPH-TOKEN-101, DOCX-PARAGRAPH-TOKEN-201, PPTX-SLIDE-1-TOKEN-301, XLSX-ROW-TOKEN-401, TXT-LINE-2-TOKEN-501을 원문 그대로 모두 포함하고 각 항목 뒤에 해당 출처를 인용해 주세요.",
+    "expected_tokens": [
+      "PDF-PARAGRAPH-TOKEN-101",
+      "DOCX-PARAGRAPH-TOKEN-201",
+      "PPTX-SLIDE-1-TOKEN-301",
+      "XLSX-ROW-TOKEN-401",
+      "TXT-LINE-2-TOKEN-501"
+    ],
+    "expected_sources": [
+      {
+        "token": "PDF-PARAGRAPH-TOKEN-101",
+        "case_id": "pdf-text-table",
+        "locator": {
+          "file_type": "pdf",
+          "kind": "pdf_page",
+          "content_origin": "text",
+          "page": 1
+        }
+      },
+      {
+        "token": "DOCX-PARAGRAPH-TOKEN-201",
+        "case_id": "docx-structure",
+        "locator": {
+          "file_type": "docx",
+          "kind": "docx_block",
+          "content_origin": "text",
+          "paragraph_index": 2
+        }
+      },
+      {
+        "token": "PPTX-SLIDE-1-TOKEN-301",
+        "case_id": "pptx-structure",
+        "locator": {
+          "file_type": "pptx",
+          "kind": "pptx_shape",
+          "content_origin": "text",
+          "slide_no": 1
+        }
+      },
+      {
+        "token": "XLSX-ROW-TOKEN-401",
+        "case_id": "xlsx-structure",
+        "locator": {
+          "file_type": "xlsx",
+          "kind": "xlsx_cell_range",
+          "content_origin": "text",
+          "sheet_name": "Overview",
+          "cell_range": "A2:B2"
+        }
+      },
+      {
+        "token": "TXT-LINE-2-TOKEN-501",
+        "case_id": "txt-lines-utf8",
+        "locator": {
+          "file_type": "txt",
+          "kind": "txt_line",
+          "content_origin": "text",
+          "line_number": 2
+        }
+      }
+    ]
+  },
+  "mixed_text_ocr_case": {
+    "id": "lookup-hybrid-text-and-ocr",
+    "case_ids": ["hybrid-image-only-page"],
+    "query": "선택한 혼합 PDF에서 검색 가능한 텍스트 HYBRID-PAGE-1-TEXT-403과 이미지 OCR 텍스트 HYBRID-PAGE-2-OCR-402를 원문 그대로 모두 답하고, 각각의 페이지 및 이미지 출처를 인용해 주세요.",
+    "expected_tokens": [
+      "HYBRID-PAGE-1-TEXT-403",
+      "HYBRID-PAGE-2-OCR-402"
+    ],
+    "expected_sources": [
+      {
+        "token": "HYBRID-PAGE-1-TEXT-403",
+        "case_id": "hybrid-image-only-page",
+        "locator": {
+          "file_type": "pdf",
+          "kind": "pdf_page",
+          "content_origin": "text",
+          "page": 1,
+          "structure_path": "page:1"
+        }
+      },
+      {
+        "token": "HYBRID-PAGE-2-OCR-402",
+        "case_id": "hybrid-image-only-page",
+        "locator": {
+          "file_type": "pdf",
+          "kind": "pdf_page",
+          "content_origin": "ocr",
+          "unit_type": "ocr_image",
+          "page": 2,
+          "image_ordinal": 2,
+          "image_index": 2,
+          "image_kind": "pdf_page_render",
+          "structure_path": "page:2"
+        }
+      }
+    ]
+  }
+}

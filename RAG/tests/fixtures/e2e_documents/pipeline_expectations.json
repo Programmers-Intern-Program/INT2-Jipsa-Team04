@@ -1,0 +1,330 @@
+{
+  "schema_version": 1,
+  "fixture_set": "jipsa-rag-issue-123-full-pipeline-v1",
+  "issue": 123,
+  "source_branch": "test/123",
+  "user_idx": 95223,
+  "folder_idx": 95230,
+  "cases": [
+    {
+      "id": "pdf-text-table",
+      "file_idx": 952301,
+      "expected_parser_type": "PDF_HYBRID_OCR",
+      "expected_parser_version": "2.0.0",
+      "assertions": [
+        {
+          "token": "PDF-PARAGRAPH-TOKEN-101",
+          "metadata": {"page_number": 1}
+        },
+        {
+          "token": "PDF-TABLE-CELL-TOKEN-102",
+          "metadata": {"page_number": 1}
+        }
+      ]
+    },
+    {
+      "id": "docx-structure",
+      "file_idx": 952302,
+      "expected_parser_type": "DOCX_HYBRID_OCR",
+      "expected_parser_version": "2.0.0",
+      "assertions": [
+        {
+          "token": "DOCX-PARAGRAPH-TOKEN-201",
+          "metadata": {
+            "unit_type": "paragraph",
+            "section_index": 1,
+            "block_index": 2,
+            "paragraph_index": 2
+          }
+        },
+        {
+          "token": "DOCX-TABLE-CELL-TOKEN-202",
+          "metadata": {
+            "unit_type": "table",
+            "section_index": 1,
+            "block_index": 3,
+            "table_index": 1,
+            "row_count": 2,
+            "column_count": 2
+          }
+        }
+      ]
+    },
+    {
+      "id": "pptx-structure",
+      "file_idx": 952303,
+      "expected_parser_type": "PPTX_HYBRID_OCR",
+      "expected_parser_version": "2.0.0",
+      "assertions": [
+        {
+          "token": "PPTX-SLIDE-1-TOKEN-301",
+          "metadata": {
+            "location_kind": "pptx_shape",
+            "unit_type": "shape_text",
+            "slide_number": 1,
+            "shape_index": 1,
+            "shape_path": "1"
+          }
+        },
+        {
+          "token": "PPTX-TABLE-CELL-TOKEN-302",
+          "metadata": {
+            "location_kind": "pptx_shape",
+            "unit_type": "table",
+            "slide_number": 1,
+            "shape_index": 2,
+            "shape_path": "2",
+            "row_count": 2,
+            "column_count": 2
+          }
+        },
+        {
+          "token": "PPTX-SLIDE-2-TOKEN-303",
+          "metadata": {
+            "location_kind": "pptx_shape",
+            "unit_type": "shape_text",
+            "slide_number": 2,
+            "shape_index": 1,
+            "shape_path": "1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "xlsx-structure",
+      "file_idx": 952304,
+      "expected_parser_type": "XLSX_HYBRID_OCR",
+      "expected_parser_version": "2.0.0",
+      "assertions": [
+        {
+          "token": "XLSX-ROW-TOKEN-401",
+          "metadata": {
+            "location_kind": "xlsx_cell_range",
+            "unit_type": "table_row",
+            "sheet_index": 1,
+            "sheet_number": 1,
+            "sheet_name": "Overview",
+            "row_number": 2,
+            "cell_range": "A2:B2"
+          }
+        },
+        {
+          "token": "XLSX-MERGED-TOKEN-403",
+          "metadata": {
+            "location_kind": "xlsx_cell_range",
+            "unit_type": "row",
+            "sheet_name": "Overview",
+            "row_number": 5,
+            "cell_range": "A5:A5",
+            "merged_ranges": ["A5:B5"]
+          }
+        },
+        {
+          "token": "XLSX-SHEET-2-TOKEN-402",
+          "metadata": {
+            "location_kind": "xlsx_cell_range",
+            "unit_type": "row",
+            "sheet_index": 2,
+            "sheet_number": 2,
+            "sheet_name": "Details",
+            "row_number": 2,
+            "cell_range": "A2:B2"
+          }
+        }
+      ]
+    },
+    {
+      "id": "txt-lines-utf8",
+      "file_idx": 952305,
+      "expected_parser_type": "TXT_TEXT",
+      "expected_parser_version": "1.1.0",
+      "assertions": [
+        {
+          "token": "TXT-LINE-2-TOKEN-501",
+          "metadata": {
+            "location_kind": "txt_line",
+            "unit_type": "line",
+            "line_number": 2,
+            "source_char_start": 20,
+            "source_char_end": 40,
+            "text_char_start": 20,
+            "text_char_end": 40
+          }
+        },
+        {
+          "token": "TXT-LINE-3-TRAILING",
+          "metadata": {
+            "location_kind": "txt_line",
+            "unit_type": "line",
+            "line_number": 3,
+            "source_char_start": 41,
+            "source_char_end": 63,
+            "text_char_start": 41,
+            "text_char_end": 60
+          }
+        }
+      ]
+    },
+    {
+      "id": "pdf-with-image",
+      "file_idx": 952306,
+      "expected_parser_type": "PDF_HYBRID_OCR",
+      "expected_parser_version": "2.0.0",
+      "assertions": [
+        {
+          "token": "OCR-PDF-IMAGE-301",
+          "ocr": true,
+          "metadata": {
+            "unit_type": "ocr_image",
+            "content_origin": "ocr",
+            "image_kind": "pdf_embedded",
+            "page_number": 1,
+            "image_index": 1,
+            "ocr_engine": "EASYOCR_CUDA",
+            "ocr_device": "cuda:0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "docx-with-image",
+      "file_idx": 952307,
+      "expected_parser_type": "DOCX_HYBRID_OCR",
+      "expected_parser_version": "2.0.0",
+      "assertions": [
+        {
+          "token": "OCR-DOCX-IMAGE-302",
+          "ocr": true,
+          "metadata": {
+            "unit_type": "ocr_image",
+            "content_origin": "ocr",
+            "image_kind": "docx_inline",
+            "section_index": 1,
+            "block_index": 3,
+            "paragraph_index": 3,
+            "image_index": 1,
+            "drawing_placement": "inline",
+            "ocr_engine": "EASYOCR_CUDA",
+            "ocr_device": "cuda:0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "pptx-with-image",
+      "file_idx": 952308,
+      "expected_parser_type": "PPTX_HYBRID_OCR",
+      "expected_parser_version": "2.0.0",
+      "assertions": [
+        {
+          "token": "OCR-PPTX-IMAGE-303",
+          "ocr": true,
+          "metadata": {
+            "unit_type": "ocr_image",
+            "content_origin": "ocr",
+            "image_kind": "pptx_picture",
+            "slide_number": 1,
+            "image_index": 1,
+            "shape_path": "picture:1",
+            "ocr_engine": "EASYOCR_CUDA",
+            "ocr_device": "cuda:0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "xlsx-with-image",
+      "file_idx": 952309,
+      "expected_parser_type": "XLSX_HYBRID_OCR",
+      "expected_parser_version": "2.0.0",
+      "assertions": [
+        {
+          "token": "OCR-XLSX-IMAGE-304",
+          "ocr": true,
+          "metadata": {
+            "unit_type": "ocr_image",
+            "content_origin": "ocr",
+            "image_kind": "xlsx_picture",
+            "sheet_index": 1,
+            "sheet_name": "Images",
+            "image_index": 1,
+            "cell_range": "D2",
+            "shape_path": "sheet:Images/image:1/anchor:D2",
+            "ocr_engine": "EASYOCR_CUDA",
+            "ocr_device": "cuda:0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "scanned-document",
+      "file_idx": 952310,
+      "expected_parser_type": "PDF_HYBRID_OCR",
+      "expected_parser_version": "2.0.0",
+      "assertions": [
+        {
+          "token": "SCANNED-PDF-OCR-401",
+          "ocr": true,
+          "metadata": {
+            "unit_type": "ocr_image",
+            "content_origin": "ocr",
+            "image_kind": "pdf_page_render",
+            "page_number": 1,
+            "is_image_only_page": true,
+            "ocr_engine": "EASYOCR_CUDA",
+            "ocr_device": "cuda:0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hybrid-image-only-page",
+      "file_idx": 952311,
+      "expected_parser_type": "PDF_HYBRID_OCR",
+      "expected_parser_version": "2.0.0",
+      "assertions": [
+        {
+          "token": "HYBRID-PAGE-2-OCR-402",
+          "ocr": true,
+          "metadata": {
+            "unit_type": "ocr_image",
+            "content_origin": "ocr",
+            "image_kind": "pdf_page_render",
+            "page_number": 2,
+            "is_image_only_page": true,
+            "ocr_engine": "EASYOCR_CUDA",
+            "ocr_device": "cuda:0"
+          }
+        }
+      ]
+    },
+    {
+      "id": "pdf-partial-ocr",
+      "file_idx": 952312,
+      "path": "valid/images/pdf_partial_ocr.pdf",
+      "file_type": "pdf",
+      "content_type": "application/pdf",
+      "sha256": "dfba2230a2709011d7107a15a950f5bd87a628dccd1ade10f9c5019f103a114c",
+      "size_bytes": 42327,
+      "expected_parser_type": "PDF_HYBRID_OCR",
+      "expected_parser_version": "2.0.0",
+      "forced_failure_image_index": 2,
+      "success_token": "OCR-PARTIAL-SUCCESS-501",
+      "failure_token": "OCR-PARTIAL-FAIL-502",
+      "assertions": [
+        {
+          "token": "OCR-PARTIAL-SUCCESS-501",
+          "ocr": true,
+          "metadata": {
+            "unit_type": "ocr_image",
+            "content_origin": "ocr",
+            "image_kind": "pdf_embedded",
+            "page_number": 1,
+            "image_index": 1,
+            "ocr_device": "cuda:0"
+          }
+        }
+      ]
+    }
+  ]
+}

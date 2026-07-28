@@ -1,0 +1,11 @@
+%PDF-1.7
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 1 /Kids [3 0 R] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /Contents 999 0 R >>
+endobj
+this file intentionally has no xref, trailer, or EOF marker
