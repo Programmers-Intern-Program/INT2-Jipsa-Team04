@@ -1165,15 +1165,15 @@ export default function MyDocumentsView({
     const refreshFailed = await refreshFolderViews();
     setCheckedDocIds([]);
     setCheckedTrashFolderIds([]);
-    if (restoredCount > 0 && refreshFailed) {
-      alert("폴더 복원은 완료되었지만 일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요.");
-    } else if (restoredCount === roots.length) {
-      alert(`${folderIds.length}개의 폴더를 복원했습니다.`);
-    } else if (restoredCount > 0) {
-      alert(`${restoredCount}개의 폴더를 복원했습니다. 일부 폴더는 복원하지 못했습니다.`);
-    } else {
-      alert("폴더 복원에 실패했습니다.");
-    }
+    const restoreMessage = restoredCount === 0
+      ? "폴더를 복원하지 못했습니다."
+      : restoredCount === roots.length
+        ? `${folderIds.length}개의 폴더를 복원했습니다.`
+        : `${restoredCount}개의 폴더를 복원했습니다. ${roots.length - restoredCount}개의 폴더는 복원하지 못했습니다.`;
+    const refreshMessage = refreshFailed
+      ? "일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요."
+      : "";
+    alert([restoreMessage, refreshMessage].filter(Boolean).join(" "));
   };
 
   const handlePermanentDeleteTrashFolders = async (folderIds: number[]) => {
@@ -1186,15 +1186,15 @@ export default function MyDocumentsView({
     getStorageUsage().then(setStorage).catch(() => {});
     setCheckedDocIds([]);
     setCheckedTrashFolderIds([]);
-    if (deletedCount > 0 && refreshFailed) {
-      alert("폴더 영구 삭제는 완료되었지만 일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요.");
-    } else if (deletedCount === roots.length) {
-      alert(`${folderIds.length}개의 폴더를 영구 삭제했습니다.`);
-    } else if (deletedCount > 0) {
-      alert(`${deletedCount}개의 폴더를 영구 삭제했습니다. 일부 폴더는 삭제하지 못했습니다.`);
-    } else {
-      alert("폴더 영구 삭제에 실패했습니다.");
-    }
+    const deleteMessage = deletedCount === 0
+      ? "폴더를 영구 삭제하지 못했습니다."
+      : deletedCount === roots.length
+        ? `${folderIds.length}개의 폴더를 영구 삭제했습니다.`
+        : `${deletedCount}개의 폴더를 영구 삭제했습니다. ${roots.length - deletedCount}개의 폴더는 삭제하지 못했습니다.`;
+    const refreshMessage = refreshFailed
+      ? "일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요."
+      : "";
+    alert([deleteMessage, refreshMessage].filter(Boolean).join(" "));
   };
 
   const switchDocumentTab = (tab: "mydrive" | "starred" | "recent" | "trash", folderId: number | null = null) => {
