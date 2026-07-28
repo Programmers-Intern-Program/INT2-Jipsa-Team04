@@ -381,27 +381,54 @@ class FileServiceTest {
     }
 
     @Test
-    void permanentDeleteRemovesFileEvenWhenActive() {
+    void permanentDeleteRejectsActiveFile() {
         File file = ownedFile();
         file.setS3Key("files/key-active");
         when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
 
-        fileService.permanentDelete(1L, 1L);
+        assertThatThrownBy(() -> fileService.permanentDelete(1L, 1L))
+                .isInstanceOf(BadRequestException.class);
 
-        verify(fileRepository).delete(file);
+        verify(fileRepository, org.mockito.Mockito.never()).delete(file);
+        verifyNoExternalCleanup();
     }
 
     @Test
-    void permanentDeleteRemovesDatabaseRowWhenExternalCleanupFails() {
+    void permanentDeletePreservesFileWhenS3CleanupFails() {
         File file = ownedFile();
+        file.setDeletedAt(LocalDateTime.now());
         file.setS3Key("files/key-unavailable");
         when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
         doThrow(new RuntimeException("S3 unavailable")).when(s3Service).delete("test-bucket", "files/key-unavailable");
+
+        assertThatThrownBy(() -> fileService.permanentDelete(1L, 1L))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("S3 unavailable");
+
+        verify(fileRepository, org.mockito.Mockito.never()).delete(file);
+        verify(ragPurgeService).enqueue(1L, 1L);
+        verify(s3Service).delete("test-bucket", "files/key-unavailable");
+    }
+
+    @Test
+    void permanentDeletePreservesFileWhenPurgeTaskRegistrationFails() {
+        File file = ownedFile();
+        file.setDeletedAt(LocalDateTime.now());
+        file.setS3Key("files/key-unavailable");
+        when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
         doThrow(new RuntimeException("RAG unavailable")).when(ragPurgeService).enqueue(1L, 1L);
 
-        fileService.permanentDelete(1L, 1L);
+        assertThatThrownBy(() -> fileService.permanentDelete(1L, 1L))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("RAG unavailable");
 
-        verify(fileRepository).delete(file);
+        verify(fileRepository, org.mockito.Mockito.never()).delete(file);
+        verify(s3Service, org.mockito.Mockito.never()).delete("test-bucket", "files/key-unavailable");
+    }
+
+    private void verifyNoExternalCleanup() {
+        verify(ragPurgeService, org.mockito.Mockito.never()).enqueue(1L, 1L);
+        verify(s3Service, org.mockito.Mockito.never()).delete(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test
@@ -446,5 +473,18 @@ class FileServiceTest {
         verify(jobRepository).deleteByFileId(1L);
         verify(messageCitationRepository).deleteByFileId(1L);
         verify(fileRepository).deleteAll(List.of(file));
+    }
+
+    @Test
+    void permanentDeleteByFolderIdsRejectsActiveFile() {
+        File file = ownedFile();
+        file.setFolderId(5L);
+        when(fileRepository.findByFolderIdIn(List.of(5L))).thenReturn(List.of(file));
+
+        assertThatThrownBy(() -> fileService.permanentDeleteByFolderIds(List.of(5L)))
+                .isInstanceOf(BadRequestException.class);
+
+        verifyNoExternalCleanup();
+        verify(fileRepository, org.mockito.Mockito.never()).deleteAll(org.mockito.ArgumentMatchers.anyList());
     }
 }

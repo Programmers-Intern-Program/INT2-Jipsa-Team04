@@ -52,7 +52,7 @@ public class RagPurgeService {
         task.setFileId(fileId);
         task.setUsersId(usersId);
         task.setNextAttemptAt(LocalDateTime.now());
-        taskRepository.save(task);
+        taskRepository.saveAndFlush(task);
     }
 
     public void drainOnce() {

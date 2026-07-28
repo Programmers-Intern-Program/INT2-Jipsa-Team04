@@ -169,7 +169,13 @@ public class FolderService {
     public void permanentDelete(Long userId, Long folderId) {
         Folder folder = folderRepository.findByIdAndUsersIdIncludingDeleted(folderId, userId).orElse(null);
         if (folder == null) {
-            throw new FolderNotFoundException(folderId);
+            if (folderRepository.findById(folderId).isPresent()) {
+                throw new FolderNotFoundException(folderId);
+            }
+            return;
+        }
+        if (folder.getDeletedAt() == null) {
+            throw new BadRequestException("삭제되지 않은 폴더입니다: " + folderId);
         }
 
         Map<Long, List<Folder>> childrenByParentId = folderRepository.findByUsersIdIncludingDeleted(userId).stream()
@@ -177,6 +183,11 @@ public class FolderService {
                 .collect(Collectors.groupingBy(Folder::getParentFolderId));
 
         List<Long> subtreeIds = collectSubtreeIds(folderId, childrenByParentId);
+        boolean hasActiveDescendant = folderRepository.findAllById(subtreeIds).stream()
+                .anyMatch(candidate -> candidate.getDeletedAt() == null);
+        if (hasActiveDescendant) {
+            throw new BadRequestException("삭제되지 않은 하위 폴더가 있습니다: " + folderId);
+        }
 
         fileService.permanentDeleteByFolderIds(subtreeIds);
         // 삭제 순서: DDL의 FK_Folder_ParentFolder(자기참조 FK)에 ON DELETE CASCADE가 없어서,

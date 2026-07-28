@@ -228,9 +228,10 @@ class FolderServiceTest {
     }
 
     @Test
-    void permanentDelete_활성파일이남아있어도_폴더와함께삭제() {
+    void permanentDelete_폴더삭제로_휴지통에간파일도_함께삭제() {
         Long root = folderService.create(USER, "루트", null);
         File file = fileIn(root);
+        folderService.delete(USER, root);
 
         folderService.permanentDelete(USER, root);
 

@@ -69,20 +69,34 @@ class FolderServicePermanentDeleteTest {
     }
 
     @Test
-    void permanentDelete_활성폴더도_강제로_삭제() {
+    void permanentDelete_활성폴더는_거부() {
         Folder active = folder(1L, null, null);
         when(folderRepository.findByIdAndUsersIdIncludingDeleted(1L, USER)).thenReturn(Optional.of(active));
-        when(folderRepository.findByUsersIdIncludingDeleted(USER)).thenReturn(List.of(active));
+
+        assertThatThrownBy(() -> folderService.permanentDelete(USER, 1L))
+                .isInstanceOf(com.jipsa.common.BadRequestException.class);
+
+        org.mockito.Mockito.verifyNoInteractions(fileService);
+        org.mockito.Mockito.verify(folderRepository, org.mockito.Mockito.never()).deleteAllById(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void permanentDelete_없는폴더는_멱등성공() {
+        when(folderRepository.findByIdAndUsersIdIncludingDeleted(1L, USER)).thenReturn(Optional.empty());
+        when(folderRepository.findById(1L)).thenReturn(Optional.empty());
 
         folderService.permanentDelete(USER, 1L);
 
-        verify(fileService).permanentDeleteByFolderIds(List.of(1L));
-        verify(folderRepository).deleteAllById(List.of(1L));
+        org.mockito.Mockito.verifyNoInteractions(fileService);
+        org.mockito.Mockito.verify(folderRepository, org.mockito.Mockito.never()).deleteAllById(org.mockito.ArgumentMatchers.anyList());
     }
 
     @Test
     void permanentDelete_다른사람_폴더면_예외() {
         when(folderRepository.findByIdAndUsersIdIncludingDeleted(1L, USER)).thenReturn(Optional.empty());
+        Folder other = folder(1L, null, null);
+        other.setUsersId(2L);
+        when(folderRepository.findById(1L)).thenReturn(Optional.of(other));
 
         assertThatThrownBy(() -> folderService.permanentDelete(USER, 1L))
                 .isInstanceOf(FolderNotFoundException.class);

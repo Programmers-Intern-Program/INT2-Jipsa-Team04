@@ -19,8 +19,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,7 +33,6 @@ import java.util.stream.Collectors;
 public class FileService {
 
     private static final int PAGE_SIZE = 20;
-    private static final Logger log = LoggerFactory.getLogger(FileService.class);
 
     private final FileRepository fileRepository;
     private final JobRepository jobRepository;
@@ -181,8 +178,16 @@ public class FileService {
     @Transactional
     public void permanentDeleteByFolderIds(List<Long> folderIds) {
         List<File> files = fileRepository.findByFolderIdIn(folderIds);
+        File activeFile = files.stream()
+                .filter(file -> file.getDeletedAt() == null)
+                .findFirst()
+                .orElse(null);
+        if (activeFile != null) {
+            throw new BadRequestException("삭제되지 않은 하위 파일이 있습니다: " + activeFile.getId());
+        }
+        files.forEach(this::enqueueRagPurge);
+        files.forEach(this::deleteObject);
         files.forEach(file -> {
-            deleteObjectQuietly(file);
             jobRepository.deleteByFileId(file.getId());
             fileMetadataRepository.deleteByFileId(file.getId());
             messageCitationRepository.deleteByFileId(file.getId());
@@ -190,7 +195,6 @@ public class FileService {
         });
         fileRepository.deleteAll(files);
         fileRepository.flush();
-        files.forEach(this::enqueueRagPurgeQuietly);
     }
 
     @Transactional(readOnly = true)
@@ -244,33 +248,28 @@ public class FileService {
         if (!file.getUsersId().equals(userId)) {
             throw new ForbiddenException("해당 파일에 접근할 권한이 없습니다.");
         }
-        deleteObjectQuietly(file);
+        if (file.getDeletedAt() == null) {
+            throw new BadRequestException("삭제되지 않은 파일입니다: " + fileId);
+        }
+        enqueueRagPurge(file);
+        deleteObject(file);
         jobRepository.deleteByFileId(fileId);
         fileMetadataRepository.deleteByFileId(fileId);
         messageCitationRepository.deleteByFileId(fileId);
         chunkRepository.deleteByFileId(fileId);
         fileRepository.delete(file);
         fileRepository.flush();
-        enqueueRagPurgeQuietly(file);
     }
 
-    private void deleteObjectQuietly(File file) {
+    private void deleteObject(File file) {
         if (file.getS3Key() == null || file.getS3Key().isBlank()) {
             return;
         }
-        try {
-            s3Service.delete(bucket, file.getS3Key());
-        } catch (RuntimeException e) {
-            log.warn("S3 파일 삭제 실패 — DB에서는 파일을 제거합니다 (file {}, key {}): {}", file.getId(), file.getS3Key(), e.getMessage());
-        }
+        s3Service.delete(bucket, file.getS3Key());
     }
 
-    private void enqueueRagPurgeQuietly(File file) {
-        try {
-            ragPurgeService.enqueue(file.getId(), file.getUsersId());
-        } catch (RuntimeException e) {
-            log.warn("RAG 파일 정리 작업 등록을 건너뜁니다 (file {}): {}", file.getId(), e.getMessage());
-        }
+    private void enqueueRagPurge(File file) {
+        ragPurgeService.enqueue(file.getId(), file.getUsersId());
     }
 
     @Transactional(readOnly = true)
