@@ -8,13 +8,13 @@ import org.springframework.data.repository.query.Param;
 import java.time.LocalDateTime;
 import java.util.List;
 
-public interface RagPurgeTaskRepository extends JpaRepository<RagPurgeTask, Long> {
+public interface S3DeleteTaskRepository extends JpaRepository<S3DeleteTask, Long> {
 
-    List<RagPurgeTask> findTop50ByStatusAndNextAttemptAtBeforeOrderByNextAttemptAt(String status, LocalDateTime before);
+    List<S3DeleteTask> findTop50ByStatusAndNextAttemptAtBeforeOrderByNextAttemptAt(String status, LocalDateTime before);
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
-            update RagPurgeTask t
+            update S3DeleteTask t
             set t.status = :processing,
                 t.attempts = t.attempts + 1,
                 t.nextAttemptAt = :leaseUntil
@@ -32,7 +32,7 @@ public interface RagPurgeTaskRepository extends JpaRepository<RagPurgeTask, Long
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
-            update RagPurgeTask t
+            update S3DeleteTask t
             set t.status = :done,
                 t.nextAttemptAt = null,
                 t.lastError = null
@@ -44,7 +44,7 @@ public interface RagPurgeTaskRepository extends JpaRepository<RagPurgeTask, Long
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
-            update RagPurgeTask t
+            update S3DeleteTask t
             set t.status = :pending,
                 t.nextAttemptAt = :nextAttemptAt,
                 t.lastError = :lastError
@@ -58,7 +58,7 @@ public interface RagPurgeTaskRepository extends JpaRepository<RagPurgeTask, Long
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
-            update RagPurgeTask t
+            update S3DeleteTask t
             set t.status = :failed,
                 t.nextAttemptAt = null,
                 t.lastError = :lastError
@@ -71,7 +71,7 @@ public interface RagPurgeTaskRepository extends JpaRepository<RagPurgeTask, Long
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
-            update RagPurgeTask t
+            update S3DeleteTask t
             set t.status = :pending,
                 t.nextAttemptAt = :now,
                 t.lastError = :lastError
@@ -88,7 +88,7 @@ public interface RagPurgeTaskRepository extends JpaRepository<RagPurgeTask, Long
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
-            update RagPurgeTask t
+            update S3DeleteTask t
             set t.status = :failed,
                 t.nextAttemptAt = null,
                 t.lastError = :lastError
@@ -105,7 +105,7 @@ public interface RagPurgeTaskRepository extends JpaRepository<RagPurgeTask, Long
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
-            update RagPurgeTask t
+            update S3DeleteTask t
             set t.status = :failed,
                 t.nextAttemptAt = null,
                 t.lastError = :lastError

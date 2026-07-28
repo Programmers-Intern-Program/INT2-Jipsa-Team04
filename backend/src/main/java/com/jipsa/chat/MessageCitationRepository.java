@@ -11,7 +11,7 @@ public interface MessageCitationRepository extends JpaRepository<MessageCitation
 
     List<MessageCitation> findByConversationChatIdOrderByCitationOrder(Long conversationChatId);
 
-    @Modifying
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("delete from MessageCitation m where m.fileId = :fileId")
     void deleteByFileId(@Param("fileId") Long fileId);
 }

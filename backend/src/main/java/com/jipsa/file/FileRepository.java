@@ -35,6 +35,8 @@ public interface FileRepository extends JpaRepository<File, Long> {
     /** 폴더 영구삭제 시 정리 대상 — 이 폴더들 아래 있는 삭제된 파일 전부(휴지통에 있던 시점 무관). */
     List<File> findByFolderIdInAndDeletedAtIsNotNull(List<Long> folderIds);
 
+    List<File> findByFolderIdIn(List<Long> folderIds);
+
     /**
      * 폴더 복원 시 함께 복원할 파일 조회용 — 이 폴더가 삭제될 때 "같이" 삭제된 파일만 고른다
      * (deletedAt이 폴더 자신의 삭제 시각과 정확히 같은 것만). 폴더 삭제보다 먼저, 별개로

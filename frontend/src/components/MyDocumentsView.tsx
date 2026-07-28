@@ -967,6 +967,22 @@ export default function MyDocumentsView({
     return ids;
   };
 
+  const getAllFolderSubtreeIds = (folderId: number): Set<number> => {
+    const ids = new Set<number>();
+    const folderById = new Map(
+      [...folders, ...(trashFolders ?? [])].map((folder) => [folder.folderId, folder])
+    );
+    const collect = (currentId: number) => {
+      if (ids.has(currentId)) return;
+      ids.add(currentId);
+      [...folderById.values()]
+        .filter((folder) => folder.parentFolderId === currentId)
+        .forEach((folder) => collect(folder.folderId));
+    };
+    collect(folderId);
+    return ids;
+  };
+
   const refreshFolderViews = async (): Promise<boolean> => {
     const results = await Promise.allSettled([
       listFolders(),
@@ -989,31 +1005,6 @@ export default function MyDocumentsView({
       failed = true;
       console.warn("[folders] 활성 문서 목록 재동기화 실패:", documentsResult.reason);
     }
-    if (trashFoldersResult.status === "fulfilled") {
-      setTrashFolders(trashFoldersResult.value);
-      const freshFolderIds = new Set(trashFoldersResult.value.map((folder) => folder.folderId));
-      setCheckedTrashFolderIds((prev) => prev.filter((id) => freshFolderIds.has(id)));
-    } else {
-      failed = true;
-      console.warn("[folders] 휴지통 폴더 목록 재동기화 실패:", trashFoldersResult.reason);
-    }
-    if (trashDocumentsResult.status === "fulfilled") {
-      setTrashDocs(trashDocumentsResult.value);
-    } else {
-      failed = true;
-      console.warn("[folders] 휴지통 문서 목록 재동기화 실패:", trashDocumentsResult.reason);
-    }
-    return failed;
-  };
-
-  const refreshTrashViews = async (): Promise<boolean> => {
-    const results = await Promise.allSettled([
-      listAllFolderTrash(),
-      listAllTrash(),
-    ]);
-    const [trashFoldersResult, trashDocumentsResult] = results;
-    let failed = false;
-
     if (trashFoldersResult.status === "fulfilled") {
       setTrashFolders(trashFoldersResult.value);
       const freshFolderIds = new Set(trashFoldersResult.value.map((folder) => folder.folderId));
@@ -1070,9 +1061,9 @@ export default function MyDocumentsView({
     if (permanentDeleteInFlightRef.current) return;
     if (!window.confirm(`'${folderName}' 폴더를 영구 삭제하시겠습니까? 안의 파일까지 모두 되돌릴 수 없습니다.`)) return;
     await withPermanentDeleteLock(async () => {
-      const processedFolderIds = getTrashFolderSubtreeIds(folderId);
+      const processedFolderIds = getAllFolderSubtreeIds(folderId);
       const processedDocumentIds = new Set(
-        (trashDocs ?? [])
+        [...documents, ...(trashDocs ?? [])]
           .filter((doc) => doc.folderId !== null && processedFolderIds.has(doc.folderId))
           .map((doc) => doc.id)
       );
@@ -1082,9 +1073,15 @@ export default function MyDocumentsView({
         alert(`'${folderName}' 폴더 영구 삭제에 실패했습니다.\n사유: ${describeDeleteError(result.error)}`);
         return;
       }
+      setFolders((prev) => prev.filter((folder) => !processedFolderIds.has(folder.folderId)));
+      setTrashFolders((prev) => (prev ? prev.filter((folder) => !processedFolderIds.has(folder.folderId)) : prev));
+      setTrashDocs((prev) => (prev
+        ? prev.filter((doc) => doc.folderId === null || !processedFolderIds.has(doc.folderId))
+        : prev));
+      onUpdateDocuments((prev) => prev.filter((doc) => doc.folderId === null || !processedFolderIds.has(doc.folderId)));
       setCheckedDocIds((prev) => prev.filter((id) => !processedDocumentIds.has(id)));
       setCheckedTrashFolderIds((prev) => prev.filter((id) => !processedFolderIds.has(id)));
-      const refreshFailed = await refreshTrashViews();
+      const refreshFailed = await refreshFolderViews();
       getStorageUsage().then(setStorage).catch(() => {});
       if (refreshFailed) {
         alert("폴더 영구 삭제는 완료되었지만 일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요.");
@@ -1279,16 +1276,29 @@ export default function MyDocumentsView({
         results.push({ ...result, folderId });
       }
       const deletedFolderIds = new Set<number>();
+      const deletedSubtreeIds = new Set<number>();
       results.forEach((result) => {
         if (!result.succeeded) return;
+        getAllFolderSubtreeIds(result.folderId).forEach((folderId) => deletedSubtreeIds.add(folderId));
         getSelectedTrashFolderIdsForRoot(selectedFolderIds, result.folderId).forEach((folderId) => deletedFolderIds.add(folderId));
       });
       const deletedCount = deletedFolderIds.size;
       const failedFolderIds = selectedFolderIds.filter((folderId) => !deletedFolderIds.has(folderId));
       const failedResults = results.filter((result) => !result.succeeded);
-      const refreshFailed = await refreshTrashViews();
+      const deletedDocumentIds = new Set(
+        [...documents, ...(trashDocs ?? [])]
+          .filter((doc) => doc.folderId !== null && deletedSubtreeIds.has(doc.folderId))
+          .map((doc) => doc.id)
+      );
+      setFolders((prev) => prev.filter((folder) => !deletedSubtreeIds.has(folder.folderId)));
+      setTrashFolders((prev) => (prev ? prev.filter((folder) => !deletedSubtreeIds.has(folder.folderId)) : prev));
+      setTrashDocs((prev) => (prev
+        ? prev.filter((doc) => doc.folderId === null || !deletedSubtreeIds.has(doc.folderId))
+        : prev));
+      onUpdateDocuments((prev) => prev.filter((doc) => doc.folderId === null || !deletedSubtreeIds.has(doc.folderId)));
+      setCheckedDocIds((prev) => prev.filter((id) => !deletedDocumentIds.has(id)));
+      const refreshFailed = await refreshFolderViews();
       getStorageUsage().then(setStorage).catch(() => {});
-      setCheckedDocIds([]);
       const deleteMessage = deletedCount === 0
         ? "폴더를 영구 삭제하지 못했습니다."
         : failedFolderIds.length === 0
