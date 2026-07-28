@@ -3,6 +3,7 @@ package com.jipsa.file;
 import com.jipsa.common.BadRequestException;
 import com.jipsa.common.exception.FileNotFoundException;
 import com.jipsa.common.exception.ForbiddenException;
+import com.jipsa.chat.MessageCitationRepository;
 import com.jipsa.folder.Folder;
 import com.jipsa.folder.FolderNotFoundException;
 import com.jipsa.folder.FolderRepository;
@@ -51,13 +52,16 @@ class FileServiceTest {
     private ChunkRepository chunkRepository;
     @Mock
     private RagPurgeService ragPurgeService;
+    @Mock
+    private MessageCitationRepository messageCitationRepository;
 
     private FileService fileService;
 
     @BeforeEach
     void setUp() {
         fileService = new FileService(fileRepository, jobRepository, jobService, folderRepository,
-                fileMetadataRepository, s3Service, "test-bucket", 1000L, chunkRepository, ragPurgeService);
+                fileMetadataRepository, s3Service, "test-bucket", 1000L, chunkRepository, ragPurgeService,
+                messageCitationRepository);
     }
 
     private File ownedFile() {
@@ -372,6 +376,7 @@ class FileServiceTest {
 
         verify(s3Service).delete("test-bucket", "files/key-1");
         verify(jobRepository).deleteByFileId(1L);
+        verify(messageCitationRepository).deleteByFileId(1L);
         verify(fileRepository).delete(file);
     }
 
@@ -425,6 +430,7 @@ class FileServiceTest {
 
         verify(s3Service).delete("test-bucket", "files/key-2");
         verify(jobRepository).deleteByFileId(1L);
+        verify(messageCitationRepository).deleteByFileId(1L);
         verify(fileRepository).deleteAll(List.of(file));
     }
 }

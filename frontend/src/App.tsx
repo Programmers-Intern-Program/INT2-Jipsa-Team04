@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Sparkles,
@@ -138,11 +138,19 @@ export default function App() {
     () => window.location.pathname === OAUTH_CALLBACK_PATH || localStorage.getItem(TOKEN_KEY) !== null
   );
   const [activeTab, setActiveTab] = useState<string>("dashboard");
+  const [documentsVisible, setDocumentsVisible] = useState(false);
   const { stage: smartOrganizeStage } = useSmartOrganize();
   const smartApplyLocked = smartOrganizeStage === "applying";
   const navigateToTab = (tab: string) => {
-    if (!smartApplyLocked) setActiveTab(tab);
+    if (!smartApplyLocked) {
+      if (tab !== activeTab) setDocumentsVisible(false);
+      setActiveTab(tab);
+    }
   };
+  useLayoutEffect(() => {
+    const main = document.getElementById("main-scrollable-area");
+    if (main) main.scrollTop = 0;
+  }, [activeTab]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const { uploadedSignal } = useUploads();
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
@@ -750,7 +758,12 @@ export default function App() {
 
         {/* Dynamic Canvas Routing */}
         <main className="flex-1 overflow-y-auto p-8 bg-surface-bright" id="main-scrollable-area">
-          <AnimatePresence mode="wait">
+          <AnimatePresence
+            mode="wait"
+            onExitComplete={() => {
+              if (activeTab === "documents") setDocumentsVisible(true);
+            }}
+          >
             {activeTab === "dashboard" && (
               <motion.div
                 key="dashboard"
@@ -836,8 +849,17 @@ export default function App() {
                 <AdminView />
               </motion.div>
             )}
+
           </AnimatePresence>
-          <div className={activeTab === "documents" ? "block" : "hidden"}>
+          <motion.div
+            initial={{ opacity: 0, y: 15 }}
+            animate={{
+              opacity: activeTab === "documents" && documentsVisible ? 1 : 0,
+              y: activeTab === "documents" && documentsVisible ? 0 : 15,
+            }}
+            transition={{ duration: 0.25 }}
+            className={activeTab === "documents" && documentsVisible ? "block" : "hidden"}
+          >
             <MyDocumentsView
               documents={documents}
               onNavigateToChat={handleNavigateToChat}
@@ -848,7 +870,7 @@ export default function App() {
               onUpdateDocuments={setDocuments}
               sensitivity={committedSettings?.sensitivity ?? 0.85}
             />
-          </div>
+          </motion.div>
         </main>
       </div>
     </div>
