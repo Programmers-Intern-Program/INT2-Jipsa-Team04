@@ -62,6 +62,18 @@ interface MyDocumentsViewProps {
   sensitivity: number;
 }
 
+interface FolderPathCreationResult {
+  folders: FolderType[];
+  leafId: number | null;
+  createdCount: number;
+}
+
+interface FolderRenameTarget {
+  folderId: number;
+  name: string;
+  parentFolderId: number | null;
+}
+
 export default function MyDocumentsView({
   documents,
   onNavigateToChat,
@@ -207,10 +219,11 @@ export default function MyDocumentsView({
     currentFolders: FolderType[],
     segments: string[],
     startParentId: number | null = null
-  ): Promise<{ folders: FolderType[]; leafId: number | null }> => {
+  ): Promise<FolderPathCreationResult> => {
     let working = [...currentFolders];
     let parentId: number | null = startParentId;
     let leafId: number | null = null;
+    let createdCount = 0;
 
     for (const rawName of segments) {
       const name = rawName.trim();
@@ -227,9 +240,10 @@ export default function MyDocumentsView({
       working = [...working, { folderId: newId, name, parentFolderId: parentId }];
       parentId = newId;
       leafId = newId;
+      createdCount += 1;
     }
 
-    return { folders: working, leafId };
+    return { folders: working, leafId, createdCount };
   };
 
   // Folder collapse state
@@ -241,16 +255,22 @@ export default function MyDocumentsView({
 
   // Document checkbox selection state for batch actions
   const [checkedDocIds, setCheckedDocIds] = useState<string[]>([]);
+  const [checkedTrashFolderIds, setCheckedTrashFolderIds] = useState<number[]>([]);
   const [detailFileId, setDetailFileId] = useState<number | null>(null);
 
   // Modals state
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [newFolderError, setNewFolderError] = useState("");
+  const [folderRenameTarget, setFolderRenameTarget] = useState<FolderRenameTarget | null>(null);
+  const [folderRenameName, setFolderRenameName] = useState("");
+  const [folderRenameError, setFolderRenameError] = useState("");
   const [isMoveModalOpen, setIsMoveModalOpen] = useState(false);
   const [movingDocIds, setMovingDocIds] = useState<string[]>([]);
   const [moveTargetFolder, setMoveTargetFolder] = useState<number | null>(null);
   const [isCreatingNewFolderInMove, setIsCreatingNewFolderInMove] = useState(false);
   const [newFolderNameInMove, setNewFolderNameInMove] = useState("");
+  const [newFolderMoveError, setNewFolderMoveError] = useState("");
   const [movingFolderId, setMovingFolderId] = useState<number | null>(null);
   const [folderMoveTarget, setFolderMoveTarget] = useState<number | null>(null);
 
@@ -870,6 +890,83 @@ export default function MyDocumentsView({
     }
   };
 
+  const getTrashFolderSubtreeIds = (folderId: number): Set<number> => {
+    const ids = new Set<number>();
+    const collect = (currentId: number) => {
+      if (ids.has(currentId)) return;
+      ids.add(currentId);
+      (trashFolders ?? [])
+        .filter((folder) => folder.parentFolderId === currentId)
+        .forEach((folder) => collect(folder.folderId));
+    };
+    collect(folderId);
+    return ids;
+  };
+
+  const refreshFolderViews = async (): Promise<boolean> => {
+    const results = await Promise.allSettled([
+      listFolders(),
+      listAllFiles(),
+      listAllFolderTrash(),
+      listAllTrash(),
+    ]);
+    const [foldersResult, documentsResult, trashFoldersResult, trashDocumentsResult] = results;
+    let failed = false;
+
+    if (foldersResult.status === "fulfilled") {
+      setFolders(foldersResult.value);
+    } else {
+      failed = true;
+      console.warn("[folders] 활성 폴더 목록 재동기화 실패:", foldersResult.reason);
+    }
+    if (documentsResult.status === "fulfilled") {
+      onUpdateDocuments(documentsResult.value);
+    } else {
+      failed = true;
+      console.warn("[folders] 활성 문서 목록 재동기화 실패:", documentsResult.reason);
+    }
+    if (trashFoldersResult.status === "fulfilled") {
+      setTrashFolders(trashFoldersResult.value);
+      const freshFolderIds = new Set(trashFoldersResult.value.map((folder) => folder.folderId));
+      setCheckedTrashFolderIds((prev) => prev.filter((id) => freshFolderIds.has(id)));
+    } else {
+      failed = true;
+      console.warn("[folders] 휴지통 폴더 목록 재동기화 실패:", trashFoldersResult.reason);
+    }
+    if (trashDocumentsResult.status === "fulfilled") {
+      setTrashDocs(trashDocumentsResult.value);
+    } else {
+      failed = true;
+      console.warn("[folders] 휴지통 문서 목록 재동기화 실패:", trashDocumentsResult.reason);
+    }
+    return failed;
+  };
+
+  const refreshTrashViews = async (): Promise<boolean> => {
+    const results = await Promise.allSettled([
+      listAllFolderTrash(),
+      listAllTrash(),
+    ]);
+    const [trashFoldersResult, trashDocumentsResult] = results;
+    let failed = false;
+
+    if (trashFoldersResult.status === "fulfilled") {
+      setTrashFolders(trashFoldersResult.value);
+      const freshFolderIds = new Set(trashFoldersResult.value.map((folder) => folder.folderId));
+      setCheckedTrashFolderIds((prev) => prev.filter((id) => freshFolderIds.has(id)));
+    } else {
+      failed = true;
+      console.warn("[folders] 휴지통 폴더 목록 재동기화 실패:", trashFoldersResult.reason);
+    }
+    if (trashDocumentsResult.status === "fulfilled") {
+      setTrashDocs(trashDocumentsResult.value);
+    } else {
+      failed = true;
+      console.warn("[folders] 휴지통 문서 목록 재동기화 실패:", trashDocumentsResult.reason);
+    }
+    return failed;
+  };
+
   /**
    * 휴지통 폴더 복원 — 서버는 이 폴더의 하위 폴더·파일까지 전부 함께 복원한다.
    * 방금 누른 폴더 하나만 trashFolders에서 지우면, 같이 복원된 하위 폴더·파일은 이미
@@ -877,6 +974,7 @@ export default function MyDocumentsView({
    * "이미 처리된 리소스"라 실패한다 — 그래서 활성/휴지통 목록을 전부 다시 불러온다.
    */
   const handleRestoreFolder = async (folderId: number, folderName: string) => {
+    const processedFolderIds = getTrashFolderSubtreeIds(folderId);
     try {
       await restoreFolder(folderId);
     } catch (err) {
@@ -884,21 +982,13 @@ export default function MyDocumentsView({
       alert("폴더 복원에 실패했습니다.");
       return;
     }
-    try {
-      const [freshFolders, freshDocs, freshTrashFolders, freshTrashDocs] = await Promise.all([
-        listFolders(),
-        listAllFiles(),
-        listAllFolderTrash(),
-        listAllTrash(),
-      ]);
-      setFolders(freshFolders);
-      onUpdateDocuments(freshDocs);
-      setTrashFolders(freshTrashFolders);
-      setTrashDocs(freshTrashDocs);
-    } catch (err) {
-      console.warn("[folders] 복원 후 목록 재동기화 실패:", err);
+    setCheckedTrashFolderIds((prev) => prev.filter((id) => !processedFolderIds.has(id)));
+    const refreshFailed = await refreshFolderViews();
+    if (refreshFailed) {
+      alert("폴더 복원은 완료되었지만 일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요.");
+    } else {
+      alert(`'${folderName}' 폴더를 복원했습니다.`);
     }
-    alert(`'${folderName}' 폴더를 복원했습니다.`);
   };
 
   /**
@@ -908,6 +998,7 @@ export default function MyDocumentsView({
    */
   const handlePermanentDeleteFolder = async (folderId: number, folderName: string) => {
     if (!window.confirm(`'${folderName}' 폴더를 영구 삭제하시겠습니까? 안의 파일까지 모두 되돌릴 수 없습니다.`)) return;
+    const processedFolderIds = getTrashFolderSubtreeIds(folderId);
     try {
       await permanentDeleteFolder(folderId);
     } catch (err) {
@@ -915,32 +1006,68 @@ export default function MyDocumentsView({
       alert("폴더 영구 삭제에 실패했습니다.");
       return;
     }
-    try {
-      const [freshTrashFolders, freshTrashDocs] = await Promise.all([
-        listAllFolderTrash(),
-        listAllTrash(),
-      ]);
-      setTrashFolders(freshTrashFolders);
-      setTrashDocs(freshTrashDocs);
-    } catch (err) {
-      console.warn("[folders] 영구 삭제 후 휴지통 재동기화 실패:", err);
-    }
+    setCheckedTrashFolderIds((prev) => prev.filter((id) => !processedFolderIds.has(id)));
+    const refreshFailed = await refreshTrashViews();
     getStorageUsage().then(setStorage).catch(() => {});
-    alert(`'${folderName}' 폴더를 영구 삭제했습니다.`);
+    if (refreshFailed) {
+      alert("폴더 영구 삭제는 완료되었지만 일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요.");
+    } else {
+      alert(`'${folderName}' 폴더를 영구 삭제했습니다.`);
+    }
   };
 
-  const handleRenameFolder = async (folderId: number, currentName: string) => {
-    const input = window.prompt("폴더의 새 이름을 입력하세요.", currentName);
-    if (input === null) return;
-    const name = input.trim();
-    if (!name || name === currentName) return;
+  const closeNewFolderModal = useCallback(() => {
+    setIsNewFolderModalOpen(false);
+    setNewFolderName("");
+    setNewFolderError("");
+  }, [setIsNewFolderModalOpen, setNewFolderName, setNewFolderError]);
+
+  const closeFolderRenameModal = useCallback(() => {
+    setFolderRenameTarget(null);
+    setFolderRenameName("");
+    setFolderRenameError("");
+  }, [setFolderRenameTarget, setFolderRenameName, setFolderRenameError]);
+
+  const handleRenameFolder = (folderId: number, currentName: string) => {
+    const folder = folders.find((item) => item.folderId === folderId);
+    setFolderRenameTarget({
+      folderId,
+      name: currentName,
+      parentFolderId: folder?.parentFolderId ?? null,
+    });
+    setFolderRenameName(currentName);
+    setFolderRenameError("");
+  };
+
+  const submitFolderRename = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!folderRenameTarget) return;
+    const name = folderRenameName.trim();
+    if (!name) {
+      setFolderRenameError("폴더 이름을 입력해 주세요.");
+      return;
+    }
+    if (name === folderRenameTarget.name) {
+      closeFolderRenameModal();
+      return;
+    }
+    const duplicate = folders.some(
+      (folder) => folder.folderId !== folderRenameTarget.folderId
+        && folder.parentFolderId === folderRenameTarget.parentFolderId
+        && folder.name === name
+    );
+    if (duplicate) {
+      setFolderRenameError("같은 위치에 같은 이름의 폴더가 이미 있습니다.");
+      return;
+    }
     try {
-      await updateFolder(folderId, { name });
+      await updateFolder(folderRenameTarget.folderId, { name });
       const refreshed = await listFolders();
       setFolders(refreshed);
+      closeFolderRenameModal();
     } catch (err) {
       console.warn("[folders] 폴더 이름 변경 실패 - 상태를 변경하지 않음:", err);
-      alert("폴더 이름 변경에 실패했습니다.");
+      setFolderRenameError("폴더 이름 변경에 실패했습니다. 잠시 후 다시 시도해 주세요.");
     }
   };
 
@@ -956,6 +1083,141 @@ export default function MyDocumentsView({
     }
   };
 
+  const handleCreateFolder = async () => {
+    const segments = newFolderName.trim().split("/").map((segment) => segment.trim()).filter(Boolean);
+    if (segments.length === 0) {
+      setNewFolderError("폴더 이름을 입력해 주세요.");
+      return;
+    }
+    setNewFolderError("");
+    try {
+      const result = await createFolderPathViaApi(folders, segments, selectedFolder);
+      if (result.createdCount === 0) {
+        setNewFolderError("같은 디렉터리에 같은 이름의 폴더가 이미 존재합니다.");
+        return;
+      }
+      setFolders(result.folders);
+      closeNewFolderModal();
+    } catch (err) {
+      console.warn("[folders] POST /api/v1/folders 실패:", err);
+      setNewFolderError("폴더 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+    }
+  };
+
+  const handleCreateFolderInMove = async () => {
+    const segments = newFolderNameInMove.trim().split("/").map((segment) => segment.trim()).filter(Boolean);
+    if (segments.length === 0) {
+      setNewFolderMoveError("폴더 이름을 입력해 주세요.");
+      return;
+    }
+    setNewFolderMoveError("");
+    try {
+      const result = await createFolderPathViaApi(folders, segments);
+      if (result.createdCount === 0) {
+        setNewFolderMoveError("같은 디렉터리에 같은 이름의 폴더가 이미 존재합니다.");
+        return;
+      }
+      setFolders(result.folders);
+      setMoveTargetFolder(result.leafId);
+      setIsCreatingNewFolderInMove(false);
+      setNewFolderNameInMove("");
+      setNewFolderMoveError("");
+    } catch (err) {
+      console.warn("[folders] POST /api/v1/folders 실패:", err);
+      setNewFolderMoveError("폴더 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+    }
+  };
+
+  const getSelectedTrashFolderRoots = (folderIds: number[]): number[] => {
+    if (!trashFolders) return [];
+    const selected = new Set(folderIds);
+    const trashFolderById = new Map(trashFolders.map((folder) => [folder.folderId, folder]));
+    return folderIds.filter((folderId) => {
+      let parentId = trashFolderById.get(folderId)?.parentFolderId ?? null;
+      while (parentId !== null) {
+        if (selected.has(parentId)) return false;
+        parentId = trashFolderById.get(parentId)?.parentFolderId ?? null;
+      }
+      return true;
+    });
+  };
+
+  const handleSelectAllTrash = () => {
+    const documentIds = (trashDocs ?? []).map((doc) => doc.id);
+    const folderIds = (trashFolders ?? []).map((folder) => folder.folderId);
+    const allSelected = documentIds.length + folderIds.length > 0
+      && documentIds.every((id) => checkedDocIds.includes(id))
+      && folderIds.every((id) => checkedTrashFolderIds.includes(id));
+    if (allSelected) {
+      setCheckedDocIds((prev) => prev.filter((id) => !documentIds.includes(id)));
+      setCheckedTrashFolderIds([]);
+      return;
+    }
+    setCheckedDocIds((prev) => Array.from(new Set([...prev, ...documentIds])));
+    setCheckedTrashFolderIds(folderIds);
+  };
+
+  const handleRestoreTrashFolders = async (folderIds: number[]) => {
+    const roots = getSelectedTrashFolderRoots(folderIds);
+    if (roots.length === 0) return;
+    const results = await Promise.allSettled(roots.map((folderId) => restoreFolder(folderId)));
+    const restoredCount = results.filter((result) => result.status === "fulfilled").length;
+    const refreshFailed = await refreshFolderViews();
+    setCheckedDocIds([]);
+    setCheckedTrashFolderIds([]);
+    const restoreMessage = restoredCount === 0
+      ? "폴더를 복원하지 못했습니다."
+      : restoredCount === roots.length
+        ? `${folderIds.length}개의 폴더를 복원했습니다.`
+        : `${restoredCount}개의 폴더를 복원했습니다. ${roots.length - restoredCount}개의 폴더는 복원하지 못했습니다.`;
+    const refreshMessage = refreshFailed
+      ? "일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요."
+      : "";
+    alert([restoreMessage, refreshMessage].filter(Boolean).join(" "));
+  };
+
+  const handlePermanentDeleteTrashFolders = async (folderIds: number[]) => {
+    const roots = getSelectedTrashFolderRoots(folderIds);
+    if (roots.length === 0) return;
+    if (!window.confirm(`선택한 ${folderIds.length}개의 폴더를 영구 삭제하시겠습니까? 안의 파일까지 모두 되돌릴 수 없습니다.`)) return;
+    const results = await Promise.allSettled(roots.map((folderId) => permanentDeleteFolder(folderId)));
+    const deletedCount = results.filter((result) => result.status === "fulfilled").length;
+    const refreshFailed = await refreshTrashViews();
+    getStorageUsage().then(setStorage).catch(() => {});
+    setCheckedDocIds([]);
+    setCheckedTrashFolderIds([]);
+    const deleteMessage = deletedCount === 0
+      ? "폴더를 영구 삭제하지 못했습니다."
+      : deletedCount === roots.length
+        ? `${folderIds.length}개의 폴더를 영구 삭제했습니다.`
+        : `${deletedCount}개의 폴더를 영구 삭제했습니다. ${roots.length - deletedCount}개의 폴더는 삭제하지 못했습니다.`;
+    const refreshMessage = refreshFailed
+      ? "일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요."
+      : "";
+    alert([deleteMessage, refreshMessage].filter(Boolean).join(" "));
+  };
+
+  const switchDocumentTab = (tab: "mydrive" | "starred" | "recent" | "trash", folderId: number | null = null) => {
+    setCurrentTab(tab);
+    setSelectedFolder(folderId);
+    setCheckedDocIds([]);
+    setCheckedTrashFolderIds([]);
+  };
+
+  useEffect(() => {
+    if (!isNewFolderModalOpen && !folderRenameTarget) return;
+    const handleModalEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (folderRenameTarget) {
+        closeFolderRenameModal();
+      } else {
+        closeNewFolderModal();
+      }
+    };
+    document.addEventListener("keydown", handleModalEscape);
+    return () => document.removeEventListener("keydown", handleModalEscape);
+  }, [isNewFolderModalOpen, folderRenameTarget, closeNewFolderModal, closeFolderRenameModal]);
+
   const renderFolderNode = (node: FolderTreeNode, depth: number = 0): React.ReactNode => {
     const hasChildren = node.children.length > 0;
     const isExpanded = expandedFolders[node.id] ?? true; // Default expanded
@@ -970,13 +1232,12 @@ export default function MyDocumentsView({
       <div key={node.id} className="space-y-1">
         <div 
           onClick={() => {
-            setCurrentTab("mydrive");
-            setSelectedFolder(node.id);
+            switchDocumentTab("mydrive", node.id);
           }}
-          className={`group py-2 px-2.5 rounded-r-full flex items-center justify-between cursor-pointer gap-2 transition-all mr-1.5 ${
+          className={`group py-2 px-2.5 rounded-r-full inline-flex items-center cursor-pointer gap-2 transition-all mr-1.5 min-w-[220px] w-max ${
             isSelected 
-              ? "bg-primary/10 text-primary font-bold border-l-4 border-primary pl-1.5" 
-              : "text-outline hover:text-on-surface hover:bg-surface-container-low pl-2"
+            ? "bg-primary/10 text-primary font-bold border-l-4 border-primary pl-1.5"
+            : "text-outline hover:text-on-surface hover:bg-surface-container-low pl-2"
           }`}
         >
           <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -997,15 +1258,15 @@ export default function MyDocumentsView({
               <FolderClosed className="w-4 h-4 text-outline shrink-0 group-hover:text-primary transition-colors" />
             )}
 
-            <span className="text-xs font-semibold truncate" title={node.name}>{node.name}</span>
-          </div>
-
-          <div className="flex items-center gap-1 shrink-0">
+            <span className="text-xs font-semibold whitespace-nowrap" title={node.name}>{node.name}</span>
             <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
               isSelected ? "bg-primary/20 text-primary" : "bg-surface-container-low text-outline"
             }`}>
               {node.totalFileCount}
             </span>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
             <button
                 type="button"
                 onClick={(e) => {
@@ -1044,13 +1305,20 @@ export default function MyDocumentsView({
         </div>
 
         {hasChildren && isExpanded && (
-          <div className="space-y-1 border-l border-outline-variant/30 ml-4 pl-2">
+          <div className="space-y-1 border-l border-outline-variant/30 ml-4 pl-2 w-max">
             {node.children.map(child => renderFolderNode(child, depth + 1))}
           </div>
         )}
       </div>
     );
   };
+
+  const trashDocIdsForSelection = (trashDocs ?? []).map((doc) => doc.id);
+  const trashFolderIdsForSelection = (trashFolders ?? []).map((folder) => folder.folderId);
+  const hasTrashItems = trashDocIdsForSelection.length + trashFolderIdsForSelection.length > 0;
+  const allTrashItemsSelected = hasTrashItems
+    && trashDocIdsForSelection.every((id) => checkedDocIds.includes(id))
+    && trashFolderIdsForSelection.every((id) => checkedTrashFolderIds.includes(id));
 
   return (
     <motion.div 
@@ -1185,8 +1453,7 @@ export default function MyDocumentsView({
               <div className="space-y-1">
                 <div 
                   onClick={() => {
-                    setCurrentTab("mydrive");
-                    setSelectedFolder(null);
+                    switchDocumentTab("mydrive");
                   }}
                   className={`group py-2.5 px-3 rounded-r-full flex items-center justify-between cursor-pointer gap-2 transition-all mr-1.5 ${
                     currentTab === "mydrive" && selectedFolder === null
@@ -1217,22 +1484,23 @@ export default function MyDocumentsView({
 
                 {/* Indented folders under My Drive */}
                 {isMyDriveExpanded && (
-                  <div className="space-y-1 border-l border-outline-variant/30 ml-[23px] pl-3.5 max-h-[280px] overflow-y-auto custom-scrollbar">
+                  <div className="max-h-[280px] overflow-auto custom-scrollbar">
+                    <div className="space-y-1 border-l border-outline-variant/30 ml-[23px] pl-3.5 pr-4 w-max min-w-full">
                     {folderTree.length === 0 ? (
                       <p className="text-[10px] text-outline text-center py-2 italic">폴더가 비어 있습니다.</p>
                     ) : (
                       folderTree.map((node) => renderFolderNode(node, 0))
                     )}
+                    </div>
                   </div>
                 )}
               </div>
 
               {/* Starred (중요 문서함) */}
               <div 
-                onClick={() => {
-                  setCurrentTab("starred");
-                  setSelectedFolder(null);
-                }}
+                  onClick={() => {
+                    switchDocumentTab("starred");
+                  }}
                 className={`group py-2.5 px-3 rounded-r-full flex items-center justify-between cursor-pointer gap-2 transition-all mr-1.5 ${
                   currentTab === "starred"
                     ? "bg-primary/10 text-primary font-bold border-l-4 border-primary pl-2" 
@@ -1254,10 +1522,9 @@ export default function MyDocumentsView({
 
               {/* Recent (최근 문서함) */}
               <div 
-                onClick={() => {
-                  setCurrentTab("recent");
-                  setSelectedFolder(null);
-                }}
+                  onClick={() => {
+                    switchDocumentTab("recent");
+                  }}
                 className={`group py-2.5 px-3 rounded-r-full flex items-center justify-between cursor-pointer gap-2 transition-all mr-1.5 ${
                   currentTab === "recent"
                     ? "bg-primary/10 text-primary font-bold border-l-4 border-primary pl-2" 
@@ -1274,10 +1541,9 @@ export default function MyDocumentsView({
 
               {/* Trash (휴지통) */}
               <div 
-                onClick={() => {
-                  setCurrentTab("trash");
-                  setSelectedFolder(null);
-                }}
+                  onClick={() => {
+                    switchDocumentTab("trash");
+                  }}
                 className={`group py-2.5 px-3 rounded-r-full flex items-center justify-between cursor-pointer gap-2 transition-all mr-1.5 ${
                   currentTab === "trash"
                     ? "bg-primary/10 text-primary font-bold border-l-4 border-primary pl-2" 
@@ -1318,8 +1584,7 @@ export default function MyDocumentsView({
                 <button
                   type="button"
                   onClick={() => {
-                    setCurrentTab("mydrive");
-                    setSelectedFolder(null);
+                    switchDocumentTab("mydrive");
                   }}
                   className="hover:text-primary transition-colors cursor-pointer flex items-center gap-1"
                 >
@@ -1472,7 +1737,7 @@ export default function MyDocumentsView({
 
           {/* Documents render stack (Grid vs List) */}
           <div className="bg-white rounded-3xl border border-outline-variant overflow-hidden shadow-sm" id="vault-documents-list-section">
-            <div className="px-8 py-5 border-b border-outline-variant flex justify-between items-center bg-surface-container-lowest" id="vault-docs-header">
+            <div className="px-8 py-5 border-b border-outline-variant flex flex-wrap justify-between items-center gap-3 bg-surface-container-lowest" id="vault-docs-header">
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-extrabold text-on-surface">
                   {currentTab === "mydrive" 
@@ -1486,22 +1751,41 @@ export default function MyDocumentsView({
                   총 {filteredDocuments.length}개
                 </span>
               </div>
+              {currentTab === "trash" && (
+                <button
+                  type="button"
+                  onClick={handleSelectAllTrash}
+                  disabled={!hasTrashItems}
+                  className="px-3 py-1.5 bg-white border border-outline-variant rounded-lg text-[11px] font-bold text-primary hover:bg-primary/5 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Check className="w-3.5 h-3.5 inline mr-1" />
+                  {allTrashItemsSelected ? "전체 해제" : "휴지통 전체 선택"}
+                </button>
+              )}
             </div>
 
             {/* Batch Action Bar */}
-            {checkedDocIds.length > 0 && (
+            {(checkedDocIds.length > 0 || checkedTrashFolderIds.length > 0) && (
               <div className="m-6 bg-primary/5 border border-primary/10 p-4 rounded-2xl flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
                 <div className="flex items-center gap-3">
-                  <span className="text-xs font-extrabold text-primary">{checkedDocIds.length}개 문서가 선택되었습니다.</span>
+                  <span className="text-xs font-extrabold text-primary">
+                    {checkedDocIds.length > 0 && `${checkedDocIds.length}개 문서`}
+                    {checkedDocIds.length > 0 && checkedTrashFolderIds.length > 0 && " · "}
+                    {checkedTrashFolderIds.length > 0 && `${checkedTrashFolderIds.length}개 폴더`}
+                    가 선택되었습니다.
+                  </span>
                   <button 
-                    onClick={() => setCheckedDocIds([])}
+                    onClick={() => {
+                      setCheckedDocIds([]);
+                      setCheckedTrashFolderIds([]);
+                    }}
                     className="text-[11px] text-outline hover:text-on-surface font-bold underline cursor-pointer"
                   >
                     선택 해제
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
-                  {currentTab === "trash" && (
+                  {currentTab === "trash" && checkedDocIds.length > 0 && (
                       <>
                         <button
                             onClick={() => handleRestoreDocuments(checkedDocIds)}
@@ -1513,9 +1797,25 @@ export default function MyDocumentsView({
                             onClick={() => handlePermanentDeleteDocuments(checkedDocIds)}
                             className="px-3.5 py-2 bg-red-600 text-white text-[11px] font-extrabold rounded-xl hover:bg-red-700 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
                         >
-                          <Trash2 className="w-3.5 h-3.5" /> 선택 영구 삭제
+                          <Trash2 className="w-3.5 h-3.5" /> 문서 영구 삭제
                         </button>
                       </>
+                  )}
+                  {currentTab === "trash" && checkedTrashFolderIds.length > 0 && (
+                    <>
+                      <button
+                        onClick={() => handleRestoreTrashFolders(checkedTrashFolderIds)}
+                        className="px-3.5 py-2 bg-primary text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                      >
+                        <Undo2 className="w-3.5 h-3.5" /> 폴더 복원
+                      </button>
+                      <button
+                        onClick={() => handlePermanentDeleteTrashFolders(checkedTrashFolderIds)}
+                        className="px-3.5 py-2 bg-red-600 text-white text-[11px] font-extrabold rounded-xl hover:bg-red-700 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> 폴더 영구 삭제
+                      </button>
+                    </>
                   )}
                   {currentTab !== "trash" && (
                       <>
@@ -1626,12 +1926,24 @@ export default function MyDocumentsView({
                       삭제된 폴더 ({trashFolders.length}개)
                     </h4>
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                      {trashFolders.map((folder) => (
+                      {trashFolders.map((folder) => {
+                        const isChecked = checkedTrashFolderIds.includes(folder.folderId);
+                        return (
                         <div
                           key={`trash-folder-grid-${folder.folderId}`}
-                          className="bg-surface-container-lowest p-4.5 rounded-2xl border border-outline-variant flex items-center justify-between"
+                          className={`bg-surface-container-lowest p-4.5 rounded-2xl border flex items-center justify-between relative ${isChecked ? "border-primary bg-primary/[0.02]" : "border-outline-variant"}`}
                         >
-                          <div className="flex items-center gap-3 min-w-0">
+                          <button
+                            type="button"
+                            onClick={() => setCheckedTrashFolderIds((prev) => prev.includes(folder.folderId)
+                              ? prev.filter((id) => id !== folder.folderId)
+                              : [...prev, folder.folderId])}
+                            className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all cursor-pointer shrink-0 mr-2 ${isChecked ? "bg-primary border-primary text-white" : "bg-white border-outline-variant hover:border-outline text-transparent"}`}
+                            aria-label={`${folder.name} 폴더 선택`}
+                          >
+                            <Check className="w-3.5 h-3.5 stroke-[3]" />
+                          </button>
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
                             <div className="p-2 bg-outline-variant/20 rounded-xl shrink-0">
                               <FolderClosed className="w-6 h-6 text-outline shrink-0" />
                             </div>
@@ -1656,7 +1968,8 @@ export default function MyDocumentsView({
                             </button>
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -1945,10 +2258,24 @@ export default function MyDocumentsView({
                     })}
 
                     {/* 1-B. 삭제된 폴더 Row Section (휴지통 탭 전용) */}
-                    {currentTab === "trash" && trashFolders && trashFolders.map((folder) => (
-                      <tr key={`trash-folder-row-${folder.folderId}`} className="hover:bg-surface-container-low transition-colors group">
+                    {currentTab === "trash" && trashFolders && trashFolders.map((folder) => {
+                      const isChecked = checkedTrashFolderIds.includes(folder.folderId);
+                      return (
+                      <tr key={`trash-folder-row-${folder.folderId}`} className={`hover:bg-surface-container-low transition-colors group ${isChecked ? "bg-primary/[0.02]" : ""}`}>
                         <td className="px-6 py-4 text-center">
-                          <FolderClosed className="w-4 h-4 text-outline mx-auto shrink-0" />
+                          <div className="flex items-center justify-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setCheckedTrashFolderIds((prev) => prev.includes(folder.folderId)
+                                ? prev.filter((id) => id !== folder.folderId)
+                                : [...prev, folder.folderId])}
+                              className={`w-4.5 h-4.5 rounded border flex items-center justify-center cursor-pointer transition-all ${isChecked ? "bg-primary border-primary text-white" : "bg-white border-outline-variant hover:border-outline text-transparent"}`}
+                              aria-label={`${folder.name} 폴더 선택`}
+                            >
+                              <Check className="w-3 h-3 stroke-[3]" />
+                            </button>
+                            <FolderClosed className="w-4 h-4 text-outline shrink-0" />
+                          </div>
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
@@ -1981,7 +2308,8 @@ export default function MyDocumentsView({
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
 
                     {/* 2. Files Row Section */}
                     {currentLevelDocuments.map((doc) => {
@@ -2847,23 +3175,28 @@ export default function MyDocumentsView({
       {/* 4) 새 폴더 생성 모달 */}
       <AnimatePresence>
         {isNewFolderModalOpen && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div
+            className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+            onClick={closeNewFolderModal}
+          >
             <motion.div 
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               className="bg-white rounded-3xl w-full max-w-md p-6 shadow-2xl border border-outline-variant relative overflow-hidden space-y-4"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="new-folder-modal-title"
+              onClick={(event) => event.stopPropagation()}
             >
               <div className="flex items-center justify-between border-b border-outline-variant pb-3">
                 <div className="flex items-center gap-2 text-primary">
                   <FolderPlus className="w-5 h-5" />
-                  <h3 className="text-base font-bold">새 폴더 만들기</h3>
+                  <h3 id="new-folder-modal-title" className="text-base font-bold">새 폴더 만들기</h3>
                 </div>
                 <button 
-                  onClick={() => {
-                    setIsNewFolderModalOpen(false);
-                    setNewFolderName("");
-                  }}
+                  type="button"
+                  onClick={closeNewFolderModal}
                   className="p-1 hover:bg-surface-container rounded-full text-outline hover:text-on-surface cursor-pointer"
                 >
                   <X className="w-4 h-4" />
@@ -2879,48 +3212,111 @@ export default function MyDocumentsView({
                   <label className="text-xs font-bold text-on-surface">폴더 이름</label>
                   <input 
                     type="text"
-                    required
                     value={newFolderName}
-                    onChange={(e) => setNewFolderName(e.target.value)}
+                    onChange={(e) => {
+                      setNewFolderName(e.target.value);
+                      setNewFolderError("");
+                    }}
                     placeholder="예: 프로젝트 A/결과보고서"
                     className="w-full bg-white border border-outline-variant rounded-xl py-2 px-3 text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-semibold"
                   />
+                  {newFolderError && (
+                    <p className="text-xs font-semibold text-rose-600" role="alert">{newFolderError}</p>
+                  )}
                 </div>
               </div>
 
               <div className="pt-3 flex justify-end gap-2.5">
                 <button 
                   type="button" 
-                  onClick={() => {
-                    setIsNewFolderModalOpen(false);
-                    setNewFolderName("");
-                  }}
+                  onClick={closeNewFolderModal}
                   className="px-4 py-2 bg-surface-container hover:bg-surface-container-high rounded-xl text-xs font-bold text-on-surface cursor-pointer"
                 >
                   취소
                 </button>
                 <button
                   type="button"
-                  onClick={async () => {
-                    const segments = newFolderName.trim().split("/").filter(Boolean);
-                    if (segments.length === 0) return;
-                    try {
-                      const { folders: updatedFolders } = await createFolderPathViaApi(folders, segments, selectedFolder);
-                      setFolders(updatedFolders);
-                      setIsNewFolderModalOpen(false);
-                      setNewFolderName("");
-                      alert("새 폴더가 성공적으로 생성되었습니다.");
-                    } catch (err) {
-                      console.warn("[folders] POST /api/v1/folders 실패:", err);
-                      alert("폴더 생성에 실패했습니다.");
-                    }
-                  }}
+                  onClick={() => void handleCreateFolder()}
                   className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-opacity-95 shadow-md shadow-primary/10 cursor-pointer"
                 >
                   폴더 생성 완료
                 </button>
               </div>
             </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {folderRenameTarget && (
+          <div
+            className="fixed inset-0 z-[115] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+            onClick={closeFolderRenameModal}
+          >
+            <motion.form
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onSubmit={submitFolderRename}
+              onClick={(event) => event.stopPropagation()}
+              className="bg-white rounded-3xl w-full max-w-md p-6 shadow-2xl border border-outline-variant relative overflow-hidden space-y-4"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="folder-rename-modal-title"
+            >
+              <div className="flex items-center justify-between border-b border-outline-variant pb-3">
+                <div className="flex items-center gap-2 text-primary">
+                  <Pencil className="w-5 h-5" />
+                  <h3 id="folder-rename-modal-title" className="text-base font-bold">폴더 이름 변경</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeFolderRenameModal}
+                  className="p-1 hover:bg-surface-container rounded-full text-outline hover:text-on-surface cursor-pointer"
+                  aria-label="폴더 이름 변경 닫기"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <p className="text-xs text-outline leading-relaxed">
+                  현재 위치: <span className="font-semibold text-on-surface">{getFolderPath(folderRenameTarget.folderId, folders) || "내 드라이브"}</span>
+                </p>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-xs font-bold text-on-surface">새 폴더 이름</span>
+                  <input
+                    type="text"
+                    value={folderRenameName}
+                    onChange={(event) => {
+                      setFolderRenameName(event.target.value);
+                      setFolderRenameError("");
+                    }}
+                    autoFocus
+                    className="w-full bg-white border border-outline-variant rounded-xl py-2 px-3 text-xs outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all font-semibold"
+                  />
+                </label>
+                {folderRenameError && (
+                  <p className="text-xs font-semibold text-rose-600" role="alert">{folderRenameError}</p>
+                )}
+              </div>
+
+              <div className="pt-3 flex justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={closeFolderRenameModal}
+                  className="px-4 py-2 bg-surface-container hover:bg-surface-container-high rounded-xl text-xs font-bold text-on-surface cursor-pointer"
+                >
+                  취소
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-opacity-95 shadow-md shadow-primary/10 cursor-pointer"
+                >
+                  변경 완료
+                </button>
+              </div>
+            </motion.form>
           </div>
         )}
       </AnimatePresence>
@@ -2945,6 +3341,7 @@ export default function MyDocumentsView({
                     setIsMoveModalOpen(false);
                     setIsCreatingNewFolderInMove(false);
                     setNewFolderNameInMove("");
+                    setNewFolderMoveError("");
                   }}
                   className="p-1 hover:bg-surface-container rounded-full text-outline hover:text-on-surface cursor-pointer"
                 >
@@ -2996,7 +3393,10 @@ export default function MyDocumentsView({
                 {!isCreatingNewFolderInMove ? (
                   <button
                     type="button"
-                    onClick={() => setIsCreatingNewFolderInMove(true)}
+                    onClick={() => {
+                      setIsCreatingNewFolderInMove(true);
+                      setNewFolderMoveError("");
+                    }}
                     className="text-[11px] text-primary hover:text-secondary font-bold flex items-center gap-1 cursor-pointer"
                   >
                     + 새 폴더를 즉시 만들어 이곳으로 이동하기
@@ -3008,26 +3408,16 @@ export default function MyDocumentsView({
                       <input 
                         type="text"
                         value={newFolderNameInMove}
-                        onChange={(e) => setNewFolderNameInMove(e.target.value)}
+                        onChange={(e) => {
+                          setNewFolderNameInMove(e.target.value);
+                          setNewFolderMoveError("");
+                        }}
                         placeholder="예: 부서공유/인사/양식"
                         className="flex-1 bg-white border border-outline-variant rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary transition-all font-semibold"
                       />
                       <button
                         type="button"
-                        onClick={async () => {
-                          const segments = newFolderNameInMove.trim().split("/").filter(Boolean);
-                          if (segments.length === 0) return;
-                          try {
-                            const { folders: updatedFolders, leafId } = await createFolderPathViaApi(folders, segments);
-                            setFolders(updatedFolders);
-                            setMoveTargetFolder(leafId);
-                            setIsCreatingNewFolderInMove(false);
-                            setNewFolderNameInMove("");
-                          } catch (err) {
-                            console.warn("[folders] POST /api/v1/folders 실패:", err);
-                            alert("폴더 생성에 실패했습니다.");
-                          }
-                        }}
+                        onClick={() => void handleCreateFolderInMove()}
                         className="px-3 bg-secondary text-white text-xs font-bold rounded-lg hover:bg-opacity-95 cursor-pointer"
                       >
                         생성
@@ -3035,14 +3425,18 @@ export default function MyDocumentsView({
                       <button
                         type="button"
                         onClick={() => {
-                          setIsCreatingNewFolderInMove(false);
-                          setNewFolderNameInMove("");
-                        }}
+                        setIsCreatingNewFolderInMove(false);
+                        setNewFolderNameInMove("");
+                        setNewFolderMoveError("");
+                      }}
                         className="px-2 border border-outline-variant rounded-lg text-[10px] font-bold text-outline hover:text-on-surface cursor-pointer"
                       >
                         취소
                       </button>
                     </div>
+                    {newFolderMoveError && (
+                      <p className="text-[11px] font-semibold text-rose-600" role="alert">{newFolderMoveError}</p>
+                    )}
                   </div>
                 )}
               </div>
@@ -3054,6 +3448,7 @@ export default function MyDocumentsView({
                     setIsMoveModalOpen(false);
                     setIsCreatingNewFolderInMove(false);
                     setNewFolderNameInMove("");
+                    setNewFolderMoveError("");
                   }}
                   className="px-4 py-2 bg-surface-container hover:bg-surface-container-high rounded-xl text-xs font-bold text-on-surface cursor-pointer"
                 >
@@ -3066,6 +3461,7 @@ export default function MyDocumentsView({
                     setIsMoveModalOpen(false);
                     setIsCreatingNewFolderInMove(false);
                     setNewFolderNameInMove("");
+                    setNewFolderMoveError("");
                   }}
                   className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-opacity-95 shadow-md shadow-primary/10 cursor-pointer flex items-center gap-1"
                 >
