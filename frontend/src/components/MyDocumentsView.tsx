@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useEffect, useRef } from "react";
+import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Grid, 
@@ -42,11 +43,10 @@ import {
   permanentDeleteFolder,
 } from "../api/folders";
 import { deleteFile, downloadFile, getDocumentTypes, getFileDetail, getFileStatus, getStorageUsage, listAllFiles, listAllTrash, moveFiles, permanentDeleteFile, renameFile, restoreFile, toggleStar } from "../api/files";
-import { proposeOrganization, proposeForUpload, applyOrganization } from "../api/organize";
-import { ApiError } from "../api/client";
 import FileDetailPanel from "./FileDetailPanel";
 import { uploadFiles, getUploadStatus } from "../api/uploads";
 import { useUploads } from "../upload/UploadProvider";
+import { useSmartOrganize } from "../smart/useSmartOrganize";
 
 interface MyDocumentsViewProps {
   documents: Document[];
@@ -92,13 +92,29 @@ export default function MyDocumentsView({
 
   // AI Organize state
   const [isSmartMenuOpen, setIsSmartMenuOpen] = useState(false);
-  const [isOrganizing, setIsOrganizing] = useState(false);
-  const [organizeStep, setOrganizeStep] = useState(0);
-  const [organizeResult, setOrganizeResult] = useState<OrganizeProposal | null>(null);
-  const [isApplyingOrganize, setIsApplyingOrganize] = useState(false);
-  // apply 응답(성공 여부 + held 목록) — null이면 아직 미리보기 단계(적용 전), 값이 있으면
-  // 모달이 "결과" 화면으로 전환된다. 알림창(alert)이 아니라 모달 안에서 결과를 보여주기 위함.
-  const [applyResult, setApplyResult] = useState<OrganizeApplyResponse | null>(null);
+  const {
+    stage: smartStage,
+    proposal: organizeResult,
+    applyResult,
+    error: smartError,
+    organizeStep,
+    isVisible: isSmartWorkflowVisible,
+    startOrganization,
+    startSmartUpload,
+    apply: applySmartOrganization,
+    dismiss: dismissSmartWorkflow,
+    show: showSmartWorkflow,
+    completedSignal: smartCompletedSignal,
+  } = useSmartOrganize();
+  const isOrganizing = smartStage === "proposing";
+  const isApplyingOrganize = smartStage === "applying";
+  const smartErrorRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (smartStage !== "failed" || !smartError || smartErrorRef.current === smartError) return;
+    smartErrorRef.current = smartError;
+    alert(smartError);
+  }, [smartStage, smartError]);
 
   // AI Smart Upload specialized state
   const [isSpecialUploadMode, setIsSpecialUploadMode] = useState(false);
@@ -119,19 +135,31 @@ export default function MyDocumentsView({
   const [newUploaderSmartMode, setNewUploaderSmartMode] = useState(false);
   const [autoRename, setAutoRename] = useState(true);
   const [isRenamePromptOpen, setIsRenamePromptOpen] = useState(false);
-  const [smartUploading, setSmartUploading] = useState(false);
-  const [smartFlowActive, setSmartFlowActive] = useState(false);
-  const { items: uploadQueue, enqueue, startAll, uploadQueuedAndWait, clearPending, removeItem: removeUploadQueueItem, retryItem, refreshRecent } = useUploads();
+  const { items: uploadQueue, isBusy, enqueue, startAll, clearPending, removeItem: removeUploadQueueItem, retryItem, refreshRecent } = useUploads();
   // 실제로 업로드가 진행 중인지(파일이 대기(QUEUED) 상태인 것과 구분). 시작/삭제 버튼과 파일 추가 잠금에 쓴다.
-  const isQueueUploading = smartUploading || uploadQueue.some((i) => i.status === "UPLOADING");
+  const isQueueUploading = smartStage === "uploading" || uploadQueue.some((i) => i.status === "UPLOADING");
 
   useEffect(() => {
     if (!isNewUploadOpen) return;
-    clearPending();
+    if (!isBusy) clearPending();
     refreshRecent();
     const timer = setInterval(refreshRecent, 5000);
     return () => clearInterval(timer);
-  }, [isNewUploadOpen, clearPending, refreshRecent]);
+  }, [isNewUploadOpen, isBusy, clearPending, refreshRecent]);
+
+  const closeUploadModal = useCallback(() => {
+    setIsNewUploadOpen(false);
+    setNewUploaderSmartMode(false);
+  }, [setIsNewUploadOpen]);
+
+  useEffect(() => {
+    if (!isNewUploadOpen) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeUploadModal();
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [isNewUploadOpen, closeUploadModal]);
   const [newUploaderDragActive, setNewUploaderDragActive] = useState(false);
   const newUploaderInputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -570,36 +598,8 @@ export default function MyDocumentsView({
   // 스마트 경로: 업로드가 모두 끝난 뒤 딱 한 번, 방금 올린 파일 전체를 대상으로 정리 제안을 만들어
   // 기존 스마트 정리 미리보기(organizeResult) 화면으로 넘긴다. 승인해야만 이동/이름변경이 반영된다.
   const runSmartUpload = async () => {
-    setSmartUploading(true);
-    let fileIds: number[];
-    try {
-      fileIds = await uploadQueuedAndWait();
-    } finally {
-      setSmartUploading(false);
-    }
-    setIsNewUploadOpen(false);
-    setNewUploaderSmartMode(false);
-    if (fileIds.length === 0) {
-      alert("업로드된 파일이 없어 정리를 진행하지 않았습니다.");
-      return;
-    }
-    setIsOrganizing(true);
-    setOrganizeStep(1);
-    const step1 = setTimeout(() => setOrganizeStep(2), 800);
-    const step2 = setTimeout(() => setOrganizeStep(3), 1600);
-    try {
-      const proposal = await proposeForUpload(fileIds, autoRename);
-      setSmartFlowActive(true);
-      setOrganizeResult({ ...proposal, idempotencyKey: crypto.randomUUID() });
-    } catch (err) {
-      console.warn("[organize] 업로드 후 정리 제안 생성 실패:", err);
-      onUpdateDocuments(await listAllFiles());
-      alert("업로드는 완료되었으나 정리 제안 생성에 실패했습니다. 파일은 루트에 그대로 있습니다.");
-    } finally {
-      clearTimeout(step1);
-      clearTimeout(step2);
-      setIsOrganizing(false);
-    }
+    await startSmartUpload(autoRename);
+    closeUploadModal();
   };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
@@ -673,31 +673,7 @@ export default function MyDocumentsView({
   // 비로그인 상태면 401이 나는 게 정상 — 안내만 하고 종료한다. 폴더 목록처럼
   // mock으로 폴백할 수 없다(AI 제안 자체가 서버에서만 생성 가능하므로).
   const handleOrganizeFolders = async (allowRename: boolean) => {
-    setIsOrganizing(true);
-    setOrganizeStep(1);
-
-    // Progressive step animations
-    const step1 = setTimeout(() => setOrganizeStep(2), 800);
-    const step2 = setTimeout(() => setOrganizeStep(3), 1600);
-
-    try {
-      const proposal = await proposeOrganization(allowRename);
-      // apply 재시도(응답 유실 후 재요청 등) 시 서버가 같은 요청인지 판단할 수 있도록,
-      // 이 제안을 승인 대상으로 받는 시점에 키를 한 번만 만들어 붙여둔다 — 재시도해도
-      // handleApplyOrganization은 이 organizeResult를 그대로 재사용하므로 키가 바뀌지 않는다.
-      setOrganizeResult({ ...proposal, idempotencyKey: crypto.randomUUID() });
-    } catch (err) {
-      console.error("스마트 정리 제안 생성 실패:", err);
-      const message =
-        err instanceof ApiError && err.status === 401
-          ? "로그인 후 이용할 수 있는 기능입니다."
-          : "스마트 정리 제안 생성 중 오류가 발생했습니다.";
-      alert(message);
-    } finally {
-      setIsOrganizing(false);
-      clearTimeout(step1);
-      clearTimeout(step2);
-    }
+    startOrganization(allowRename);
   };
 
   // POST /api/v1/organize/apply — 제안을 그대로 백엔드에 되돌려보내 실제 파일 이동/이름변경 반영.
@@ -706,37 +682,38 @@ export default function MyDocumentsView({
   // 보류돼도 사용자가 뭐가 어떻게 됐는지 모달에서 다시 확인할 방법이 없었다.
   const handleApplyOrganization = async () => {
     if (!organizeResult) return;
-    setIsApplyingOrganize(true);
-    try {
-      const result = await applyOrganization(organizeResult);
-      setApplyResult(result);
-      setSelectedFolder(null);
-      // 폴더 목록/파일 목록이 서버에서 실제로 바뀌었으니 둘 다 다시 조회 — 실패해도(로그인 전) 기존 상태 유지.
-      // documents는 App.tsx 상태라 여기서 직접 못 고치고 onUpdateDocuments로 통째로 갱신해야
-      // 일반 문서 화면/폴더별 개수/대시보드/채팅이 전부 최신 상태를 보게 된다.
-      listFolders()
-        .then(setFolders)
-        .catch(() => {});
-      listAllFiles()
-        .then(onUpdateDocuments)
-        .catch(() => {});
-    } catch (err) {
-      console.error("스마트 정리 적용 실패:", err);
-      alert("정리를 적용하는 중 오류가 발생했습니다.");
-    } finally {
-      setIsApplyingOrganize(false);
-    }
+    await applySmartOrganization();
+    setSelectedFolder(null);
   };
 
   // 미리보기(적용 전)/결과(적용 후) 모달을 모두 닫는다.
-  const closeOrganizeModal = () => {
-    setOrganizeResult(null);
-    setApplyResult(null);
-    if (smartFlowActive) {
-      setSmartFlowActive(false);
-      listAllFiles().then(onUpdateDocuments).catch(() => {});
-    }
-  };
+  const closeOrganizeModal = useCallback(() => {
+    dismissSmartWorkflow();
+  }, [dismissSmartWorkflow]);
+
+  useEffect(() => {
+    if (!smartCompletedSignal) return;
+    Promise.all([listFolders(), listAllFiles()])
+      .then(([nextFolders, nextDocuments]) => {
+        setFolders(nextFolders);
+        onUpdateDocuments(nextDocuments);
+      })
+      .catch(() => {});
+  }, [smartCompletedSignal, onUpdateDocuments]);
+
+  useEffect(() => {
+    if (!isSmartWorkflowVisible || isApplyingOrganize || (!isOrganizing && !organizeResult)) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (isOrganizing) {
+        dismissSmartWorkflow();
+      } else {
+        closeOrganizeModal();
+      }
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [isSmartWorkflowVisible, isApplyingOrganize, isOrganizing, organizeResult, closeOrganizeModal, dismissSmartWorkflow]);
 
   // newFolders 중 실제로 생성되는(=하나 이상의 "적용되는" 매핑이 직접 또는 자식 폴더를 통해
   // 간접적으로 참조하는) tempId 집합을 계산한다. 백엔드 OrganizeService.resolveTempIdsToCreate와
@@ -2117,15 +2094,30 @@ export default function MyDocumentsView({
         </section>
       </div>
 
+      {!isSmartWorkflowVisible && (isOrganizing || organizeResult) && createPortal(
+        <button
+          type="button"
+          onClick={showSmartWorkflow}
+          className="fixed bottom-6 right-6 z-[135] flex items-center gap-2 rounded-full bg-primary px-4 py-3 text-xs font-bold text-white shadow-xl shadow-primary/20"
+        >
+          <Sparkles className="h-4 w-4" />
+          AI 스마트 작업 열기
+        </button>,
+        document.body
+      )}
+
       {/* 1) AI 스마트 정리중 로딩 오버레이 모달 */}
       <AnimatePresence>
-        {isOrganizing && (
-          <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-md">
+        {isOrganizing && isSmartWorkflowVisible && createPortal((
+          <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/60 backdrop-blur-md" onClick={dismissSmartWorkflow}>
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
               className="bg-white rounded-3xl p-8 max-w-md w-full border border-outline-variant shadow-2xl text-center space-y-6"
+              role="dialog"
+              aria-modal="true"
+              onClick={(event) => event.stopPropagation()}
             >
               <div className="relative w-20 h-20 mx-auto">
                 <div className="absolute inset-0 rounded-full border-4 border-secondary/15 animate-pulse"></div>
@@ -2179,19 +2171,23 @@ export default function MyDocumentsView({
               </div>
             </motion.div>
           </div>
-        )}
+        ), document.body)}
       </AnimatePresence>
 
       {/* 2) AI 스마트 정리 완료 미리보기 및 대조 검토 모달 */}
       <AnimatePresence>
-        {organizeResult && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+        {organizeResult && isSmartWorkflowVisible && createPortal((
+          <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={closeOrganizeModal}>
             <motion.div 
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
               className="bg-white rounded-3xl w-full max-w-3xl overflow-hidden shadow-2xl border border-outline-variant relative flex flex-col h-[85vh]"
               id="organize-result-panel"
+              role="dialog"
+              aria-modal="true"
+              aria-busy={isApplyingOrganize}
+              onClick={(event) => event.stopPropagation()}
             >
               {(() => {
                 const { appliedMappings, tempIdsToCreate } = getOrganizeApplyPreview(organizeResult, applyResult);
@@ -2215,6 +2211,7 @@ export default function MyDocumentsView({
                 </div>
                 <button
                   onClick={closeOrganizeModal}
+                  disabled={isApplyingOrganize}
                   className="p-2 hover:bg-surface-container rounded-full text-outline transition-colors cursor-pointer"
                 >
                   <X className="w-5 h-5" />
@@ -2378,7 +2375,12 @@ export default function MyDocumentsView({
 
               {/* Action buttons footer */}
               <div className="p-6 border-t border-outline-variant/30 bg-surface-container-lowest shrink-0 flex items-center justify-between">
-                {applyResult ? (
+                {isApplyingOrganize ? (
+                  <div className="w-full flex items-center justify-center gap-2 text-xs font-bold text-primary">
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent"></span>
+                    폴더 및 파일 이름 변경을 적용하고 있습니다. 잠시만 기다려 주세요.
+                  </div>
+                ) : applyResult ? (
                   <div className="w-full flex justify-end">
                     <button
                       onClick={closeOrganizeModal}
@@ -2391,6 +2393,7 @@ export default function MyDocumentsView({
                   <>
                     <button
                       onClick={closeOrganizeModal}
+                      disabled={isApplyingOrganize}
                       className="px-5 py-3 bg-white border border-outline-variant/50 hover:bg-surface-container rounded-xl font-bold text-xs text-outline hover:text-on-surface transition-all cursor-pointer"
                     >
                       분석 정리 취소
@@ -2417,7 +2420,7 @@ export default function MyDocumentsView({
               })()}
             </motion.div>
           </div>
-        )}
+        ), document.body)}
       </AnimatePresence>
 
       {/* 3) AI 스마트 업로드 자동 배치 결과 모달 */}
@@ -2646,13 +2649,16 @@ export default function MyDocumentsView({
         )}
       </AnimatePresence>
       <AnimatePresence>
-        {isNewUploadOpen && (
-            <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+        {isNewUploadOpen && createPortal((
+            <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={closeUploadModal}>
               <motion.div
                   initial={{ scale: 0.95, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
                   exit={{ scale: 0.95, opacity: 0 }}
                   className="bg-white rounded-3xl w-full max-w-2xl p-6 shadow-2xl border border-outline-variant relative overflow-hidden space-y-4 max-h-[85vh] flex flex-col"
+                  role="dialog"
+                  aria-modal="true"
+                  onClick={(event) => event.stopPropagation()}
               >
                 <div className="flex items-center justify-between border-b border-outline-variant pb-3">
                   <div className="flex items-center gap-2 text-primary">
@@ -2660,9 +2666,8 @@ export default function MyDocumentsView({
                     <h3 className="text-base font-bold">{newUploaderSmartMode ? "업로드 후 AI 자동 정리" : "다중 파일 업로드"}</h3>
                   </div>
                   <button
-                      disabled={smartUploading}
-                      onClick={() => { setIsNewUploadOpen(false); setNewUploaderSmartMode(false); }}
-                      className="p-1 hover:bg-surface-container rounded-full text-outline hover:text-on-surface cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                      onClick={closeUploadModal}
+                      className="p-1 hover:bg-surface-container rounded-full text-outline hover:text-on-surface cursor-pointer"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -2743,7 +2748,7 @@ export default function MyDocumentsView({
                           type="checkbox"
                           checked={autoRename}
                           onChange={(e) => setAutoRename(e.target.checked)}
-                          disabled={smartUploading}
+                          disabled={isQueueUploading}
                           className="mt-0.5 accent-primary cursor-pointer"
                       />
                       <span>폴더 이동과 함께 AI가 파일 이름도 제안합니다 (미리보기에서 확인 후 반영).</span>
@@ -2757,9 +2762,8 @@ export default function MyDocumentsView({
                   <div className="flex gap-2.5">
                     <button
                         type="button"
-                        disabled={smartUploading}
-                        onClick={() => { setIsNewUploadOpen(false); setNewUploaderSmartMode(false); }}
-                        className="px-4 py-2 bg-surface-container hover:bg-surface-container-high rounded-xl text-xs font-bold text-on-surface cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        onClick={closeUploadModal}
+                        className="px-4 py-2 bg-surface-container hover:bg-surface-container-high rounded-xl text-xs font-bold text-on-surface cursor-pointer"
                     >
                       닫기
                     </button>
@@ -2775,7 +2779,7 @@ export default function MyDocumentsView({
                 </div>
               </motion.div>
             </div>
-        )}
+        ), document.body)}
       </AnimatePresence>
 
       <AnimatePresence>

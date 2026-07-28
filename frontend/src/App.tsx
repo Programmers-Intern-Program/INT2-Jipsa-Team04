@@ -42,6 +42,7 @@ import { listAllFiles } from "./api/files";
 import { listConversations, listMessages, renameConversation, deleteConversation, createConversation, sendMessage, submitFeedback } from "./api/chat";
 import type { ChatMessageResponse } from "./api/chat";
 import { useUploads } from "./upload/UploadProvider";
+import { useSmartOrganize } from "./smart/useSmartOrganize";
 import { fetchWithRetry } from "./utils/retry";
 
 const TOKEN_KEY = "aidrive_token";
@@ -146,6 +147,11 @@ export default function App() {
     () => window.location.pathname === OAUTH_CALLBACK_PATH || localStorage.getItem(TOKEN_KEY) !== null
   );
   const [activeTab, setActiveTab] = useState<string>("dashboard");
+  const { stage: smartOrganizeStage } = useSmartOrganize();
+  const smartApplyLocked = smartOrganizeStage === "applying";
+  const navigateToTab = (tab: string) => {
+    if (!smartApplyLocked) setActiveTab(tab);
+  };
   const [documents, setDocuments] = useState<Document[]>([]);
   const { uploadedSignal } = useUploads();
   const [chatSessions, setChatSessions] = useState<ChatSession[]>(() => [
@@ -329,6 +335,7 @@ export default function App() {
   // 로그아웃: 가능하면 refresh token 폐기 API를 호출하고(실패해도 무시),
   // 항상 localStorage(토큰·리프레시·사용자)를 정리한 뒤 랜딩으로 돌아간다.
   const handleLogout = async () => {
+    if (smartApplyLocked) return;
     const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
     if (refreshToken) {
       try {
@@ -352,7 +359,7 @@ export default function App() {
     const query = globalSearch.trim();
     if (!query) return;
     setGlobalSearchSubmit({ query, token: Date.now() });
-    setActiveTab("search");
+    navigateToTab("search");
   };
 
   // Toggle RAG document selection (활성 채팅 탭 기준)
@@ -486,7 +493,7 @@ export default function App() {
     const newSession = createChatSession(docIds);
     setChatSessions((prev) => [...prev, newSession]);
     setActiveChatSessionId(newSession.id);
-    setActiveTab("chat");
+    navigateToTab("chat");
   };
 
   // 채팅 탭 관리
@@ -532,7 +539,8 @@ export default function App() {
   };
 
   const handleUploadClickOnSidebar = () => {
-    setActiveTab("documents");
+    if (smartApplyLocked) return;
+    navigateToTab("documents");
     setIsNewUploadOpen(true);
   };
 
@@ -563,7 +571,7 @@ export default function App() {
       <aside className="fixed left-0 top-0 h-full w-[280px] bg-white border-r border-outline-variant flex flex-col py-6 z-50 shadow-sm" id="main-sidebar">
 
         {/* Unified App Logo Block */}
-        <div className="px-6 mb-8 flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab("dashboard")} id="sidebar-logo">
+        <div className="px-6 mb-8 flex items-center gap-3 cursor-pointer" onClick={() => navigateToTab("dashboard")} id="sidebar-logo">
           <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center text-white shadow-md shadow-primary/20">
             <HardDrive className="w-5.5 h-5.5" />
           </div>
@@ -588,7 +596,7 @@ export default function App() {
         {/* Korean Menus list */}
         <nav className="flex-1 flex flex-col gap-1 px-3" id="sidebar-nav-menu">
           <button
-            onClick={() => setActiveTab("dashboard")}
+            onClick={() => navigateToTab("dashboard")}
             className={`flex items-center gap-3.5 px-4 py-3.5 rounded-xl font-semibold text-label-md transition-all cursor-pointer ${
               activeTab === "dashboard"
                 ? "bg-surface-variant text-primary border-l-4 border-secondary shadow-sm"
@@ -600,7 +608,7 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => setActiveTab("documents")}
+            onClick={() => navigateToTab("documents")}
             className={`flex items-center gap-3.5 px-4 py-3.5 rounded-xl font-semibold text-label-md transition-all cursor-pointer ${
               activeTab === "documents"
                 ? "bg-surface-variant text-primary border-l-4 border-secondary shadow-sm"
@@ -612,7 +620,7 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => setActiveTab("chat")}
+            onClick={() => navigateToTab("chat")}
             className={`flex items-center gap-3.5 px-4 py-3.5 rounded-xl font-semibold text-label-md transition-all cursor-pointer ${
               activeTab === "chat"
                 ? "bg-surface-variant text-primary border-l-4 border-secondary shadow-sm"
@@ -624,7 +632,7 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => setActiveTab("search")}
+            onClick={() => navigateToTab("search")}
             className={`flex items-center gap-3.5 px-4 py-3.5 rounded-xl font-semibold text-label-md transition-all cursor-pointer ${
               activeTab === "search"
                 ? "bg-surface-variant text-primary border-l-4 border-secondary shadow-sm"
@@ -636,7 +644,7 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => setActiveTab("settings")}
+            onClick={() => navigateToTab("settings")}
             className={`flex items-center gap-3.5 px-4 py-3.5 rounded-xl font-semibold text-label-md transition-all cursor-pointer ${
               activeTab === "settings"
                 ? "bg-surface-variant text-primary border-l-4 border-secondary shadow-sm"
@@ -651,7 +659,7 @@ export default function App() {
               "ADMIN")이다. 관리자 메뉴를 보려면 해당 계정의 DB Role이 ADMIN이어야 한다. */}
           {user?.role === "ADMIN" && (
             <button
-              onClick={() => setActiveTab("admin")}
+              onClick={() => navigateToTab("admin")}
               className={`flex items-center gap-3.5 px-4 py-3.5 rounded-xl font-semibold text-label-md transition-all cursor-pointer ${
                 activeTab === "admin"
                   ? "bg-surface-variant text-primary border-l-4 border-secondary shadow-sm"
@@ -747,28 +755,7 @@ export default function App() {
                 <DashboardView
                   documents={documents}
                   onNavigateToChat={handleNavigateToChat}
-                  onNavigateToTab={setActiveTab}
-                />
-              </motion.div>
-            )}
-
-            {activeTab === "documents" && (
-              <motion.div
-                key="documents"
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
-                transition={{ duration: 0.25 }}
-              >
-                <MyDocumentsView
-                  documents={documents}
-                  onNavigateToChat={handleNavigateToChat}
-                  isUploadOpen={isUploadOpen}
-                  setIsUploadOpen={setIsUploadOpen}
-                  isNewUploadOpen={isNewUploadOpen}
-                  setIsNewUploadOpen={setIsNewUploadOpen}
-                  onUpdateDocuments={setDocuments}
-                  sensitivity={committedSettings?.sensitivity ?? 0.85}
+                  onNavigateToTab={navigateToTab}
                 />
               </motion.div>
             )}
@@ -843,6 +830,18 @@ export default function App() {
               </motion.div>
             )}
           </AnimatePresence>
+          <div className={activeTab === "documents" ? "block" : "hidden"}>
+            <MyDocumentsView
+              documents={documents}
+              onNavigateToChat={handleNavigateToChat}
+              isUploadOpen={isUploadOpen}
+              setIsUploadOpen={setIsUploadOpen}
+              isNewUploadOpen={isNewUploadOpen}
+              setIsNewUploadOpen={setIsNewUploadOpen}
+              onUpdateDocuments={setDocuments}
+              sensitivity={committedSettings?.sensitivity ?? 0.85}
+            />
+          </div>
         </main>
       </div>
     </div>
