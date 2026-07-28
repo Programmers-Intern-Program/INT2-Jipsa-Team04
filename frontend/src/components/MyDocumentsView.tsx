@@ -1220,6 +1220,11 @@ export default function MyDocumentsView({
     });
   };
 
+  const getSelectedTrashFolderIdsForRoot = (folderIds: number[], rootId: number): number[] => {
+    const subtreeIds = getTrashFolderSubtreeIds(rootId);
+    return folderIds.filter((folderId) => subtreeIds.has(folderId));
+  };
+
   const handleSelectAllTrash = () => {
     const documentIds = (trashDocs ?? []).map((doc) => doc.id);
     const folderIds = (trashFolders ?? []).map((folder) => folder.folderId);
@@ -1236,18 +1241,25 @@ export default function MyDocumentsView({
   };
 
   const handleRestoreTrashFolders = async (folderIds: number[]) => {
-    const roots = getSelectedTrashFolderRoots(folderIds);
+    const selectedFolderIds = Array.from(new Set(folderIds));
+    const roots = getSelectedTrashFolderRoots(selectedFolderIds);
     if (roots.length === 0) return;
     const results = await Promise.allSettled(roots.map((folderId) => restoreFolder(folderId)));
-    const restoredCount = results.filter((result) => result.status === "fulfilled").length;
+    const restoredFolderIds = new Set<number>();
+    results.forEach((result, index) => {
+      if (result.status !== "fulfilled") return;
+      getSelectedTrashFolderIdsForRoot(selectedFolderIds, roots[index]).forEach((folderId) => restoredFolderIds.add(folderId));
+    });
+    const restoredCount = restoredFolderIds.size;
+    const failedFolderIds = selectedFolderIds.filter((folderId) => !restoredFolderIds.has(folderId));
     const refreshFailed = await refreshFolderViews();
     setCheckedDocIds([]);
-    setCheckedTrashFolderIds([]);
+    setCheckedTrashFolderIds(failedFolderIds);
     const restoreMessage = restoredCount === 0
       ? "폴더를 복원하지 못했습니다."
-      : restoredCount === roots.length
-        ? `${folderIds.length}개의 폴더를 복원했습니다.`
-        : `${restoredCount}개의 폴더를 복원했습니다. ${roots.length - restoredCount}개의 폴더는 복원하지 못했습니다.`;
+      : failedFolderIds.length === 0
+        ? `${restoredCount}개의 폴더를 복원했습니다.`
+        : `${restoredCount}개의 폴더를 복원했습니다. ${failedFolderIds.length}개의 폴더는 복원하지 못했습니다.`;
     const refreshMessage = refreshFailed
       ? "일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요."
       : "";
@@ -1256,25 +1268,32 @@ export default function MyDocumentsView({
 
   const handlePermanentDeleteTrashFolders = async (folderIds: number[]) => {
     if (permanentDeleteInFlightRef.current) return;
-    const roots = getSelectedTrashFolderRoots(folderIds);
+    const selectedFolderIds = Array.from(new Set(folderIds));
+    const roots = getSelectedTrashFolderRoots(selectedFolderIds);
     if (roots.length === 0) return;
-    if (!window.confirm(`선택한 ${folderIds.length}개의 폴더를 영구 삭제하시겠습니까? 안의 파일까지 모두 되돌릴 수 없습니다.`)) return;
+    if (!window.confirm(`선택한 ${selectedFolderIds.length}개의 폴더를 영구 삭제하시겠습니까? 안의 파일까지 모두 되돌릴 수 없습니다.`)) return;
     await withPermanentDeleteLock(async () => {
       const results: Array<{ succeeded: boolean; error: unknown; folderId: number }> = [];
       for (const folderId of roots) {
         const result = await retryPermanentDelete(() => permanentDeleteFolder(folderId));
         results.push({ ...result, folderId });
       }
-      const deletedCount = results.filter((result) => result.succeeded).length;
+      const deletedFolderIds = new Set<number>();
+      results.forEach((result) => {
+        if (!result.succeeded) return;
+        getSelectedTrashFolderIdsForRoot(selectedFolderIds, result.folderId).forEach((folderId) => deletedFolderIds.add(folderId));
+      });
+      const deletedCount = deletedFolderIds.size;
+      const failedFolderIds = selectedFolderIds.filter((folderId) => !deletedFolderIds.has(folderId));
       const failedResults = results.filter((result) => !result.succeeded);
       const refreshFailed = await refreshTrashViews();
       getStorageUsage().then(setStorage).catch(() => {});
       setCheckedDocIds([]);
       const deleteMessage = deletedCount === 0
         ? "폴더를 영구 삭제하지 못했습니다."
-        : deletedCount === roots.length
-          ? `${folderIds.length}개의 폴더를 영구 삭제했습니다.`
-          : `${deletedCount}개의 폴더를 영구 삭제했습니다. ${roots.length - deletedCount}개의 폴더는 삭제하지 못했습니다.`;
+        : failedFolderIds.length === 0
+          ? `${deletedCount}개의 폴더를 영구 삭제했습니다.`
+          : `${deletedCount}개의 폴더를 영구 삭제했습니다. ${failedFolderIds.length}개의 폴더는 삭제하지 못했습니다.`;
       const failureDetails = failedResults.slice(0, 3).map(({ folderId, error }) => {
         const name = trashFolders?.find((folder) => folder.folderId === folderId)?.name ?? `폴더 ${folderId}`;
         return `${name}: ${describeDeleteError(error)}`;
@@ -1286,7 +1305,7 @@ export default function MyDocumentsView({
       if (failedResults.length > 0) {
         console.warn("[folders] 영구 삭제 실패:", failedResults);
       }
-      setCheckedTrashFolderIds(failedResults.map(({ folderId }) => folderId));
+      setCheckedTrashFolderIds(failedFolderIds);
       alert([deleteMessage, failureDetails, failureSuffix, refreshMessage].filter(Boolean).join("\n"));
     });
   };
