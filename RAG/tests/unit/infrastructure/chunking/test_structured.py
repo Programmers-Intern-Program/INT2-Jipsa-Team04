@@ -99,7 +99,7 @@ async def test_structured_chunker_preserves_existing_content_hash_and_chunk_id(
 
 @pytest.mark.asyncio
 async def test_docx_strategy_propagates_heading_context_to_following_blocks() -> None:
-    """DOCX 제목은 같은 흐름의 후속 문단과 표 청크에 section_title로 전달된다."""
+    """DOCX 제목은 같은 섹션의 후속 문단과 표 청크에 전달된다."""
 
     document = ParsedDocument(
         file_type=DocumentType.DOCX,
@@ -138,6 +138,97 @@ async def test_docx_strategy_propagates_heading_context_to_following_blocks() ->
     assert result.chunks[1].source_metadata["section_title"] == "설치 방법"
     assert result.chunks[2].source_metadata["section_title"] == "설치 방법"
     assert result.chunks[1].source_metadata["structure_path"] == "section:1/block:2"
+
+
+@pytest.mark.asyncio
+async def test_docx_strategy_resets_heading_context_when_section_changes() -> None:
+    """DOCX 섹션이 바뀌면 이전 섹션의 제목과 제목 레벨을 전달하지 않는다."""
+
+    document = ParsedDocument(
+        file_type=DocumentType.DOCX,
+        units=(
+            ParsedDocumentUnit(
+                text="제1장",
+                source_metadata={
+                    "unit_type": "heading",
+                    "heading_level": 1,
+                    "section_index": 1,
+                    "block_index": 1,
+                },
+            ),
+            ParsedDocumentUnit(
+                text="첫 번째 섹션의 일반 문단",
+                source_metadata={
+                    "unit_type": "paragraph",
+                    "section_index": 1,
+                    "block_index": 2,
+                },
+            ),
+            ParsedDocumentUnit(
+                text="두 번째 섹션의 제목 없는 문단",
+                source_metadata={
+                    "unit_type": "paragraph",
+                    "section_index": 2,
+                    "block_index": 3,
+                },
+            ),
+            ParsedDocumentUnit(
+                text="제2장",
+                source_metadata={
+                    "unit_type": "heading",
+                    "heading_level": 2,
+                    "section_index": 2,
+                    "block_index": 4,
+                },
+            ),
+            ParsedDocumentUnit(
+                text="항목\t값",
+                source_metadata={
+                    "unit_type": "table",
+                    "section_index": 2,
+                    "block_index": 5,
+                },
+            ),
+            ParsedDocumentUnit(
+                text="세 번째 섹션의 제목 없는 문단",
+                source_metadata={
+                    "unit_type": "paragraph",
+                    "section_index": 3,
+                    "block_index": 6,
+                },
+            ),
+        ),
+    )
+
+    result = await StructuredDocumentChunker().chunk(document=document, context=_context())
+
+    first_heading = result.chunks[0].source_metadata
+    first_paragraph = result.chunks[1].source_metadata
+    second_section_without_heading = result.chunks[2].source_metadata
+    second_heading = result.chunks[3].source_metadata
+    second_table = result.chunks[4].source_metadata
+    third_section_without_heading = result.chunks[5].source_metadata
+
+    assert first_heading["section_title"] == "제1장"
+    assert first_heading["section_heading_level"] == 1
+    assert first_paragraph["section_title"] == "제1장"
+    assert first_paragraph["section_heading_level"] == 1
+
+    # 섹션 2의 첫 문단에는 아직 제목이 없으므로 섹션 1의 제목이 남아서는 안 된다.
+    assert "section_title" not in second_section_without_heading
+    assert "section_heading_level" not in second_section_without_heading
+    assert second_section_without_heading["structure_path"] == "section:2/block:3"
+
+    # 섹션 2에서 새 제목이 나타난 이후에는 그 제목만 같은 섹션에 전달되어야 한다.
+    assert second_heading["section_title"] == "제2장"
+    assert second_heading["section_heading_level"] == 2
+    assert second_table["section_title"] == "제2장"
+    assert second_table["section_heading_level"] == 2
+
+    # 다음 섹션으로 다시 전환되면 섹션 2의 제목도 동일하게 제거되어야 한다.
+    assert "section_title" not in third_section_without_heading
+    assert "section_heading_level" not in third_section_without_heading
+    assert third_section_without_heading["structure_path"] == "section:3/block:6"
 
 
 @pytest.mark.asyncio

@@ -128,7 +128,7 @@ class _PdfPageStructureStrategy(_BaseStructureStrategy):
 
 
 class _DocxStructureStrategy(_BaseStructureStrategy):
-    """DOCX 섹션·제목 계층을 이후 문단과 표에 전달한다."""
+    """DOCX 제목 계층을 동일한 섹션의 이후 문단과 표에 전달한다."""
 
     def _metadata_additions(
         self,
@@ -142,9 +142,28 @@ class _DocxStructureStrategy(_BaseStructureStrategy):
         block_index = _positive_int(metadata.get("block_index"))
         unit_type = _text(metadata.get("unit_type"))
 
+        previous_section_index = state.get("current_section_index")
+        section_changed = (
+            "current_section_index" not in state or previous_section_index != section_index
+        )
+
+        if section_changed:
+            # DOCX 섹션 나누기는 이전 섹션의 제목 문맥이 끝나는 경계다.
+            #
+            # 첫 unit에서도 동일한 초기화 경로를 사용하면 별도의 최초 실행 분기를
+            # 만들지 않아도 된다. 또한 유효한 section_index 뒤에 누락되거나 손상된
+            # 값이 나타난 경우에도 이전 제목을 보수적으로 제거하여 다른 섹션의
+            # 제목이 잘못 노출되는 것을 방지한다.
+            state["current_section_index"] = section_index
+            state.pop("section_title", None)
+            state.pop("section_heading_level", None)
+
         if unit_type == "heading" and unit.text.strip():
             # 제목 unit 이후의 같은 섹션 문단과 표가 검색될 때 제목 컨텍스트를 함께
             # 표시할 수 있도록 가장 최근 제목과 레벨을 상태로 유지한다.
+            #
+            # 섹션 변경 초기화보다 뒤에서 실행해야 새 섹션의 첫 제목이 즉시 현재
+            # 섹션 제목으로 등록되고, 이후 같은 섹션의 블록에만 전달된다.
             state["section_title"] = unit.text.strip()
             heading_level = _positive_int(metadata.get("heading_level"))
             state["section_heading_level"] = heading_level
