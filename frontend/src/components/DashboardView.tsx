@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
 import { motion } from "motion/react";
 import {
+  Files,
   Sparkles,
   ArrowRight,
   Folder,
   FileText,
-  TrendingUp,
+  LoaderCircle,
+  Star,
   FileSpreadsheet,
   Presentation
 } from "lucide-react";
@@ -36,6 +38,7 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
       .sort((a, b) => b.count - a.count);
   const topFolder = folderCounts[0] ?? { name: "미분류", count: documents.filter(d => d.folderId === null).length };
   const topPercent = totalCount > 0 ? Math.round((topFolder.count / totalCount) * 100) : 0;
+  const topFolderDescription = topFolder.name === "미분류" ? "폴더가 지정되지 않은 문서" : "문서가 가장 많은 폴더";
 
   return (
     <motion.div 
@@ -64,20 +67,20 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
       {/* Bento Grid Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6" id="dashboard-stats-grid">
         <div className="col-span-1 md:col-span-2 bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow" id="card-stat-total">
-          <div className="flex justify-between items-start">
+          <div className="flex items-start gap-3">
+            <div className="p-3 bg-primary/10 rounded-xl text-primary">
+              <Files className="w-6 h-6" />
+            </div>
             <div>
               <p className="text-outline font-semibold text-label-sm uppercase tracking-wider">전체 문서</p>
-              <h3 className="text-4xl font-extrabold text-primary mt-2">{totalCount.toLocaleString()} <span className="text-sm font-normal text-outline">건</span></h3>
-            </div>
-            <div className="p-3 bg-secondary/10 rounded-xl text-secondary">
-              <Sparkles className="w-6 h-6 fill-secondary/20" />
+              <h3 className="text-4xl font-extrabold text-primary mt-2">{totalCount.toLocaleString()} <span className="text-sm font-normal text-outline">개</span></h3>
             </div>
           </div>
           <div className="mt-6 flex items-center gap-2">
             <span className="text-secondary font-bold flex items-center text-sm bg-secondary/5 px-2 py-0.5 rounded-full">
-              <TrendingUp className="w-4 h-4 inline mr-1" /> {processingCount}
+              <LoaderCircle className="w-4 h-4 inline mr-1" /> {processingCount}개
             </span>
-            <span className="text-outline text-body-sm">건 처리 중</span>
+            <span className="text-outline text-body-sm">업로드·분석 처리 중인 문서</span>
           </div>
         </div>
 
@@ -86,10 +89,13 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
             <span className="p-2 bg-primary/5 text-primary rounded-lg">
               <Folder className="w-5 h-5" />
             </span>
-            <span className="font-semibold text-label-md text-on-surface truncate">{topFolder.name}</span>
+            <div className="min-w-0">
+              <span className="font-semibold text-label-md text-on-surface truncate block">{topFolder.name}</span>
+              <span className="text-[10px] text-outline">{topFolderDescription}</span>
+            </div>
           </div>
           <div>
-            <p className="text-3xl font-extrabold text-on-surface">{topFolder.count}<span className="text-sm font-normal text-outline ml-1">건</span></p>
+            <p className="text-3xl font-extrabold text-on-surface">{topFolder.count}<span className="text-sm font-normal text-outline ml-1">개</span></p>
             <div className="mt-4 w-full bg-surface-container rounded-full h-1.5 overflow-hidden">
               <div className="bg-primary h-full rounded-full transition-all duration-500" style={{ width: `${topPercent}%` }}></div>
             </div>
@@ -99,12 +105,15 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
         <div className="bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow" id="card-stat-starred">
           <div className="flex items-center gap-3 mb-4">
             <span className="p-2 bg-secondary/5 text-secondary rounded-lg">
-              <FileText className="w-5 h-5" />
+              <Star className="w-5 h-5" />
             </span>
-            <span className="font-semibold text-label-md text-on-surface">중요 문서</span>
+            <div>
+              <span className="font-semibold text-label-md text-on-surface block">중요 문서</span>
+              <span className="text-[10px] text-outline">별표 표시한 문서</span>
+            </div>
           </div>
           <div>
-            <p className="text-3xl font-extrabold text-on-surface">{starredCount}<span className="text-sm font-normal text-outline ml-1">건</span></p>
+            <p className="text-3xl font-extrabold text-on-surface">{starredCount}<span className="text-sm font-normal text-outline ml-1">개</span></p>
             <div className="mt-4 w-full bg-surface-container rounded-full h-1.5 overflow-hidden">
               <div className="bg-secondary h-full rounded-full transition-all duration-500" style={{ width: `${totalCount > 0 ? Math.round((starredCount / totalCount) * 100) : 0}%` }}></div>
             </div>
