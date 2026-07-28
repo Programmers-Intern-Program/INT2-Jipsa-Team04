@@ -111,10 +111,14 @@ export default function MyDocumentsView({
   const smartErrorRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (smartStage !== "failed" || !smartError || smartErrorRef.current === smartError) return;
+    if (!smartError) {
+      smartErrorRef.current = null;
+      return;
+    }
+    if (smartErrorRef.current === smartError) return;
     smartErrorRef.current = smartError;
     alert(smartError);
-  }, [smartStage, smartError]);
+  }, [smartError]);
 
   // AI Smart Upload specialized state
   const [isSpecialUploadMode, setIsSpecialUploadMode] = useState(false);
@@ -147,10 +151,19 @@ export default function MyDocumentsView({
     return () => clearInterval(timer);
   }, [isNewUploadOpen, isBusy, clearPending, refreshRecent]);
 
+  const uploadModalEpochRef = useRef(0);
+  const uploadModalOpenRef = useRef(isNewUploadOpen);
+
   const closeUploadModal = useCallback(() => {
+    uploadModalEpochRef.current += 1;
+    uploadModalOpenRef.current = false;
     setIsNewUploadOpen(false);
     setNewUploaderSmartMode(false);
   }, [setIsNewUploadOpen]);
+
+  useEffect(() => {
+    uploadModalOpenRef.current = isNewUploadOpen;
+  }, [isNewUploadOpen]);
 
   useEffect(() => {
     if (!isNewUploadOpen) return;
@@ -598,8 +611,11 @@ export default function MyDocumentsView({
   // 스마트 경로: 업로드가 모두 끝난 뒤 딱 한 번, 방금 올린 파일 전체를 대상으로 정리 제안을 만들어
   // 기존 스마트 정리 미리보기(organizeResult) 화면으로 넘긴다. 승인해야만 이동/이름변경이 반영된다.
   const runSmartUpload = async () => {
+    const startedModalEpoch = uploadModalEpochRef.current;
     await startSmartUpload(autoRename);
-    closeUploadModal();
+    if (uploadModalOpenRef.current && uploadModalEpochRef.current === startedModalEpoch) {
+      closeUploadModal();
+    }
   };
 
   const handleFormSubmit = async (e: React.FormEvent) => {
@@ -693,11 +709,11 @@ export default function MyDocumentsView({
 
   useEffect(() => {
     if (!smartCompletedSignal) return;
-    Promise.all([listFolders(), listAllFiles()])
-      .then(([nextFolders, nextDocuments]) => {
-        setFolders(nextFolders);
-        onUpdateDocuments(nextDocuments);
-      })
+    listFolders()
+      .then(setFolders)
+      .catch(() => {});
+    listAllFiles()
+      .then(onUpdateDocuments)
       .catch(() => {});
   }, [smartCompletedSignal, onUpdateDocuments]);
 

@@ -89,8 +89,8 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
       setStage("result");
       setCompletedSignal((value) => value + 1);
     } catch (err) {
-      setStage("failed");
       setError(err instanceof Error ? err.message : "정리를 적용하는 중 오류가 발생했습니다.");
+      setStage("reviewing");
     }
   }, [proposal, stage]);
 
