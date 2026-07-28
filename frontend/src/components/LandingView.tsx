@@ -68,7 +68,7 @@ export default function LandingView() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-primary font-sans leading-tight">Jipsa</h1>
-            <p className="text-[10px] text-outline font-bold tracking-widest uppercase mt-0.5">- 지능형 문서 관리 AI Drive</p>
+            <p className="text-[10px] text-outline font-bold tracking-widest uppercase mt-0.5">지능형 문서 관리 AI DRIVE</p>
           </div>
         </div>
 
@@ -92,7 +92,7 @@ export default function LandingView() {
       </header>
 
       {/* Hero */}
-      <main className="relative z-10 max-w-5xl mx-auto px-6 md:px-10 pt-12 md:pt-20 pb-24 text-center" id="landing-hero">
+      <main className="relative z-10 max-w-5xl mx-auto px-6 md:px-10 pt-12 md:pt-20 pb-24 text-center" id="landing-hero" style={{ wordBreak: "keep-all" }}>
         <span className="inline-block text-[10px] bg-primary/10 text-primary px-2.5 py-1 rounded-full font-bold uppercase tracking-widest border border-primary/10">
           Smart AI Cloud
         </span>
@@ -100,7 +100,9 @@ export default function LandingView() {
           모두를 위한 지능형<br />스마트 문서 드라이브
         </h2>
         <p className="mt-5 text-sm md:text-base text-outline leading-relaxed max-w-xl mx-auto">
-          문서 내용을 자연어로 찾고, AI가 문서 정리까지 도와주는 지능형 드라이브를 시작해 보세요.
+          <span className="block"><span className="font-semibold text-on-surface">의미 기반 검색</span>으로 관련 문서를 자연어로 찾아보고,</span>
+          <span className="block"><span className="font-semibold text-on-surface">AI 자동 정리</span>로 문서를 체계적으로 정리하며,</span>
+          <span className="block"><span className="font-semibold text-on-surface">RAG 챗봇 검색</span>으로 문서 근거 답변을 받아 보세요.</span>
         </p>
 
         <div className="mt-8 flex justify-center">

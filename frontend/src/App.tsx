@@ -67,15 +67,6 @@ function clearAuthStorage() {
   localStorage.removeItem(USER_KEY);
 }
 
-function getInitialSelectedDocIds(docs: Document[]): string[] {
-  if (docs.length > 2) {
-    return [docs[0].id, docs[2].id];
-  } else if (docs.length > 0) {
-    return [docs[0].id];
-  }
-  return [];
-}
-
 let chatSessionSeq = 0;
 function createChatSession(selectedDocIds: string[] = [], title?: string): ChatSession {
   chatSessionSeq += 1;
@@ -154,10 +145,8 @@ export default function App() {
   };
   const [documents, setDocuments] = useState<Document[]>([]);
   const { uploadedSignal } = useUploads();
-  const [chatSessions, setChatSessions] = useState<ChatSession[]>(() => [
-    createChatSession(getInitialSelectedDocIds([]))
-  ]);
-  const [activeChatSessionId, setActiveChatSessionId] = useState<string>(() => chatSessions[0].id);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [activeChatSessionId, setActiveChatSessionId] = useState<string>("");
   // 서버에서 실제 설정을 받기 전에는 null(로딩 중). 하드코딩 기본값을 사용자 설정처럼 보여주지 않는다.
   const [committedSettings, setCommittedSettings] = useState<AISettings | null>(null);
   const [settingsError, setSettingsError] = useState(false);
@@ -346,6 +335,8 @@ export default function App() {
     }
     clearAuthStorage();
     setUser(null);
+    setChatSessions([]);
+    setActiveChatSessionId("");
   };
 
   // 전역 검색: 입력은 로컬 상태만 갱신하고, Enter 시 "의미 검색" 탭으로 이동해
@@ -364,9 +355,22 @@ export default function App() {
 
   // Toggle RAG document selection (활성 채팅 탭 기준)
   const handleToggleDocSelection = (id: string) => {
+    let targetSession = chatSessions.find((session) => session.id === activeChatSessionId);
+    if (!targetSession) {
+      targetSession = chatSessions[0];
+      if (targetSession) {
+        setActiveChatSessionId(targetSession.id);
+      }
+    }
+    if (!targetSession) {
+      targetSession = createChatSession([], "대화 1");
+      setChatSessions((prev) => [...prev, targetSession!]);
+      setActiveChatSessionId(targetSession.id);
+    }
+    const targetSessionId = targetSession.id;
     setChatSessions((prev) =>
       prev.map((session) =>
-        session.id === activeChatSessionId
+        session.id === targetSessionId
           ? {
               ...session,
               selectedDocIds: session.selectedDocIds.includes(id)
@@ -387,14 +391,14 @@ export default function App() {
     return conversation.id;
   };
 
-  const runSend = async (sessionId: string, text: string, fileIds: number[]) => {
+  const runSend = async (sessionId: string, text: string, fileIds: number[], sessionOverride?: ChatSession) => {
     setChatSessions((prev) =>
         prev.map((item) =>
             item.id === sessionId ? { ...item, isLoading: true, error: null, lastAttempt: { text, fileIds } } : item
         )
     );
     try {
-      const session = chatSessions.find((item) => item.id === sessionId);
+      const session = sessionOverride ?? chatSessions.find((item) => item.id === sessionId);
       if (!session) return;
       const conversationId = await ensureConversation(session);
       const response = await sendMessage(conversationId, { question: text, fileIds });
@@ -424,7 +428,15 @@ export default function App() {
   };
 
   const handleSendMessage = async (text: string, refDocIds: string[]) => {
-    const targetSessionId = activeChatSessionId;
+    let targetSession = chatSessions.find((session) => session.id === activeChatSessionId) ?? chatSessions[0];
+    if (!targetSession) {
+      targetSession = createChatSession([], "대화 1");
+      setChatSessions((prev) => [...prev, targetSession!]);
+    }
+    const targetSessionId = targetSession.id;
+    if (activeChatSessionId !== targetSessionId) {
+      setActiveChatSessionId(targetSessionId);
+    }
     const fileIds = refDocIds.map(Number).filter((id) => Number.isFinite(id) && id > 0);
     const userMessage: ChatMessage = {
       id: `chat-${Date.now()}`,
@@ -438,7 +450,7 @@ export default function App() {
             item.id === targetSessionId ? { ...item, chatHistory: [...item.chatHistory, userMessage] } : item
         )
     );
-    await runSend(targetSessionId, text, fileIds);
+    await runSend(targetSessionId, text, fileIds, targetSession);
   };
 
   const handleRetryChat = async () => {
@@ -490,7 +502,7 @@ export default function App() {
 
   // Smart navigation from Dashboard/Documents: 지정 문서로 새 채팅 탭을 열어 이동
   const handleNavigateToChat = (docIds: string[]) => {
-    const newSession = createChatSession(docIds);
+    const newSession = createChatSession(docIds, chatSessions.length === 0 ? "대화 1" : undefined);
     setChatSessions((prev) => [...prev, newSession]);
     setActiveChatSessionId(newSession.id);
     navigateToTab("chat");
@@ -498,7 +510,7 @@ export default function App() {
 
   // 채팅 탭 관리
   const handleNewChatTab = () => {
-    const newSession = createChatSession();
+    const newSession = createChatSession([], chatSessions.length === 0 ? "대화 1" : undefined);
     setChatSessions((prev) => [...prev, newSession]);
     setActiveChatSessionId(newSession.id);
   };
@@ -512,13 +524,8 @@ export default function App() {
     }
     setChatSessions((prev) => {
       const remaining = prev.filter((session) => session.id !== sessionId);
-      if (remaining.length === 0) {
-        const fresh = createChatSession();
-        setActiveChatSessionId(fresh.id);
-        return [fresh];
-      }
       if (activeChatSessionId === sessionId) {
-        setActiveChatSessionId(remaining[remaining.length - 1].id);
+        setActiveChatSessionId(remaining[remaining.length - 1]?.id ?? "");
       }
       return remaining;
     });
@@ -577,7 +584,7 @@ export default function App() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-primary font-sans leading-tight">Jipsa</h1>
-            <p className="text-[10px] text-outline font-bold tracking-widest uppercase mt-0.5">- 지능형 문서 관리 AI Drive</p>
+            <p className="text-[10px] text-outline font-bold tracking-widest uppercase mt-0.5">지능형 문서 관리 AI DRIVE</p>
           </div>
         </div>
 

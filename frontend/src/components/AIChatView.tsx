@@ -38,6 +38,8 @@ interface AIChatViewProps {
   onFeedback: (messageId: number, rating: "UP" | "DOWN") => void;
 }
 
+const EMPTY_CHAT_HISTORY: ChatMessage[] = [];
+
 export default function AIChatView({
   documents,
   chatSessions,
@@ -79,10 +81,10 @@ export default function AIChatView({
   }, []);
 
   const activeSession = chatSessions.find((s) => s.id === activeChatSessionId) ?? chatSessions[0];
-  const selectedDocIds = activeSession.selectedDocIds;
-  const chatHistory = activeSession.chatHistory;
-  const isLoadingChat = activeSession.isLoading ?? false;
-  const chatError = activeSession.error ?? null;
+  const selectedDocIds = activeSession?.selectedDocIds ?? [];
+  const chatHistory = activeSession?.chatHistory ?? EMPTY_CHAT_HISTORY;
+  const isLoadingChat = activeSession?.isLoading ?? false;
+  const chatError = activeSession?.error ?? null;
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -199,7 +201,7 @@ export default function AIChatView({
               key={session.id}
               session={session}
               isActive={session.id === activeChatSessionId}
-              closable={chatSessions.length > 1}
+              closable
               onSelect={() => onSelectChatSession(session.id)}
               onClose={() => onCloseChatTab(session.id)}
               onRename={(title) => onRenameChatTab(session.id, title)}
@@ -218,7 +220,24 @@ export default function AIChatView({
 
         {/* Messages Feed */}
         <div className="flex-1 overflow-y-auto p-8 space-y-8 pb-36 custom-scrollbar" id="messages-scroller">
-          {chatHistory.length === 0 ? (
+          {!activeSession ? (
+            <div className="h-full flex flex-col items-center justify-center text-center p-8" id="chat-empty-state">
+              <div className="w-16 h-16 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mb-4">
+                <Plus className="w-8 h-8" />
+              </div>
+              <h3 className="text-2xl font-bold text-on-surface">대화방이 없습니다</h3>
+              <p className="text-body-md text-on-surface-variant max-w-md mt-2 leading-relaxed">
+                새 대화를 만들거나 아래 입력창에 질문을 입력하면 대화 1이 자동으로 시작됩니다.
+              </p>
+              <button
+                type="button"
+                onClick={onNewChatTab}
+                className="mt-5 px-5 py-2.5 bg-primary text-white text-xs font-bold rounded-xl hover:bg-opacity-95 shadow-md shadow-primary/15 cursor-pointer"
+              >
+                대화 1 시작하기
+              </button>
+            </div>
+          ) : chatHistory.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-8" id="chat-welcome-state">
               <div className="w-16 h-16 bg-secondary/10 text-secondary rounded-2xl flex items-center justify-center mb-4">
                 <Sparkles className="w-8 h-8 fill-secondary/10" />

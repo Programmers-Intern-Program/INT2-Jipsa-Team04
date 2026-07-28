@@ -6,7 +6,7 @@ import {
   ArrowRight,
   Folder,
   FileText,
-  LoaderCircle,
+  FileClock,
   Star,
   FileSpreadsheet,
   Presentation
@@ -78,7 +78,7 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
           </div>
           <div className="mt-6 flex items-center gap-2">
             <span className="text-secondary font-bold flex items-center text-sm bg-secondary/5 px-2 py-0.5 rounded-full">
-              <LoaderCircle className="w-4 h-4 inline mr-1" /> {processingCount}개
+              <FileClock className="w-4 h-4 inline mr-1" /> {processingCount}개
             </span>
             <span className="text-outline text-body-sm">업로드·분석 처리 중인 문서</span>
           </div>
