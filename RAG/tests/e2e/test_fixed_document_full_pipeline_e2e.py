@@ -281,8 +281,7 @@ def _assert_metadata_contains(
     for key, expected_value in expected.items():
         actual_value = actual.get(key)
         assert _equivalent(actual_value, expected_value), (
-            f"{label}[{key!r}] mismatch: "
-            f"expected={expected_value!r}, actual={actual_value!r}"
+            f"{label}[{key!r}] mismatch: expected={expected_value!r}, actual={actual_value!r}"
         )
 
 
@@ -417,9 +416,7 @@ class AnswerScenario:
         try:
             return tuple(_CASES_BY_ID[case_id] for case_id in self.case_ids)
         except KeyError as error:
-            raise AssertionError(
-                f"Unknown answer scenario fixture id: {error.args[0]}"
-            ) from error
+            raise AssertionError(f"Unknown answer scenario fixture id: {error.args[0]}") from error
 
     @property
     def file_idxs(self) -> tuple[int, ...]:
@@ -515,9 +512,11 @@ def _build_case(expectation: Mapping[str, object]) -> FixtureCase:
         parser_type=_str(expectation, "expected_parser_type"),
         parser_version=_str(expectation, "expected_parser_version"),
         assertions=tuple(assertions),
-        forced_failure_image_index=cast(int | None, forced_failure),
-        success_token=cast(str | None, success_token),
-        failure_token=cast(str | None, failure_token),
+        # 위의 명시적 런타임 타입 검증으로 각 값은 이미 목표 Union 타입으로
+        # 축소됐다. 불필요한 cast를 제거하여 Mypy redundant-cast 오류를 막는다.
+        forced_failure_image_index=forced_failure,
+        success_token=success_token,
+        failure_token=failure_token,
     )
 
 
@@ -549,9 +548,7 @@ _OPERATION_CASES: Final[tuple[FixtureCase, ...]] = (
     _OPERATION_CASE,
     _RESOURCE_CLEANUP_CASE,
 )
-_OPERATION_FILE_IDXS: Final[tuple[int, ...]] = tuple(
-    case.file_idx for case in _OPERATION_CASES
-)
+_OPERATION_FILE_IDXS: Final[tuple[int, ...]] = tuple(case.file_idx for case in _OPERATION_CASES)
 _ALL_E2E_FILE_IDXS: Final[tuple[int, ...]] = (*_ALL_FILE_IDXS, *_OPERATION_FILE_IDXS)
 _NO_EVIDENCE_FILE_IDX: Final[int] = max(_ALL_E2E_FILE_IDXS) + 100
 
@@ -572,9 +569,7 @@ def _build_answer_scenario(value: Mapping[str, object]) -> AnswerScenario:
 
     unknown_case_ids = tuple(case_id for case_id in case_ids if case_id not in _CASES_BY_ID)
     if unknown_case_ids:
-        raise AssertionError(
-            f"{scenario_id} references unknown fixtures: {unknown_case_ids!r}."
-        )
+        raise AssertionError(f"{scenario_id} references unknown fixtures: {unknown_case_ids!r}.")
 
     expected_sources: list[ExpectedAnswerSource] = []
     for source in _objects(value, "expected_sources"):
@@ -587,9 +582,7 @@ def _build_answer_scenario(value: Mapping[str, object]) -> AnswerScenario:
                 f"{scenario_id} source case {case_id!r} is outside reference scope."
             )
         if token not in expected_tokens:
-            raise AssertionError(
-                f"{scenario_id} source token {token!r} is not an expected token."
-            )
+            raise AssertionError(f"{scenario_id} source token {token!r} is not an expected token.")
         if not locator:
             raise AssertionError(f"{scenario_id} source locator must not be empty.")
 
@@ -620,16 +613,12 @@ def _single_answer_scenario(key: str) -> AnswerScenario:
 
 
 _LOOKUP_ANSWER_SCENARIOS: Final[tuple[AnswerScenario, ...]] = tuple(
-    _build_answer_scenario(value)
-    for value in _objects(_ANSWER_EXPECTATIONS, "lookup_cases")
+    _build_answer_scenario(value) for value in _objects(_ANSWER_EXPECTATIONS, "lookup_cases")
 )
 _OCR_LOOKUP_ANSWER_SCENARIOS: Final[tuple[AnswerScenario, ...]] = tuple(
-    _build_answer_scenario(value)
-    for value in _objects(_ANSWER_EXPECTATIONS, "ocr_lookup_cases")
+    _build_answer_scenario(value) for value in _objects(_ANSWER_EXPECTATIONS, "ocr_lookup_cases")
 )
-_SYNTHESIS_ANSWER_SCENARIO: Final[AnswerScenario] = _single_answer_scenario(
-    "synthesis_case"
-)
+_SYNTHESIS_ANSWER_SCENARIO: Final[AnswerScenario] = _single_answer_scenario("synthesis_case")
 _MIXED_TEXT_OCR_ANSWER_SCENARIO: Final[AnswerScenario] = _single_answer_scenario(
     "mixed_text_ocr_case"
 )
@@ -666,9 +655,7 @@ def _matching_chunks(
     """고유 토큰이 포함된 청크를 원본 순서대로 반환한다."""
 
     return tuple(
-        chunk
-        for chunk in chunks
-        if _contains_token(_str(chunk, "content"), assertion.token)
+        chunk for chunk in chunks if _contains_token(_str(chunk, "content"), assertion.token)
     )
 
 
@@ -1091,9 +1078,7 @@ def _qdrant_client(settings: Settings) -> AsyncQdrantClient:
     """현재 실제 E2E 환경의 Qdrant 비동기 클라이언트."""
 
     api_key = (
-        settings.qdrant_api_key.get_secret_value()
-        if settings.qdrant_api_key is not None
-        else None
+        settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key is not None else None
     )
     return AsyncQdrantClient(
         url=settings.qdrant_url,
@@ -1390,8 +1375,7 @@ def _ingest_cases(
     for case in cases:
         response = client.post("/ingest", json=case.manifest)
         assert response.status_code == 200, (
-            f"{case.case_id} ingest failed: "
-            f"status={response.status_code}, body={response.text}"
+            f"{case.case_id} ingest failed: status={response.status_code}, body={response.text}"
         )
         body = _object(response.json(), "POST /ingest response")
         assert _bool(body, "success") is True
@@ -1456,17 +1440,13 @@ def e2e_runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2eRuntime
     )
 
     http_settings = _http_settings(settings)
-    cases_by_idx = {
-        case.file_idx: case for case in (*_ALL_CASES, *_OPERATION_CASES)
-    }
+    cases_by_idx = {case.file_idx: case for case in (*_ALL_CASES, *_OPERATION_CASES)}
     recorder = BackendRecorder(settings=http_settings, cases=cases_by_idx)
     backend_client = ApplicationServerIngestClient(
         http_settings,
         transport=httpx2.MockTransport(recorder.handle),
     )
-    download_temp_directory = Path(
-        tmp_path_factory.mktemp("issue-123-full-pipeline")
-    )
+    download_temp_directory = Path(tmp_path_factory.mktemp("issue-123-full-pipeline"))
     downloader = HttpFileDownloader(
         http_settings,
         transport=httpx2.MockTransport(DownloadContract(cases_by_idx).handle),
@@ -1493,9 +1473,7 @@ def e2e_runtime(tmp_path_factory: pytest.TempPathFactory) -> Iterator[E2eRuntime
             # 같은 실제 API·DB·Qdrant·TEI 경로를 유지하면서 OCR 엔진만
             # 두 번째 이미지에서 도메인 오류를 내도록 교체한다. 인제스트가 끝난
             # 즉시 운영 기본 Factory를 복원하여 이후 검색 API에 영향을 주지 않는다.
-            app.dependency_overrides[get_document_parser_factory] = (
-                lambda: partial_parser_factory
-            )
+            app.dependency_overrides[get_document_parser_factory] = lambda: partial_parser_factory
             responses.update(_ingest_cases(client=client, cases=(_PARTIAL_CASE,)))
             app.dependency_overrides[get_document_parser_factory] = lambda: parser_factory
 
@@ -1832,11 +1810,19 @@ def test_cuda_tei_document_embeddings_and_vector_dimension(e2e_runtime: E2eRunti
 
     for point in all_points:
         assert isinstance(point.vector, list)
-        vector = point.vector
-        assert len(vector) == e2e_runtime.settings.embedding_dim
-        assert all(isinstance(value, int | float) for value in vector)
-        assert all(math.isfinite(float(value)) for value in vector)
-        assert any(float(value) != 0.0 for value in vector)
+
+        # Qdrant SDK 타입은 일반 dense vector와 multi-vector를 같은 list Union으로
+        # 표현한다. all(isinstance(...))만 사용하면 Mypy는 각 원소가 숫자라고 후속
+        # 줄까지 축소하지 못하므로, 원소별 검증과 정규화를 한 번에 수행한다.
+        numeric_vector: list[float] = []
+        for raw_value in point.vector:
+            if isinstance(raw_value, bool) or not isinstance(raw_value, int | float):
+                raise AssertionError("Expected a one-dimensional numeric embedding vector.")
+            numeric_vector.append(float(raw_value))
+
+        assert len(numeric_vector) == e2e_runtime.settings.embedding_dim
+        assert all(math.isfinite(value) for value in numeric_vector)
+        assert any(value != 0.0 for value in numeric_vector)
 
 
 @pytest.mark.parametrize("case", _MAIN_CASES, ids=lambda case: case.case_id)
@@ -1870,6 +1856,7 @@ def test_real_tei_query_embedding_respects_reference_document_scope(
     assert results
     assert {_int(result, "file_idx") for result in results} == {case.file_idx}
     assert any(_contains_token(_str(result, "content"), expected_token) for result in results)
+
 
 # ============================================================
 # 8. 실제 Claude 답변 호출과 공통 응답 계약
@@ -1969,7 +1956,6 @@ def _locator(source: Mapping[str, object]) -> dict[str, object]:
     return _object(source.get("source_locator"), "RAG answer source_locator")
 
 
-
 def _matching_answer_sources(
     result: AnswerScenarioResult,
     expected: ExpectedAnswerSource,
@@ -2000,8 +1986,7 @@ def _assert_expected_answer_sources(result: AnswerScenarioResult) -> None:
     for expected in result.scenario.expected_sources:
         matching_sources = _matching_answer_sources(result, expected)
         assert matching_sources, (
-            f"{result.scenario.scenario_id} did not cite the source containing "
-            f"{expected.token!r}."
+            f"{result.scenario.scenario_id} did not cite the source containing {expected.token!r}."
         )
         assert any(
             all(
@@ -2031,9 +2016,7 @@ def _assert_source_storage_links(
     }
 
     selected_file_idxs = frozenset(result.scenario.file_idxs)
-    assert frozenset(_int(source, "file_idx") for source in result.sources) <= (
-        selected_file_idxs
-    )
+    assert frozenset(_int(source, "file_idx") for source in result.sources) <= (selected_file_idxs)
 
     for source in result.sources:
         file_idx = _int(source, "file_idx")
@@ -2081,9 +2064,7 @@ def test_format_specific_single_document_lookup_answer(
     _assert_expected_answer_tokens(result)
     _assert_expected_answer_sources(result)
     _assert_source_storage_links(e2e_runtime, result)
-    assert {_int(source, "file_idx") for source in result.sources} == {
-        scenario.file_idxs[0]
-    }
+    assert {_int(source, "file_idx") for source in result.sources} == {scenario.file_idxs[0]}
 
 
 # ============================================================
@@ -2104,9 +2085,7 @@ def test_multiformat_synthesis_answer_uses_every_selected_format(
     _assert_source_storage_links(e2e_runtime, result)
 
     assert len(scenario.case_ids) == len(_TEXT_CASE_IDS)
-    assert {_int(source, "file_idx") for source in result.sources} == set(
-        scenario.file_idxs
-    )
+    assert {_int(source, "file_idx") for source in result.sources} == set(scenario.file_idxs)
     assert {_str(source, "file_type") for source in result.sources} == {
         "pdf",
         "docx",
@@ -2136,9 +2115,7 @@ def test_text_and_ocr_chunks_are_used_in_one_answer(
     origins = {_str(_locator(source), "content_origin") for source in result.sources}
     assert origins == {"text", "ocr"}
     assert {_int(_locator(source), "page") for source in result.sources} == {1, 2}
-    assert {_int(source, "file_idx") for source in result.sources} == {
-        scenario.file_idxs[0]
-    }
+    assert {_int(source, "file_idx") for source in result.sources} == {scenario.file_idxs[0]}
 
 
 # ============================================================
@@ -2288,9 +2265,7 @@ def test_ocr_answer_sources_preserve_image_ordinal_and_original_location(
     _assert_expected_answer_sources(result)
 
     ocr_sources = tuple(
-        source
-        for source in result.sources
-        if _str(_locator(source), "content_origin") == "ocr"
+        source for source in result.sources if _str(_locator(source), "content_origin") == "ocr"
     )
     assert ocr_sources
 
@@ -2322,6 +2297,7 @@ def test_ocr_answer_sources_preserve_image_ordinal_and_original_location(
             assert _str(locator, "cell_range")
         else:
             raise AssertionError(f"Unexpected OCR answer file type: {file_type}")
+
 
 # ============================================================
 # 19. 범위·근거 부족·부분 실패·색인 생명주기 공통 Test Double
@@ -2441,11 +2417,7 @@ class _DeterministicStructuredGenerationClient:
         """현재 프롬프트에 존재하는 첫 SOURCE를 인용한 구조화 응답을 반환한다."""
 
         self.requests.append(request)
-        source_ids = tuple(
-            dict.fromkeys(
-                re.findall(r"SOURCE-[1-9][0-9]*", request.user_prompt)
-            )
-        )
+        source_ids = tuple(dict.fromkeys(re.findall(r"SOURCE-[1-9][0-9]*", request.user_prompt)))
         if not source_ids:
             raise AssertionError("A deterministic generation prompt requires SOURCE-N.")
 
@@ -2536,7 +2508,6 @@ class _StaticRagAnswerServiceProvider:
         return self._service
 
 
-
 def _controlled_search_result(
     *,
     file_idx: int,
@@ -2582,7 +2553,6 @@ def _controlled_search_result(
     )
 
 
-
 def _response_code(response: object) -> str:
     """오류 본문 전체를 출력하지 않고 공개 code만 안전하게 읽는다."""
 
@@ -2597,17 +2567,14 @@ def _response_code(response: object) -> str:
     return value if isinstance(value, str) and value else "unknown"
 
 
-
 def _active_documents(history: FileHistoryState) -> tuple[Mapping[str, object], ...]:
     """검색 가능한 INDEXED·비삭제 문서만 반환한다."""
 
     return tuple(
         document
         for document in history.documents
-        if _str(document, "index_status") == "INDEXED"
-        and not _db_bool(document, "is_deleted")
+        if _str(document, "index_status") == "INDEXED" and not _db_bool(document, "is_deleted")
     )
-
 
 
 def _assert_directory_empty(path: Path) -> None:
@@ -2682,9 +2649,7 @@ def test_unselected_document_and_other_user_sources_are_blocked(
         data = _object(body.get("data"), "scope search response data")
         results = _objects(data, "results")
         assert results
-        assert {_int(result, "file_idx") for result in results} == {
-            selected_case.file_idx
-        }
+        assert {_int(result, "file_idx") for result in results} == {selected_case.file_idx}
         assert all(_str(result, "chunk_id") != probe_id for result in results)
         assert all(
             not _contains_token(_str(result, "content"), _SECURITY_PROBE_TOKEN)
@@ -2706,8 +2671,7 @@ def test_unselected_document_and_other_user_sources_are_blocked(
             selected_case.file_idx
         }
         assert all(
-            _int(source, "file_idx") != unselected_case.file_idx
-            for source in answer_result.sources
+            _int(source, "file_idx") != unselected_case.file_idx for source in answer_result.sources
         )
     finally:
         asyncio.run(
@@ -2868,9 +2832,9 @@ def test_reingest_reindex_soft_delete_and_compensation(
             idempotent_history.documents[0],
             "rag_document_idx",
         )
-        assert {
-            _int(run, "rag_document_idx") for run in idempotent_history.runs
-        } == {reused_document_idx}
+        assert {_int(run, "rag_document_idx") for run in idempotent_history.runs} == {
+            reused_document_idx
+        }
 
         # 같은 실제 문서 바이트를 새 parser_version으로 처리하면 새 문서가 staging된
         # 뒤 활성화되고, 기존 정상 문서는 성공 확정 후에만 soft delete된다.
@@ -2904,9 +2868,7 @@ def test_reingest_reindex_soft_delete_and_compensation(
         active_document_idx = _int(active_document, "rag_document_idx")
 
         deleted_documents = tuple(
-            document
-            for document in reindexed_history.documents
-            if _db_bool(document, "is_deleted")
+            document for document in reindexed_history.documents if _db_bool(document, "is_deleted")
         )
         assert len(deleted_documents) == 1
         assert _int(deleted_documents[0], "rag_document_idx") == reused_document_idx
@@ -2955,19 +2917,20 @@ def test_reingest_reindex_soft_delete_and_compensation(
             wrapped_store = _FailPreviousDeactivationVectorStore(vector_store)
             failing_store_holder.append(wrapped_store)
             return FileIndexingService(
-                local_repository=ConcurrentSafeLocalRagIndexRepository(
-                    database_session
-                ),
+                local_repository=ConcurrentSafeLocalRagIndexRepository(database_session),
                 vector_store=wrapped_store,
                 file_lock=file_lock,
             )
 
-        with _temporary_dependency_override(
-            get_document_parser_factory,
-            lambda: compensation_factory,
-        ), _temporary_dependency_override(
-            get_file_indexing_service,
-            failing_indexing_service,
+        with (
+            _temporary_dependency_override(
+                get_document_parser_factory,
+                lambda: compensation_factory,
+            ),
+            _temporary_dependency_override(
+                get_file_indexing_service,
+                failing_indexing_service,
+            ),
         ):
             failed_response = e2e_runtime.client.post("/ingest", json=case.manifest)
 
@@ -2999,8 +2962,7 @@ def test_reingest_reindex_soft_delete_and_compensation(
         failed_document_idx = _int(failed_documents[0], "rag_document_idx")
         assert _str(failed_documents[0], "parser_version") == failed_version
         assert any(
-            _str(run, "status") == "FAILED"
-            and _int(run, "rag_document_idx") == failed_document_idx
+            _str(run, "status") == "FAILED" and _int(run, "rag_document_idx") == failed_document_idx
             for run in compensated_history.runs
         )
 
@@ -3102,10 +3064,7 @@ def test_duplicate_concurrent_ingest_is_serialized_and_idempotent(
         assert len(callbacks) == 2
         assert all(_bool(payload, "success") for payload in callbacks)
         callback_chunk_id_sets = tuple(
-            tuple(
-                _str(chunk, "chunk_id")
-                for chunk in _objects(payload, "chunks")
-            )
+            tuple(_str(chunk, "chunk_id") for chunk in _objects(payload, "chunks"))
             for payload in callbacks
         )
         assert callback_chunk_id_sets[0] == callback_chunk_id_sets[1]
@@ -3137,9 +3096,19 @@ def test_temporary_download_and_extracted_image_resources_are_cleaned(
         callback = e2e_runtime.recorder.callback(case.file_idx)
         callback_chunks = _objects(callback, "chunks")
         assert callback_chunks
-        assert any(
-            _str(_source_metadata(chunk), "content_origin") == "ocr"
+
+        # XLSX 인제스트 callback에는 일반 시트 텍스트 청크와 OCR 청크가 함께
+        # 포함될 수 있다. 일반 텍스트 청크에는 content_origin이 존재하지 않는 것이
+        # 정상 계약이므로 필수 문자열 판독기인 _str()로 모든 청크를 읽으면 안 된다.
+        # 선택 필드 값을 안전하게 조회하여 실제 OCR 청크가 하나 이상 포함됐는지만
+        # 검증한다.
+        ocr_callback_chunks = tuple(
+            chunk
             for chunk in callback_chunks
+            if _source_metadata(chunk).get("content_origin") == "ocr"
+        )
+        assert ocr_callback_chunks, (
+            "The successful XLSX image ingest must report at least one OCR chunk."
         )
 
         # 다운로더의 *.document와 형식 검증 임시 파일은 async context 종료 시 삭제된다.
@@ -3194,9 +3163,12 @@ def test_question_chunk_ocr_and_prompt_are_not_exposed_in_failure_logs(
         generation_client=generation_client,
     )
 
-    with caplog.at_level(logging.INFO), _temporary_dependency_override(
-        get_rag_answer_service,
-        _StaticRagAnswerServiceProvider(service),
+    with (
+        caplog.at_level(logging.INFO),
+        _temporary_dependency_override(
+            get_rag_answer_service,
+            _StaticRagAnswerServiceProvider(service),
+        ),
     ):
         response = e2e_runtime.client.post(
             "/api/v1/rag/answers",
@@ -3252,4 +3224,3 @@ def test_question_chunk_ocr_and_prompt_are_not_exposed_in_failure_logs(
     ):
         if secret:
             assert secret not in log_text
-

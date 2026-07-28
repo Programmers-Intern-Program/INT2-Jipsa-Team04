@@ -39,6 +39,9 @@ from jipsa_rag.infrastructure.document.exceptions import (
     InvalidDocumentError,
 )
 from jipsa_rag.infrastructure.document.images.docx import DocxImageExtractor
+from jipsa_rag.infrastructure.document.images.download_safe_xlsx import (
+    DownloadSafeXlsxImageExtractor,
+)
 from jipsa_rag.infrastructure.document.images.models import (
     DocumentImageExtraction,
     DocumentImageKind,
@@ -224,8 +227,7 @@ def _assert_subset(
     for key, expected_value in expected.items():
         actual_value = actual.get(key)
         assert _equivalent(actual_value, expected_value), (
-            f"{label}[{key!r}] mismatch: "
-            f"expected={expected_value!r}, actual={actual_value!r}"
+            f"{label}[{key!r}] mismatch: expected={expected_value!r}, actual={actual_value!r}"
         )
 
 
@@ -276,7 +278,9 @@ class _UnavailableOfficeRenderer:
         return OfficeVisualRenderResult.unavailable("fixed_fixture_contract")
 
 
-def _parser(case: Mapping[str, object]) -> (
+def _parser(
+    case: Mapping[str, object],
+) -> (
     PdfDocumentParser
     | DocxDocumentParser
     | PptxDocumentParser
@@ -299,10 +303,16 @@ def _parser(case: Mapping[str, object]) -> (
     raise AssertionError(f"Unsupported fixed parser type: {file_type}")
 
 
-def _image_extractor(case: Mapping[str, object]) -> (
-    PdfImageExtractor | DocxImageExtractor | PptxImageExtractor | XlsxImageExtractor
-):
-    """manifest file_type에 대응하는 실제 이미지 추출기를 반환한다."""
+def _image_extractor(
+    case: Mapping[str, object],
+) -> PdfImageExtractor | DocxImageExtractor | PptxImageExtractor | XlsxImageExtractor:
+    """manifest 형식에 대응하는 운영 이미지 추출 경계를 반환한다.
+
+    XLSX는 공통 다운로더가 생성하는 ``*.document`` 경로를 그대로 받으므로
+    openpyxl의 확장자 검사를 우회하지 않는다. 운영 Factory와 동일하게
+    ``DownloadSafeXlsxImageExtractor``를 사용하여 검증된 바이트를 임시
+    ``source.xlsx``로 중계하고, 추출 종료 후 복사본을 즉시 정리한다.
+    """
 
     processing_settings = _processing_settings()
     renderer = _UnavailableOfficeRenderer()
@@ -314,7 +324,7 @@ def _image_extractor(case: Mapping[str, object]) -> (
     if file_type == "pptx":
         return PptxImageExtractor(processing_settings, renderer)
     if file_type == "xlsx":
-        return XlsxImageExtractor(processing_settings, renderer)
+        return DownloadSafeXlsxImageExtractor(processing_settings, renderer)
     raise AssertionError(f"Unsupported fixed image type: {file_type}")
 
 

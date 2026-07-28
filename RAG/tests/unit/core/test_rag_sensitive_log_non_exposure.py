@@ -45,10 +45,14 @@ def test_authentication_and_presigned_url_values_are_redacted() -> None:
         "?X-Amz-Credential=credential-secret"
         "&X-Amz-Signature=signature-secret"
     )
+    # download_url처럼 민감 필드명과 함께 기록된 값은 필드 전체가 일반
+    # [REDACTED]로 교체된다. 같은 URL을 자유 형식 문장에도 한 번 포함하여
+    # URL 패턴 자체가 [REDACTED_PRESIGNED_URL]로 치환되는 경계도 함께 검증한다.
     message = (
         f"internal_token={internal_token} "
         f"Authorization: Bearer {bearer_token} "
-        f"api_key={api_key} download_url={presigned_url}"
+        f"api_key={api_key} download_url={presigned_url} "
+        f"upstream returned {presigned_url}"
     )
     record = logging.LogRecord(
         name="jipsa_rag.security_test",
@@ -76,8 +80,23 @@ def test_authentication_and_presigned_url_values_are_redacted() -> None:
     ):
         assert secret not in serialized
 
-    assert "[REDACTED]" in serialized
-    assert "[REDACTED_PRESIGNED_URL]" in serialized
+    # 구조화된 민감 필드와 key=value 문자열은 값의 종류와 관계없이
+    # 일반 마스킹 값으로 고정되어야 한다.
+    assert payload["internal_token"] == "[REDACTED]"
+    assert payload["authorization"] == "[REDACTED]"
+    assert payload["download_url"] == "[REDACTED]"
+    assert payload["anthropic_api_key"] == "[REDACTED]"
+
+    message_value = payload.get("message")
+    if not isinstance(message_value, str):
+        raise AssertionError("The formatted message must remain a string.")
+
+    assert "internal_token=[REDACTED]" in message_value
+    assert "download_url=[REDACTED]" in message_value
+
+    # 민감 필드명에 종속되지 않은 자유 형식 URL도 Presigned URL 전용
+    # 마커로 제거되어 URL 경로와 AWS 서명 파라미터가 남지 않아야 한다.
+    assert "[REDACTED_PRESIGNED_URL]" in message_value
 
 
 def test_authentication_value_is_redacted_inside_exception_traceback() -> None:

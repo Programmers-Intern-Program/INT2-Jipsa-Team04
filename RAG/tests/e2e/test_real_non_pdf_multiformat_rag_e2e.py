@@ -85,6 +85,11 @@ _FILE_IDX_MAX: Final[int] = max(_FILE_IDXS)
 # 현재 파일 처리 엔드포인트와 Local RAG 저장 계약의 색인 버전이다.
 _INDEX_VERSION: Final[int] = 2
 
+# DOCX·PPTX·XLSX는 운영 DocumentParserFactory에서 텍스트 파서와 이미지 추출·OCR
+# 보강을 결합한 Hybrid Parser로 구성된다. 테스트 Fixture에 이미지가 없더라도
+# 선택된 Parser 구현의 식별자와 버전은 HYBRID_OCR/2.0.0 계약을 유지한다.
+_OCR_PARSER_VERSION: Final[str] = "2.0.0"
+
 # 문서 및 청크 SHA-256 값의 저장 형식을 검증한다.
 _SHA256_PATTERN: Final[re.Pattern[str]] = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_PATTERN: Final[re.Pattern[str]] = re.compile(r"\[(SOURCE-[1-9][0-9]*)\]")
@@ -262,8 +267,9 @@ _DOCX: Final[DocumentCase] = DocumentCase(
     file_name="jipsa-e2e-delta.docx",
     file_type="docx",
     content_type=("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
-    parser_type="DOCX_TEXT",
-    parser_version="1.0.0",
+    # 운영 Factory는 이미지 유무와 관계없이 OCR-aware DOCX 파서를 선택한다.
+    parser_type="DOCX_HYBRID_OCR",
+    parser_version=_OCR_PARSER_VERSION,
     answer_token="DOCX-DELTA-52",
     search_query="DOCX 문서에 기록된 exact verification code는 무엇인가요?",
     document_bytes=_build_docx(),
@@ -281,8 +287,9 @@ _PPTX: Final[DocumentCase] = DocumentCase(
     file_name="jipsa-e2e-echo.pptx",
     file_type="pptx",
     content_type=("application/vnd.openxmlformats-officedocument.presentationml.presentation"),
-    parser_type="PPTX_TEXT",
-    parser_version="1.1.0",
+    # 텍스트 도형만 포함한 Fixture도 운영상 Hybrid OCR 파서로 처리된다.
+    parser_type="PPTX_HYBRID_OCR",
+    parser_version=_OCR_PARSER_VERSION,
     answer_token="PPTX-ECHO-63",
     search_query="PPTX 문서에 기록된 exact verification code는 무엇인가요?",
     document_bytes=_build_pptx(),
@@ -298,8 +305,9 @@ _XLSX: Final[DocumentCase] = DocumentCase(
     file_name="jipsa-e2e-foxtrot.xlsx",
     file_type="xlsx",
     content_type=("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
-    parser_type="XLSX_CACHED_VALUE",
-    parser_version="1.1.0",
+    # 기본 셀 파싱은 유지되지만 최종 Parser 식별자는 이미지·차트 OCR까지 포괄한다.
+    parser_type="XLSX_HYBRID_OCR",
+    parser_version=_OCR_PARSER_VERSION,
     answer_token="XLSX-FOXTROT-74",
     search_query="XLSX 문서에 기록된 exact verification code는 무엇인가요?",
     document_bytes=_build_xlsx(),
@@ -317,6 +325,7 @@ _TXT: Final[DocumentCase] = DocumentCase(
     file_name="jipsa-e2e-golf.txt",
     file_type="txt",
     content_type="text/plain; charset=utf-8",
+    # TXT는 이미지 추출 대상이 아니므로 기존 텍스트 파서 계약을 그대로 유지한다.
     parser_type="TXT_TEXT",
     parser_version="1.1.0",
     answer_token="TXT-GOLF-85",
@@ -353,7 +362,10 @@ def _object(value: object, label: str) -> dict[str, object]:
     return cast(dict[str, object], value)
 
 
-def _objects(mapping: Mapping[str, object], key: str) -> list[dict[str, object]]:
+def _objects(
+    mapping: Mapping[str, object],
+    key: str,
+) -> list[dict[str, object]]:
     """매핑에서 JSON 객체 배열을 읽는다."""
 
     value = mapping.get(key)
@@ -565,7 +577,10 @@ def _db_engine(settings: Settings) -> AsyncEngine:
     return create_async_engine(settings.database_url, pool_pre_ping=True)
 
 
-async def _database_state(settings: Settings, file_idx: int) -> DatabaseState:
+async def _database_state(
+    settings: Settings,
+    file_idx: int,
+) -> DatabaseState:
     """지정 파일의 실제 Local RAG 문서·청크·최신 실행 상태를 조회한다."""
 
     engine = _db_engine(settings)
@@ -852,17 +867,10 @@ def _uses_test_only_hostname(url: str) -> bool:
     ``qdrant.test``와 ``embedding.test`` 같은 예약 도메인을 사용한다.
     이 주소는 실제 E2E에서 접속해야 하는 Local Qdrant·CUDA TEI 주소가 아니며,
     Windows DNS에서 해석되지 않는 것이 정상이다.
-
-    URL 전체 문자열을 단순 부분 검색하지 않고 파싱된 hostname만 검사하여
-    경로나 query 문자열에 우연히 ``.test``가 포함된 정상 URL을 잘못 거부하지
-    않도록 한다.
     """
 
     hostname = urlsplit(url).hostname
-
     if hostname is None:
-        # Settings 모델이 정상 URL을 보장하지만 테스트 경계에서도 방어적으로
-        # 잘못된 값을 실제 네트워크 호출 전에 거부한다.
         return True
 
     normalized_hostname = hostname.rstrip(".").lower()
@@ -870,36 +878,20 @@ def _uses_test_only_hostname(url: str) -> bool:
 
 
 def _validate_real_e2e_infrastructure_settings(settings: Settings) -> None:
-    """실제 E2E가 Mock 전용 ``.env.test`` 주소로 실행되는 것을 차단한다.
-
-    ``JIPSA_RAG_APP_ENV=test``는 E2E 전용 데이터 정리를 안전하게 제한하기 위해
-    반드시 유지해야 한다. 다만 Pydantic Settings는 이 값에 따라 ``.env.test``를
-    읽으므로, 실행 스크립트가 ``.env.local``의 실제 인프라 값을 현재 프로세스
-    환경 변수로 먼저 주입해야 한다. 프로세스 환경 변수가 dotenv보다 우선하므로
-    최종 프로필은 test를 유지하면서 실제 Local DB·Qdrant·CUDA TEI를 사용할 수
-    있다.
-
-    이 검증은 Qdrant 정리 호출보다 먼저 실행된다. 따라서 잘못된 실행 방법은
-    17개 테스트가 같은 DNS 오류로 연쇄 실패하는 대신 원인을 설명하는 단일
-    Fixture 오류로 종료된다.
-    """
+    """실제 E2E가 Mock 전용 ``.env.test`` 주소로 실행되는 것을 차단한다."""
 
     invalid_settings: list[str] = []
 
-    qdrant_url = str(settings.qdrant_url)
-    embedding_base_url = str(settings.embedding_base_url)
-
-    if _uses_test_only_hostname(qdrant_url):
+    if _uses_test_only_hostname(str(settings.qdrant_url)):
         invalid_settings.append("JIPSA_RAG_QDRANT_URL")
 
-    if _uses_test_only_hostname(embedding_base_url):
+    if _uses_test_only_hostname(str(settings.embedding_base_url)):
         invalid_settings.append("JIPSA_RAG_EMBEDDING_BASE_URL")
 
     if not invalid_settings:
         return
 
     invalid_setting_names = ", ".join(invalid_settings)
-
     pytest.fail(
         "Real non-PDF multiformat RAG E2E received .env.test mock-only "
         f"infrastructure settings: {invalid_setting_names}. "
@@ -953,20 +945,22 @@ def e2e_runtime(
 
     ingest_token = settings.rag_ingest_token
     if ingest_token is None:
-        pytest.fail("RAG_INGEST_TOKEN is required for real E2E.", pytrace=False)
+        pytest.fail(
+            "RAG_INGEST_TOKEN is required for real E2E.",
+            pytrace=False,
+        )
     if settings.internal_token is None:
-        pytest.fail("INTERNAL_TOKEN is required for real E2E.", pytrace=False)
+        pytest.fail(
+            "INTERNAL_TOKEN is required for real E2E.",
+            pytrace=False,
+        )
 
     # Backend/S3 역할의 HTTP 경계만 테스트 대역으로 교체한다. DB, TEI,
     # Qdrant 및 Claude 관련 설정은 실제 E2E 프로세스 값을 그대로 사용한다.
     #
     # file_download_allowed_host_suffixes는 Settings 내부에서 쉼표로 구분된
-    # 원시 문자열로 보관된다. parsed_file_download_allowed_host_suffixes 속성이
-    # 이 문자열에 split(",")을 호출하므로 tuple을 직접 넣으면 다운로드 URL
-    # 검증 시 AttributeError가 발생한다.
-    #
-    # Pydantic model_copy(update=...)는 update 값의 필드 타입을 재검증하지
-    # 않으므로 여기서는 반드시 Settings 필드 계약과 동일한 문자열을 넣는다.
+    # 원시 문자열로 보관된다. model_copy(update=...)는 필드 타입을 재검증하지
+    # 않으므로 반드시 Settings 계약과 동일한 문자열을 넣는다.
     http_settings = settings.model_copy(
         update={
             "app_server_base_url": "https://backend.e2e.invalid",
@@ -977,7 +971,10 @@ def e2e_runtime(
         }
     )
 
-    recorder = BackendRecorder(settings=http_settings, cases=_DOCUMENTS_BY_IDX)
+    recorder = BackendRecorder(
+        settings=http_settings,
+        cases=_DOCUMENTS_BY_IDX,
+    )
     download_contract = DownloadContract(cases=_DOCUMENTS_BY_IDX)
     backend_client = ApplicationServerIngestClient(
         http_settings,
@@ -1003,8 +1000,7 @@ def e2e_runtime(
     app.dependency_overrides[get_file_downloader] = downloader_dependency
 
     # 최초 정리가 성공하기 전에 Fixture가 실패하면 새 E2E 데이터는 생성되지
-    # 않는다. 이 상태에서 finally가 동일한 실패 정리를 다시 실행하면 최초
-    # Qdrant 연결 오류가 중복 출력되므로 성공 여부를 별도로 추적한다.
+    # 않는다. 종료 정리는 실제 인제스트 가능 상태에 진입했을 때만 수행한다.
     initial_cleanup_completed = False
 
     try:
@@ -1018,8 +1014,8 @@ def e2e_runtime(
             for case in _DOCUMENTS:
                 response = client.post("/ingest", json=case.manifest)
                 assert response.status_code == 200, (
-                    f"{case.name} ingest failed: status={response.status_code}, "
-                    f"body={response.text}"
+                    f"{case.name} ingest failed: "
+                    f"status={response.status_code}, body={response.text}"
                 )
 
                 body = _object(response.json(), "POST /ingest response")
@@ -1038,10 +1034,6 @@ def e2e_runtime(
             )
     finally:
         try:
-            # 최초 정리가 성공한 뒤에만 인제스트가 시작될 수 있다. 따라서 이
-            # 조건이 참일 때만 종료 정리가 필요하다. 최초 정리 자체가 실패한
-            # 경우에는 같은 네트워크 오류를 다시 발생시키지 않고 원래 예외를
-            # 그대로 보존한다.
             if initial_cleanup_completed:
                 asyncio.run(_cleanup(settings))
         finally:
@@ -1418,9 +1410,9 @@ def test_real_multiformat_mixed_document_claude_answer(
         assert case.answer_token in answer
 
     sources = _objects(data, "sources")
-    assert frozenset(_int(source, "file_idx") for source in sources) == (frozenset(_FILE_IDXS))
-    assert frozenset(_str(source, "file_type") for source in sources) == (
-        frozenset(case.file_type for case in _DOCUMENTS)
+    assert frozenset(_int(source, "file_idx") for source in sources) == frozenset(_FILE_IDXS)
+    assert frozenset(_str(source, "file_type") for source in sources) == frozenset(
+        case.file_type for case in _DOCUMENTS
     )
 
     cited_source_ids = tuple(dict.fromkeys(_SOURCE_PATTERN.findall(answer)))

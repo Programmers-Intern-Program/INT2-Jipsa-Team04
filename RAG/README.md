@@ -188,8 +188,8 @@ OCR 청크가 같은 흐름을 사용합니다.
 ```
 
 한 문서의 임베딩, Qdrant 검색 또는 부분 Claude 호출이 실패해도 유효한 다른 문서가
-있으면 계속 처리합니다. 사용자·선택 문서 범위 위반과 인용 무결성 위반은 부분
-실패로 숨기지 않고 전체 요청을 실패시킵니다.
+있으면 계속 처리하는 문서별 부분 실패 정책을 적용합니다. 다만 사용자·선택 문서
+범위 위반과 인용 무결성 위반은 부분 실패로 숨기지 않고 전체 요청을 실패시킵니다.
 
 ---
 
@@ -219,17 +219,17 @@ OCR 청크가 같은 흐름을 사용합니다.
 
 ## 8. 인용과 Source Locator
 
-정상 답변은 아래 순서를 정확히 일치시킵니다.
+정상 답변은 본문 최초 등장 순서를 기준으로 아래 세 값을 정확히 일치시킵니다.
 
 ```text
-answer의 SOURCE-N 최초 등장 순서
+본문의 SOURCE-N 최초 등장 순서
 =
 cited_source_ids
 =
 sources[].source_id 순서
 ```
 
-최종 `sources`에는 본문에서 실제로 인용한 후보만 남습니다. 같은 `source_id` 또는
+최종 `sources`에는 본문에서 실제로 인용한 출처만 남습니다. 같은 `source_id` 또는
 `chunk_id`를 중복 반환할 수 없습니다.
 
 `source_locator` 공통 필드는 다음과 같습니다.
@@ -371,7 +371,51 @@ tests/e2e/test_fixed_document_full_pipeline_e2e.py
 
 ---
 
-## 13. 로그와 비밀정보
+## 13. 전체 테스트 실행
+
+일반 품질 게이트, 실제 Office COM, CUDA EasyOCR·TEI, Local RAG DB, Qdrant와
+Claude E2E를 처음부터 끝까지 실행하려면 다음 전용 스크립트를 사용합니다.
+
+```powershell
+.\scripts\run-all-rag-tests.ps1
+```
+
+실행 순서:
+
+1. `verify-rag-quality.ps1`을 통한 Ruff, Mypy 및 일반 전체 Pytest
+2. `.env.local`의 실제 Local RAG 설정을 현재 PowerShell 프로세스에만 주입
+3. Docker Engine, Compose, Qdrant와 CUDA TEI 준비 상태 확인
+4. PyTorch CUDA 장치와 Local RAG DB 연결 확인
+5. PowerPoint·Excel Office COM 이미지와 차트 렌더링 테스트
+6. Issue #123 고정 다중 형식·OCR 전체 파이프라인 E2E
+7. 실제 PDF·Claude·생성 제한 E2E
+8. 실제 DOCX·PPTX·XLSX·TXT 다중 형식 E2E
+9. 스크립트가 새로 시작한 인프라와 프로세스 환경 변수 복원
+
+같은 Commit에서 일반 품질 게이트가 이미 통과했다면 다음 옵션으로 중복 실행을
+생략할 수 있습니다.
+
+```powershell
+.\scripts\run-all-rag-tests.ps1 -SkipQualityGate
+```
+
+실패 직후 Qdrant 또는 CUDA TEI 로그와 상태를 확인해야 한다면 스크립트가 새로 시작한
+인프라를 유지합니다.
+
+```powershell
+.\scripts\run-all-rag-tests.ps1 -KeepInfrastructureRunning
+```
+
+PowerShell 실행 정책이 스크립트를 차단하는 환경에서는 현재 프로세스에만 `Bypass`를
+적용한 뒤 실행합니다. 실행 정책 변경은 PowerShell 창을 닫으면 사라집니다.
+
+`.env.local` 로더는 변수 뒤에 한글 조사가 붙을 때 발생하는 PowerShell 변수명 오인을
+막기 위해 Format 연산자를 사용합니다. 비밀값은 출력하지 않고 주입한 변수 개수만
+기록합니다.
+
+---
+
+## 14. 로그와 비밀정보
 
 구조화 로그에는 안전한 식별값과 오류 종류만 기록합니다. 다음 값은 로그 필드 또는
 문자열에서 제거하거나 기록 자체를 금지합니다.
@@ -389,7 +433,7 @@ E2E Assertion 메시지도 응답 본문, 질문과 프롬프트를 출력하지
 
 ---
 
-## 14. 주요 파일
+## 15. 주요 파일
 
 | 경로 | 역할 |
 |---|---|
@@ -404,18 +448,20 @@ E2E Assertion 메시지도 응답 본문, 질문과 프롬프트를 출력하지
 | `tests/fixtures/e2e_documents/` | 고정 다중 형식 Fixture |
 | `tests/e2e/test_fixed_document_full_pipeline_e2e.py` | Issue #123 전체 E2E |
 | `scripts/verify-rag-quality.ps1` | Ruff·Mypy·전체 Pytest |
-| `scripts/run-issue-123-e2e.ps1` | 실제 GPU·인프라 E2E |
+| `scripts/run-issue-123-e2e.ps1` | Issue #123 실제 GPU·인프라 E2E |
+| `scripts/run-all-rag-tests.ps1` | 일반·Office COM·전체 실제 E2E 통합 실행 |
 | `docs/api/rag-answer-contract.md` | 답변·출처 API 계약 |
 
 ---
 
-## 15. 병합 전 체크리스트
+## 16. 병합 전 체크리스트
 
 - [ ] `.env.local` 비밀값이 Git 추적 대상이 아님
 - [ ] Docker Desktop과 Local DB가 실행 중임
 - [ ] NVIDIA GPU가 Docker와 PyTorch에서 확인됨
 - [ ] `verify-rag-quality.ps1` 통과
 - [ ] `run-issue-123-e2e.ps1` 통과
+- [ ] `run-all-rag-tests.ps1` 전체 검증 통과
 - [ ] 테스트 종료 후 전용 DB·Qdrant 데이터가 정리됨
 - [ ] API 계약 문서와 구현 응답이 일치함
 - [ ] 실제로 실행하지 않은 검증을 통과로 기록하지 않음

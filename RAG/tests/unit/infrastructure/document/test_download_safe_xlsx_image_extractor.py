@@ -1,9 +1,10 @@
 """다운로드 임시 확장자를 사용하는 XLSX 이미지 추출 회귀를 검증한다."""
 
+import tempfile
+from contextlib import AbstractContextManager
 from io import BytesIO
 from pathlib import Path
 from types import TracebackType
-from typing import Any
 
 import pytest
 from openpyxl import Workbook  # type: ignore[import-untyped]
@@ -11,7 +12,6 @@ from openpyxl.drawing.image import Image as OpenpyxlImage  # type: ignore[import
 from PIL import Image
 
 from jipsa_rag.core.document_processing import DocumentProcessingSettings
-from jipsa_rag.infrastructure.document.images import download_safe_xlsx as xlsx_adapter_module
 from jipsa_rag.infrastructure.document.images.download_safe_xlsx import (
     DownloadSafeXlsxImageExtractor,
 )
@@ -82,13 +82,18 @@ async def test_extracts_xlsx_image_from_downloader_document_extension(
     # 정상적으로 종료되면 Python 표준 구현이 내부 source.xlsx와 디렉터리를 모두
     # 삭제한다. 테스트가 임시 경로를 직접 삭제하지 않으므로 정리 책임이 구현에 있다.
     created_temporary_directories: list[Path] = []
-    standard_temporary_directory = xlsx_adapter_module.tempfile.TemporaryDirectory
+    standard_temporary_directory = tempfile.TemporaryDirectory
 
     class _TrackingTemporaryDirectory:
         """표준 임시 디렉터리의 생성 위치만 기록하는 투명한 context wrapper."""
 
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            self._delegate = standard_temporary_directory(*args, **kwargs)
+        def __init__(self, *, prefix: str | None = None) -> None:
+            # 운영 어댑터가 사용하는 prefix 키워드 계약을 그대로 수용한다. 테스트에
+            # 필요하지 않은 가변 Any 인수를 제거하여 delegate와 context 반환형이
+            # 정적 분석에서 정확히 str 기반으로 유지되게 한다.
+            self._delegate: AbstractContextManager[str] = standard_temporary_directory(
+                prefix=prefix
+            )
 
         def __enter__(self) -> str:
             directory = self._delegate.__enter__()
@@ -104,7 +109,7 @@ async def test_extracts_xlsx_image_from_downloader_document_extension(
             return self._delegate.__exit__(exc_type, exc_value, traceback)
 
     monkeypatch.setattr(
-        xlsx_adapter_module.tempfile,
+        tempfile,
         "TemporaryDirectory",
         _TrackingTemporaryDirectory,
     )
