@@ -1,13 +1,12 @@
 package com.jipsa.purge;
 
-import com.jipsa.job.RagIngestClient;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.jipsa.file.S3Service;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.web.client.RestClientResponseException;
+import software.amazon.awssdk.core.exception.SdkClientException;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -15,7 +14,7 @@ import java.util.List;
 import java.util.Optional;
 
 @Service
-public class RagPurgeService {
+public class S3DeleteService {
 
     private static final String PENDING = "PENDING";
     private static final String PROCESSING = "PROCESSING";
@@ -23,34 +22,40 @@ public class RagPurgeService {
     private static final String FAILED = "FAILED";
     private static final long MAX_RETRY_DELAY_MS = Duration.ofHours(1).toMillis();
 
-    private static final Logger log = LoggerFactory.getLogger(RagPurgeService.class);
-
-    private final RagPurgeTaskRepository taskRepository;
-    private final RagIngestClient ragIngestClient;
+    private final S3DeleteTaskRepository taskRepository;
+    private final S3Service s3Service;
+    private final String bucket;
     private final long retryBackoffMs;
     private final int maxAttempts;
     private final long claimLeaseMs;
     private final TransactionTemplate transactionTemplate;
 
-    public RagPurgeService(RagPurgeTaskRepository taskRepository,
-                           RagIngestClient ragIngestClient,
-                           @Value("${app.rag.purge.retry-backoff-ms:60000}") long retryBackoffMs,
-                           @Value("${app.rag.purge.max-attempts:5}") int maxAttempts,
-                           @Value("${app.rag.purge.claim-lease-ms:300000}") long claimLeaseMs,
-                           @Value("${app.rag.read-timeout-ms:120000}") long ragReadTimeoutMs,
+    public S3DeleteService(S3DeleteTaskRepository taskRepository,
+                           S3Service s3Service,
+                           @Value("${app.s3.bucket}") String bucket,
+                           @Value("${app.s3.delete.retry-backoff-ms:60000}") long retryBackoffMs,
+                           @Value("${app.s3.delete.max-attempts:5}") int maxAttempts,
+                           @Value("${app.s3.delete.claim-lease-ms:300000}") long claimLeaseMs,
+                           @Value("${app.s3.delete.operation-timeout-ms:120000}") long operationTimeoutMs,
                            PlatformTransactionManager transactionManager) {
         this.taskRepository = taskRepository;
-        this.ragIngestClient = ragIngestClient;
+        this.s3Service = s3Service;
+        this.bucket = bucket;
         this.retryBackoffMs = Math.max(1L, retryBackoffMs);
         this.maxAttempts = Math.max(1, maxAttempts);
-        this.claimLeaseMs = Math.max(Math.max(1L, claimLeaseMs), Math.max(1L, ragReadTimeoutMs) + 30_000L);
+        this.claimLeaseMs = Math.max(Math.max(1L, claimLeaseMs), Math.max(1L, operationTimeoutMs) + 30_000L);
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
-    public void enqueue(Long fileId, Long usersId) {
-        RagPurgeTask task = new RagPurgeTask();
+    public void enqueue(Long fileId, Long usersId, String s3Key) {
+        if (s3Key == null || s3Key.isBlank()) {
+            return;
+        }
+        S3DeleteTask task = new S3DeleteTask();
         task.setFileId(fileId);
         task.setUsersId(usersId);
+        task.setBucket(bucket);
+        task.setS3Key(s3Key);
         task.setNextAttemptAt(LocalDateTime.now());
         taskRepository.saveAndFlush(task);
     }
@@ -59,20 +64,18 @@ public class RagPurgeService {
         LocalDateTime now = LocalDateTime.now();
         try {
             transactionTemplate.executeWithoutResult(status -> recoverExpiredTasks(now));
-        } catch (RuntimeException e) {
-            log.warn("RAG purge 작업 복구에 실패했습니다: {}", e.getMessage());
+        } catch (RuntimeException ignored) {
             return;
         }
 
-        List<RagPurgeTask> tasks;
+        List<S3DeleteTask> tasks;
         try {
             tasks = taskRepository.findTop50ByStatusAndNextAttemptAtBeforeOrderByNextAttemptAt(PENDING, now);
-        } catch (RuntimeException e) {
-            log.warn("RAG purge 작업 조회에 실패했습니다: {}", e.getMessage());
+        } catch (RuntimeException ignored) {
             return;
         }
 
-        for (RagPurgeTask task : tasks) {
+        for (S3DeleteTask task : tasks) {
             process(task.getId());
         }
     }
@@ -83,26 +86,25 @@ public class RagPurgeService {
                 FAILED,
                 now,
                 maxAttempts,
-                "purge 작업 선점이 만료되었고 최대 재시도 횟수를 초과했습니다.");
+                "S3 삭제 작업 선점이 만료되었고 최대 재시도 횟수를 초과했습니다.");
         taskRepository.requeueExpiredClaims(
                 PROCESSING,
                 PENDING,
                 now,
                 maxAttempts,
-                "purge 작업 선점이 만료되어 재시도합니다.");
+                "S3 삭제 작업 선점이 만료되어 재시도합니다.");
         taskRepository.failExhaustedPending(
                 PENDING,
                 FAILED,
                 maxAttempts,
-                "purge 최대 재시도 횟수를 초과했습니다.");
+                "S3 삭제 최대 재시도 횟수를 초과했습니다.");
     }
 
     private void process(Long taskId) {
         Optional<ClaimedTask> claimed;
         try {
             claimed = transactionTemplate.execute(status -> claim(taskId, LocalDateTime.now()));
-        } catch (RuntimeException e) {
-            log.warn("RAG purge 작업 선점에 실패했습니다 (task {}): {}", taskId, e.getMessage());
+        } catch (RuntimeException ignored) {
             return;
         }
         if (claimed == null || claimed.isEmpty()) {
@@ -111,15 +113,17 @@ public class RagPurgeService {
 
         ClaimedTask task = claimed.get();
         try {
-            ragIngestClient.purge(task.fileId(), task.usersId());
+            s3Service.delete(task.bucket(), task.s3Key());
             markDone(task);
-        } catch (RestClientResponseException e) {
-            int status = e.getStatusCode().value();
-            if (status == 410) {
+        } catch (S3Exception e) {
+            int status = e.statusCode();
+            if (status == 404) {
                 markDone(task);
                 return;
             }
-            handleFailure(task, isRetryableStatus(status), formatHttpError(status, e));
+            handleFailure(task, isRetryableStatus(status), formatError(status, e));
+        } catch (SdkClientException e) {
+            handleFailure(task, true, formatError(e));
         } catch (RuntimeException e) {
             handleFailure(task, true, formatError(e));
         }
@@ -137,23 +141,18 @@ public class RagPurgeService {
         if (claimed != 1) {
             return Optional.empty();
         }
-        RagPurgeTask task = taskRepository.findById(taskId).orElse(null);
+        S3DeleteTask task = taskRepository.findById(taskId).orElse(null);
         if (task == null) {
             return Optional.empty();
         }
-        return Optional.of(new ClaimedTask(task.getId(), task.getFileId(), task.getUsersId(), task.getAttempts()));
+        return Optional.of(new ClaimedTask(task.getId(), task.getBucket(), task.getS3Key(), task.getAttempts()));
     }
 
     private void markDone(ClaimedTask task) {
         try {
-            transactionTemplate.executeWithoutResult(status -> {
-                int updated = taskRepository.markDone(task.id(), PROCESSING, DONE);
-                if (updated != 1) {
-                    log.warn("RAG purge 완료 상태를 반영하지 못했습니다 (task {})", task.id());
-                }
-            });
-        } catch (RuntimeException e) {
-            log.warn("RAG purge 완료 상태 저장에 실패했습니다 (task {}): {}", task.id(), e.getMessage());
+            transactionTemplate.executeWithoutResult(status ->
+                    taskRepository.markDone(task.id(), PROCESSING, DONE));
+        } catch (RuntimeException ignored) {
         }
     }
 
@@ -161,31 +160,18 @@ public class RagPurgeService {
         boolean retry = retryable && task.attempt() < maxAttempts;
         try {
             transactionTemplate.executeWithoutResult(status -> {
-                int updated;
                 if (retry) {
-                    updated = taskRepository.scheduleRetry(
+                    taskRepository.scheduleRetry(
                             task.id(),
                             PROCESSING,
                             PENDING,
                             nextAttemptAt(task.attempt()),
                             error);
                 } else {
-                    updated = taskRepository.markFailed(task.id(), PROCESSING, FAILED, error);
-                }
-                if (updated != 1) {
-                    log.warn("RAG purge 실패 상태를 반영하지 못했습니다 (task {})", task.id());
+                    taskRepository.markFailed(task.id(), PROCESSING, FAILED, error);
                 }
             });
-        } catch (RuntimeException e) {
-            log.warn("RAG purge 실패 상태 저장에 실패했습니다 (task {}): {}", task.id(), e.getMessage());
-            return;
-        }
-        if (retry) {
-            log.warn("RAG purge 재시도 예정 (file {}, attempt {} / {}): {}",
-                    task.fileId(), task.attempt(), maxAttempts, error);
-        } else {
-            log.warn("RAG purge를 종료했습니다 (file {}, attempt {} / {}): {}",
-                    task.fileId(), task.attempt(), maxAttempts, error);
+        } catch (RuntimeException ignored) {
         }
     }
 
@@ -203,17 +189,14 @@ public class RagPurgeService {
         return status == 408 || status == 425 || status == 429 || status >= 500;
     }
 
-    private String formatHttpError(int status, RestClientResponseException error) {
-        String message = error.getMessage();
-        return "HTTP " + status + (message == null || message.isBlank() ? "" : ": " + message);
+    private String formatError(int status, S3Exception error) {
+        return "HTTP " + status + ": " + error.getMessage();
     }
 
     private String formatError(RuntimeException error) {
-        String message = error.getMessage();
-        return error.getClass().getSimpleName()
-                + (message == null || message.isBlank() ? "" : ": " + message);
+        return error.getClass().getSimpleName() + ": " + error.getMessage();
     }
 
-    private record ClaimedTask(Long id, Long fileId, Long usersId, int attempt) {
+    private record ClaimedTask(Long id, String bucket, String s3Key, int attempt) {
     }
 }

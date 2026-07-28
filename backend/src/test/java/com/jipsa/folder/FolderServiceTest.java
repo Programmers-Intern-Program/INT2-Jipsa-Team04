@@ -4,9 +4,11 @@ import com.jipsa.common.BadRequestException;
 import com.jipsa.file.File;
 import com.jipsa.file.FileRepository;
 import com.jipsa.file.FileStatus;
+import com.jipsa.file.S3Service;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -32,6 +34,9 @@ class FolderServiceTest {
 
     @Autowired
     private FileRepository fileRepository;
+
+    @MockitoBean
+    private S3Service s3Service;
 
     private static final Long USER = 1L;
     private static final Long OTHER_USER = 2L;
@@ -220,6 +225,18 @@ class FolderServiceTest {
 
         assertThatThrownBy(() -> folderService.delete(USER, id))
                 .isInstanceOf(FolderNotFoundException.class);
+    }
+
+    @Test
+    void permanentDelete_폴더삭제로_휴지통에간파일도_함께삭제() {
+        Long root = folderService.create(USER, "루트", null);
+        File file = fileIn(root);
+        folderService.delete(USER, root);
+
+        folderService.permanentDelete(USER, root);
+
+        assertThat(folderRepository.findById(root)).isEmpty();
+        assertThat(fileRepository.findById(file.getId())).isEmpty();
     }
 
     @Test

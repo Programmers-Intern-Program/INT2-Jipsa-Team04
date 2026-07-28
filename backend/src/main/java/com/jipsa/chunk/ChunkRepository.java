@@ -11,7 +11,7 @@ import java.util.List;
 
 public interface ChunkRepository extends JpaRepository<Chunk, Long> {
 
-    @Modifying(clearAutomatically = true)
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("delete from Chunk c where c.fileId = :fileId")
     void deleteByFileId(@Param("fileId") Long fileId);
 
