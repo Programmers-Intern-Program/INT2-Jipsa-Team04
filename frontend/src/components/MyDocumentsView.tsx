@@ -890,6 +890,83 @@ export default function MyDocumentsView({
     }
   };
 
+  const getTrashFolderSubtreeIds = (folderId: number): Set<number> => {
+    const ids = new Set<number>();
+    const collect = (currentId: number) => {
+      if (ids.has(currentId)) return;
+      ids.add(currentId);
+      (trashFolders ?? [])
+        .filter((folder) => folder.parentFolderId === currentId)
+        .forEach((folder) => collect(folder.folderId));
+    };
+    collect(folderId);
+    return ids;
+  };
+
+  const refreshFolderViews = async (): Promise<boolean> => {
+    const results = await Promise.allSettled([
+      listFolders(),
+      listAllFiles(),
+      listAllFolderTrash(),
+      listAllTrash(),
+    ]);
+    const [foldersResult, documentsResult, trashFoldersResult, trashDocumentsResult] = results;
+    let failed = false;
+
+    if (foldersResult.status === "fulfilled") {
+      setFolders(foldersResult.value);
+    } else {
+      failed = true;
+      console.warn("[folders] 활성 폴더 목록 재동기화 실패:", foldersResult.reason);
+    }
+    if (documentsResult.status === "fulfilled") {
+      onUpdateDocuments(documentsResult.value);
+    } else {
+      failed = true;
+      console.warn("[folders] 활성 문서 목록 재동기화 실패:", documentsResult.reason);
+    }
+    if (trashFoldersResult.status === "fulfilled") {
+      setTrashFolders(trashFoldersResult.value);
+      const freshFolderIds = new Set(trashFoldersResult.value.map((folder) => folder.folderId));
+      setCheckedTrashFolderIds((prev) => prev.filter((id) => freshFolderIds.has(id)));
+    } else {
+      failed = true;
+      console.warn("[folders] 휴지통 폴더 목록 재동기화 실패:", trashFoldersResult.reason);
+    }
+    if (trashDocumentsResult.status === "fulfilled") {
+      setTrashDocs(trashDocumentsResult.value);
+    } else {
+      failed = true;
+      console.warn("[folders] 휴지통 문서 목록 재동기화 실패:", trashDocumentsResult.reason);
+    }
+    return failed;
+  };
+
+  const refreshTrashViews = async (): Promise<boolean> => {
+    const results = await Promise.allSettled([
+      listAllFolderTrash(),
+      listAllTrash(),
+    ]);
+    const [trashFoldersResult, trashDocumentsResult] = results;
+    let failed = false;
+
+    if (trashFoldersResult.status === "fulfilled") {
+      setTrashFolders(trashFoldersResult.value);
+      const freshFolderIds = new Set(trashFoldersResult.value.map((folder) => folder.folderId));
+      setCheckedTrashFolderIds((prev) => prev.filter((id) => freshFolderIds.has(id)));
+    } else {
+      failed = true;
+      console.warn("[folders] 휴지통 폴더 목록 재동기화 실패:", trashFoldersResult.reason);
+    }
+    if (trashDocumentsResult.status === "fulfilled") {
+      setTrashDocs(trashDocumentsResult.value);
+    } else {
+      failed = true;
+      console.warn("[folders] 휴지통 문서 목록 재동기화 실패:", trashDocumentsResult.reason);
+    }
+    return failed;
+  };
+
   /**
    * 휴지통 폴더 복원 — 서버는 이 폴더의 하위 폴더·파일까지 전부 함께 복원한다.
    * 방금 누른 폴더 하나만 trashFolders에서 지우면, 같이 복원된 하위 폴더·파일은 이미
@@ -897,6 +974,7 @@ export default function MyDocumentsView({
    * "이미 처리된 리소스"라 실패한다 — 그래서 활성/휴지통 목록을 전부 다시 불러온다.
    */
   const handleRestoreFolder = async (folderId: number, folderName: string) => {
+    const processedFolderIds = getTrashFolderSubtreeIds(folderId);
     try {
       await restoreFolder(folderId);
     } catch (err) {
@@ -904,21 +982,13 @@ export default function MyDocumentsView({
       alert("폴더 복원에 실패했습니다.");
       return;
     }
-    try {
-      const [freshFolders, freshDocs, freshTrashFolders, freshTrashDocs] = await Promise.all([
-        listFolders(),
-        listAllFiles(),
-        listAllFolderTrash(),
-        listAllTrash(),
-      ]);
-      setFolders(freshFolders);
-      onUpdateDocuments(freshDocs);
-      setTrashFolders(freshTrashFolders);
-      setTrashDocs(freshTrashDocs);
-    } catch (err) {
-      console.warn("[folders] 복원 후 목록 재동기화 실패:", err);
+    setCheckedTrashFolderIds((prev) => prev.filter((id) => !processedFolderIds.has(id)));
+    const refreshFailed = await refreshFolderViews();
+    if (refreshFailed) {
+      alert("폴더 복원은 완료되었지만 일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요.");
+    } else {
+      alert(`'${folderName}' 폴더를 복원했습니다.`);
     }
-    alert(`'${folderName}' 폴더를 복원했습니다.`);
   };
 
   /**
@@ -928,6 +998,7 @@ export default function MyDocumentsView({
    */
   const handlePermanentDeleteFolder = async (folderId: number, folderName: string) => {
     if (!window.confirm(`'${folderName}' 폴더를 영구 삭제하시겠습니까? 안의 파일까지 모두 되돌릴 수 없습니다.`)) return;
+    const processedFolderIds = getTrashFolderSubtreeIds(folderId);
     try {
       await permanentDeleteFolder(folderId);
     } catch (err) {
@@ -935,18 +1006,14 @@ export default function MyDocumentsView({
       alert("폴더 영구 삭제에 실패했습니다.");
       return;
     }
-    try {
-      const [freshTrashFolders, freshTrashDocs] = await Promise.all([
-        listAllFolderTrash(),
-        listAllTrash(),
-      ]);
-      setTrashFolders(freshTrashFolders);
-      setTrashDocs(freshTrashDocs);
-    } catch (err) {
-      console.warn("[folders] 영구 삭제 후 휴지통 재동기화 실패:", err);
-    }
+    setCheckedTrashFolderIds((prev) => prev.filter((id) => !processedFolderIds.has(id)));
+    const refreshFailed = await refreshTrashViews();
     getStorageUsage().then(setStorage).catch(() => {});
-    alert(`'${folderName}' 폴더를 영구 삭제했습니다.`);
+    if (refreshFailed) {
+      alert("폴더 영구 삭제는 완료되었지만 일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요.");
+    } else {
+      alert(`'${folderName}' 폴더를 영구 삭제했습니다.`);
+    }
   };
 
   const closeNewFolderModal = useCallback(() => {
@@ -1095,23 +1162,12 @@ export default function MyDocumentsView({
     if (roots.length === 0) return;
     const results = await Promise.allSettled(roots.map((folderId) => restoreFolder(folderId)));
     const restoredCount = results.filter((result) => result.status === "fulfilled").length;
-    try {
-      const [freshFolders, freshDocs, freshTrashFolders, freshTrashDocs] = await Promise.all([
-        listFolders(),
-        listAllFiles(),
-        listAllFolderTrash(),
-        listAllTrash(),
-      ]);
-      setFolders(freshFolders);
-      onUpdateDocuments(freshDocs);
-      setTrashFolders(freshTrashFolders);
-      setTrashDocs(freshTrashDocs);
-    } catch (err) {
-      console.warn("[folders] 선택 폴더 복원 후 목록 재동기화 실패:", err);
-    }
+    const refreshFailed = await refreshFolderViews();
     setCheckedDocIds([]);
     setCheckedTrashFolderIds([]);
-    if (restoredCount === roots.length) {
+    if (restoredCount > 0 && refreshFailed) {
+      alert("폴더 복원은 완료되었지만 일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요.");
+    } else if (restoredCount === roots.length) {
       alert(`${folderIds.length}개의 폴더를 복원했습니다.`);
     } else if (restoredCount > 0) {
       alert(`${restoredCount}개의 폴더를 복원했습니다. 일부 폴더는 복원하지 못했습니다.`);
@@ -1126,20 +1182,13 @@ export default function MyDocumentsView({
     if (!window.confirm(`선택한 ${folderIds.length}개의 폴더를 영구 삭제하시겠습니까? 안의 파일까지 모두 되돌릴 수 없습니다.`)) return;
     const results = await Promise.allSettled(roots.map((folderId) => permanentDeleteFolder(folderId)));
     const deletedCount = results.filter((result) => result.status === "fulfilled").length;
-    try {
-      const [freshTrashFolders, freshTrashDocs] = await Promise.all([
-        listAllFolderTrash(),
-        listAllTrash(),
-      ]);
-      setTrashFolders(freshTrashFolders);
-      setTrashDocs(freshTrashDocs);
-    } catch (err) {
-      console.warn("[folders] 선택 폴더 영구 삭제 후 휴지통 재동기화 실패:", err);
-    }
+    const refreshFailed = await refreshTrashViews();
     getStorageUsage().then(setStorage).catch(() => {});
     setCheckedDocIds([]);
     setCheckedTrashFolderIds([]);
-    if (deletedCount === roots.length) {
+    if (deletedCount > 0 && refreshFailed) {
+      alert("폴더 영구 삭제는 완료되었지만 일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요.");
+    } else if (deletedCount === roots.length) {
       alert(`${folderIds.length}개의 폴더를 영구 삭제했습니다.`);
     } else if (deletedCount > 0) {
       alert(`${deletedCount}개의 폴더를 영구 삭제했습니다. 일부 폴더는 삭제하지 못했습니다.`);
