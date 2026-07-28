@@ -54,12 +54,12 @@ class FolderServicePermanentDeleteTest {
         Folder root = folder(1L, null, deletedAt);
         Folder child = folder(2L, 1L, deletedAt);
         when(folderRepository.findByIdAndUsersIdIncludingDeleted(1L, USER)).thenReturn(Optional.of(root));
-        when(folderRepository.findByUsersIdIncludingDeleted(USER)).thenReturn(List.of(root, child));
+        when(folderRepository.findAll()).thenReturn(List.of(root, child));
 
         folderService.permanentDelete(USER, 1L);
 
         ArgumentCaptor<List<Long>> fileServiceIds = ArgumentCaptor.forClass(List.class);
-        verify(fileService).permanentDeleteByFolderIds(fileServiceIds.capture());
+        verify(fileService).permanentDeleteByFolderIds(org.mockito.ArgumentMatchers.eq(USER), fileServiceIds.capture());
         assertThat(fileServiceIds.getValue()).containsExactlyInAnyOrder(1L, 2L);
 
         ArgumentCaptor<List<Long>> deletedIds = ArgumentCaptor.forClass(List.class);
@@ -78,6 +78,37 @@ class FolderServicePermanentDeleteTest {
 
         org.mockito.Mockito.verifyNoInteractions(fileService);
         org.mockito.Mockito.verify(folderRepository, org.mockito.Mockito.never()).deleteAllById(org.mockito.ArgumentMatchers.anyList());
+    }
+
+    @Test
+    void permanentDelete_삭제된루트의_활성하위폴더도_정리() {
+        LocalDateTime deletedAt = LocalDateTime.now();
+        Folder root = folder(1L, null, deletedAt);
+        Folder activeChild = folder(2L, 1L, null);
+        when(folderRepository.findByIdAndUsersIdIncludingDeleted(1L, USER)).thenReturn(Optional.of(root));
+        when(folderRepository.findAll()).thenReturn(List.of(root, activeChild));
+
+        folderService.permanentDelete(USER, 1L);
+
+        verify(fileService).permanentDeleteByFolderIds(org.mockito.ArgumentMatchers.eq(USER),
+                org.mockito.ArgumentMatchers.argThat(ids -> ids.containsAll(List.of(1L, 2L))));
+        ArgumentCaptor<List<Long>> deletedIds = ArgumentCaptor.forClass(List.class);
+        verify(folderRepository).deleteAllById(deletedIds.capture());
+        assertThat(deletedIds.getValue()).contains(1L, 2L);
+    }
+
+    @Test
+    void permanentDelete_다른사용자_하위폴더가있으면_거부() {
+        LocalDateTime deletedAt = LocalDateTime.now();
+        Folder root = folder(1L, null, deletedAt);
+        Folder foreignChild = folder(2L, 1L, deletedAt);
+        foreignChild.setUsersId(2L);
+        when(folderRepository.findByIdAndUsersIdIncludingDeleted(1L, USER)).thenReturn(Optional.of(root));
+        when(folderRepository.findAll()).thenReturn(List.of(root, foreignChild));
+
+        assertThatThrownBy(() -> folderService.permanentDelete(USER, 1L))
+                .isInstanceOf(FolderNotFoundException.class);
+        org.mockito.Mockito.verifyNoInteractions(fileService);
     }
 
     @Test

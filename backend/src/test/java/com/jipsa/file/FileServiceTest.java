@@ -10,6 +10,7 @@ import com.jipsa.folder.FolderRepository;
 import com.jipsa.job.JobRepository;
 import com.jipsa.job.JobService;
 import com.jipsa.purge.RagPurgeService;
+import com.jipsa.purge.S3DeleteService;
 import com.jipsa.chunk.ChunkRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -54,6 +55,8 @@ class FileServiceTest {
     @Mock
     private RagPurgeService ragPurgeService;
     @Mock
+    private S3DeleteService s3DeleteService;
+    @Mock
     private MessageCitationRepository messageCitationRepository;
 
     private FileService fileService;
@@ -62,7 +65,7 @@ class FileServiceTest {
     void setUp() {
         fileService = new FileService(fileRepository, jobRepository, jobService, folderRepository,
                 fileMetadataRepository, s3Service, "test-bucket", 1000L, chunkRepository, ragPurgeService,
-                messageCitationRepository);
+                s3DeleteService, messageCitationRepository);
     }
 
     private File ownedFile() {
@@ -366,7 +369,7 @@ class FileServiceTest {
     }
 
     @Test
-    void permanentDeleteRemovesFileAndS3() {
+    void permanentDeleteQueuesS3CleanupAndRemovesFile() {
         File file = ownedFile();
         file.setDeletedAt(LocalDateTime.now());
         file.setS3Key("files/key-1");
@@ -374,7 +377,7 @@ class FileServiceTest {
 
         fileService.permanentDelete(1L, 1L);
 
-        verify(s3Service).delete("test-bucket", "files/key-1");
+        verify(s3DeleteService).enqueue(1L, 1L, "files/key-1");
         verify(jobRepository).deleteByFileId(1L);
         verify(messageCitationRepository).deleteByFileId(1L);
         verify(fileRepository).delete(file);
@@ -394,20 +397,36 @@ class FileServiceTest {
     }
 
     @Test
-    void permanentDeletePreservesFileWhenS3CleanupFails() {
+    void permanentDeleteQueuesS3CleanupBeforeRemovingFile() {
         File file = ownedFile();
         file.setDeletedAt(LocalDateTime.now());
-        file.setS3Key("files/key-unavailable");
+        file.setS3Key("files/key-1");
         when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
-        doThrow(new RuntimeException("S3 unavailable")).when(s3Service).delete("test-bucket", "files/key-unavailable");
+
+        fileService.permanentDelete(1L, 1L);
+
+        verify(ragPurgeService).enqueue(1L, 1L);
+        verify(s3DeleteService).enqueue(1L, 1L, "files/key-1");
+        verify(s3Service, org.mockito.Mockito.never()).delete(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+        verify(fileRepository).delete(file);
+    }
+
+    @Test
+    void permanentDeleteDoesNotCallS3BeforeDatabaseFlushSucceeds() {
+        File file = ownedFile();
+        file.setDeletedAt(LocalDateTime.now());
+        file.setS3Key("files/key-rollback");
+        when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
+        doThrow(new RuntimeException("DB unavailable")).when(fileRepository).flush();
 
         assertThatThrownBy(() -> fileService.permanentDelete(1L, 1L))
                 .isInstanceOf(RuntimeException.class)
-                .hasMessage("S3 unavailable");
+                .hasMessage("DB unavailable");
 
-        verify(fileRepository, org.mockito.Mockito.never()).delete(file);
-        verify(ragPurgeService).enqueue(1L, 1L);
-        verify(s3Service).delete("test-bucket", "files/key-unavailable");
+        verify(s3DeleteService).enqueue(1L, 1L, "files/key-rollback");
+        verify(s3Service, org.mockito.Mockito.never()).delete(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test
@@ -423,12 +442,15 @@ class FileServiceTest {
                 .hasMessage("RAG unavailable");
 
         verify(fileRepository, org.mockito.Mockito.never()).delete(file);
-        verify(s3Service, org.mockito.Mockito.never()).delete("test-bucket", "files/key-unavailable");
+        verify(s3DeleteService, org.mockito.Mockito.never()).enqueue(1L, 1L, "files/key-unavailable");
     }
 
     private void verifyNoExternalCleanup() {
         verify(ragPurgeService, org.mockito.Mockito.never()).enqueue(1L, 1L);
-        verify(s3Service, org.mockito.Mockito.never()).delete(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+        verify(s3DeleteService, org.mockito.Mockito.never()).enqueue(
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test
@@ -460,29 +482,43 @@ class FileServiceTest {
     }
 
     @Test
-    void permanentDeleteByFolderIdsCleansUpS3AndJobRecords() {
+    void permanentDeleteByFolderIdsQueuesS3CleanupAndRemovesFile() {
         File file = ownedFile();
         file.setFolderId(5L);
         file.setS3Key("files/key-2");
         file.setDeletedAt(LocalDateTime.now());
         when(fileRepository.findByFolderIdIn(List.of(5L))).thenReturn(List.of(file));
 
-        fileService.permanentDeleteByFolderIds(List.of(5L));
+        fileService.permanentDeleteByFolderIds(1L, List.of(5L));
 
-        verify(s3Service).delete("test-bucket", "files/key-2");
+        verify(s3DeleteService).enqueue(1L, 1L, "files/key-2");
         verify(jobRepository).deleteByFileId(1L);
         verify(messageCitationRepository).deleteByFileId(1L);
         verify(fileRepository).deleteAll(List.of(file));
     }
 
     @Test
-    void permanentDeleteByFolderIdsRejectsActiveFile() {
+    void permanentDeleteByFolderIdsAlsoCleansActiveDescendantFile() {
         File file = ownedFile();
+        file.setFolderId(5L);
+        file.setS3Key("files/key-active");
+        when(fileRepository.findByFolderIdIn(List.of(5L))).thenReturn(List.of(file));
+
+        fileService.permanentDeleteByFolderIds(1L, List.of(5L));
+
+        verify(s3DeleteService).enqueue(1L, 1L, "files/key-active");
+        verify(fileRepository).deleteAll(List.of(file));
+    }
+
+    @Test
+    void permanentDeleteByFolderIdsRejectsFileOwnedByAnotherUser() {
+        File file = ownedFile();
+        file.setUsersId(2L);
         file.setFolderId(5L);
         when(fileRepository.findByFolderIdIn(List.of(5L))).thenReturn(List.of(file));
 
-        assertThatThrownBy(() -> fileService.permanentDeleteByFolderIds(List.of(5L)))
-                .isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> fileService.permanentDeleteByFolderIds(1L, List.of(5L)))
+                .isInstanceOf(ForbiddenException.class);
 
         verifyNoExternalCleanup();
         verify(fileRepository, org.mockito.Mockito.never()).deleteAll(org.mockito.ArgumentMatchers.anyList());

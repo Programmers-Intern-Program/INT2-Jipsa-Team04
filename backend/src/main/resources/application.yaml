@@ -27,6 +27,12 @@ spring:
 app:
   s3:
     bucket: ${S3_BUCKET}
+    delete:
+      poll-interval-ms: ${APP_S3_DELETE_POLL_INTERVAL_MS:30000}
+      retry-backoff-ms: ${APP_S3_DELETE_RETRY_BACKOFF_MS:60000}
+      max-attempts: ${APP_S3_DELETE_MAX_ATTEMPTS:5}
+      claim-lease-ms: ${APP_S3_DELETE_CLAIM_LEASE_MS:300000}
+      operation-timeout-ms: ${APP_S3_DELETE_OPERATION_TIMEOUT_MS:120000}
   aws:
     region: ${AWS_REGION:ap-northeast-2}
   ingest:

@@ -178,18 +178,18 @@ public class FolderService {
             throw new BadRequestException("삭제되지 않은 폴더입니다: " + folderId);
         }
 
-        Map<Long, List<Folder>> childrenByParentId = folderRepository.findByUsersIdIncludingDeleted(userId).stream()
+        List<Folder> allFolders = folderRepository.findAll();
+        Map<Long, List<Folder>> childrenByParentId = allFolders.stream()
                 .filter(f -> f.getParentFolderId() != null)
                 .collect(Collectors.groupingBy(Folder::getParentFolderId));
 
         List<Long> subtreeIds = collectSubtreeIds(folderId, childrenByParentId);
-        boolean hasActiveDescendant = folderRepository.findAllById(subtreeIds).stream()
-                .anyMatch(candidate -> candidate.getDeletedAt() == null);
-        if (hasActiveDescendant) {
-            throw new BadRequestException("삭제되지 않은 하위 폴더가 있습니다: " + folderId);
+        if (allFolders.stream()
+                .filter(candidate -> subtreeIds.contains(candidate.getId()))
+                .anyMatch(candidate -> !candidate.getUsersId().equals(userId))) {
+            throw new FolderNotFoundException(folderId);
         }
-
-        fileService.permanentDeleteByFolderIds(subtreeIds);
+        fileService.permanentDeleteByFolderIds(userId, subtreeIds);
         // 삭제 순서: DDL의 FK_Folder_ParentFolder(자기참조 FK)에 ON DELETE CASCADE가 없어서,
         // 자식이 아직 참조 중인 부모를 먼저 지우면 FK 제약 위반이 난다. collectSubtreeIds는
         // BFS라 항상 부모가 자식보다 앞에 오므로(깊이 비내림차순), 리스트를 뒤집으면 깊이 내림차순이

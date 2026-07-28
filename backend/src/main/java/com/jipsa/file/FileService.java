@@ -14,6 +14,7 @@ import com.jipsa.job.JobRepository;
 import com.jipsa.job.JobService;
 import com.jipsa.chunk.ChunkRepository;
 import com.jipsa.purge.RagPurgeService;
+import com.jipsa.purge.S3DeleteService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -45,6 +46,7 @@ public class FileService {
     private final long storageQuotaBytes;
     private final ChunkRepository chunkRepository;
     private final RagPurgeService ragPurgeService;
+    private final S3DeleteService s3DeleteService;
     private final MessageCitationRepository messageCitationRepository;
 
     public FileService(FileRepository fileRepository,
@@ -57,6 +59,7 @@ public class FileService {
                        @Value("${app.storage.quota-bytes:524288000}") long storageQuotaBytes,
                        ChunkRepository chunkRepository,
                        RagPurgeService ragPurgeService,
+                       S3DeleteService s3DeleteService,
                        MessageCitationRepository messageCitationRepository) {
         this.fileRepository = fileRepository;
         this.jobRepository = jobRepository;
@@ -68,6 +71,7 @@ public class FileService {
         this.storageQuotaBytes = storageQuotaBytes;
         this.chunkRepository = chunkRepository;
         this.ragPurgeService = ragPurgeService;
+        this.s3DeleteService = s3DeleteService;
         this.messageCitationRepository = messageCitationRepository;
     }
 
@@ -176,17 +180,13 @@ public class FileService {
 
     /** 폴더 영구 삭제 시 그 안의 삭제된 파일들을 S3 실물까지 함께 정리한다(FolderService에서 호출). */
     @Transactional
-    public void permanentDeleteByFolderIds(List<Long> folderIds) {
+    public void permanentDeleteByFolderIds(Long userId, List<Long> folderIds) {
         List<File> files = fileRepository.findByFolderIdIn(folderIds);
-        File activeFile = files.stream()
-                .filter(file -> file.getDeletedAt() == null)
-                .findFirst()
-                .orElse(null);
-        if (activeFile != null) {
-            throw new BadRequestException("삭제되지 않은 하위 파일이 있습니다: " + activeFile.getId());
+        if (files.stream().anyMatch(file -> !file.getUsersId().equals(userId))) {
+            throw new ForbiddenException("폴더 안에 다른 사용자의 파일이 포함되어 있습니다.");
         }
         files.forEach(this::enqueueRagPurge);
-        files.forEach(this::deleteObject);
+        files.forEach(this::enqueueS3Delete);
         files.forEach(file -> {
             jobRepository.deleteByFileId(file.getId());
             fileMetadataRepository.deleteByFileId(file.getId());
@@ -252,7 +252,7 @@ public class FileService {
             throw new BadRequestException("삭제되지 않은 파일입니다: " + fileId);
         }
         enqueueRagPurge(file);
-        deleteObject(file);
+        enqueueS3Delete(file);
         jobRepository.deleteByFileId(fileId);
         fileMetadataRepository.deleteByFileId(fileId);
         messageCitationRepository.deleteByFileId(fileId);
@@ -261,15 +261,12 @@ public class FileService {
         fileRepository.flush();
     }
 
-    private void deleteObject(File file) {
-        if (file.getS3Key() == null || file.getS3Key().isBlank()) {
-            return;
-        }
-        s3Service.delete(bucket, file.getS3Key());
-    }
-
     private void enqueueRagPurge(File file) {
         ragPurgeService.enqueue(file.getId(), file.getUsersId());
+    }
+
+    private void enqueueS3Delete(File file) {
+        s3DeleteService.enqueue(file.getId(), file.getUsersId(), file.getS3Key());
     }
 
     @Transactional(readOnly = true)
