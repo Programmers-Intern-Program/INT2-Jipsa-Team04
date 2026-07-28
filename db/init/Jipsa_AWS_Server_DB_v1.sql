@@ -448,6 +448,23 @@ CREATE TABLE `Rag_Purge_Task` (
                                   KEY `IX_PurgeTask_Status_Next` (`Status`, `Next_Attempt_At`)
 ) COMMENT 'RAG/Qdrant 벡터 정리 재시도 아웃박스. File 참조 없음(파일은 이미 삭제됨)';
 
+CREATE TABLE `S3_Delete_Task` (
+                                `S3_Delete_Task_IDX` BIGINT NOT NULL AUTO_INCREMENT,
+                                `File_IDX` BIGINT NOT NULL,
+                                `Users_IDX` BIGINT NOT NULL,
+                                `Bucket` VARCHAR(255) NOT NULL,
+                                `S3_Key` VARCHAR(1024) NOT NULL,
+                                `Status` VARCHAR(30) NOT NULL DEFAULT 'PENDING',
+                                `Attempts` INT UNSIGNED NOT NULL DEFAULT 0,
+                                `Next_Attempt_At` DATETIME(6) NULL,
+                                `Last_Error` TEXT NULL,
+                                `Created_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                                `Updated_At` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+
+                                PRIMARY KEY (`S3_Delete_Task_IDX`),
+                                KEY `IX_S3DeleteTask_Status_Next` (`Status`, `Next_Attempt_At`)
+);
+
 /* =========================
    13. Conversation
    설명:

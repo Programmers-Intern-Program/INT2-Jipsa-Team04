@@ -17,6 +17,8 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -165,34 +167,49 @@ public class FolderService {
     /** DELETE /api/v1/folders/{id}/permanent — 휴지통의 폴더를 영구 삭제, 하위 파일 S3 실물까지 정리. */
     @Transactional
     public void permanentDelete(Long userId, Long folderId) {
-        Folder folder = folderRepository.findByIdAndUsersIdIncludingDeleted(folderId, userId)
-                .orElseThrow(() -> new FolderNotFoundException(folderId));
+        Folder folder = folderRepository.findByIdAndUsersIdIncludingDeleted(folderId, userId).orElse(null);
+        if (folder == null) {
+            if (folderRepository.findById(folderId).isPresent()) {
+                throw new FolderNotFoundException(folderId);
+            }
+            return;
+        }
         if (folder.getDeletedAt() == null) {
-            throw new BadRequestException("휴지통에 있는 폴더만 영구 삭제할 수 있습니다.");
+            throw new BadRequestException("삭제되지 않은 폴더입니다: " + folderId);
         }
 
-        Map<Long, List<Folder>> childrenByParentId = folderRepository.findByUsersIdIncludingDeleted(userId).stream()
+        List<Folder> allFolders = folderRepository.findAll();
+        Map<Long, List<Folder>> childrenByParentId = allFolders.stream()
                 .filter(f -> f.getParentFolderId() != null)
                 .collect(Collectors.groupingBy(Folder::getParentFolderId));
 
         List<Long> subtreeIds = collectSubtreeIds(folderId, childrenByParentId);
-
-        fileService.permanentDeleteByFolderIds(subtreeIds);
+        if (allFolders.stream()
+                .filter(candidate -> subtreeIds.contains(candidate.getId()))
+                .anyMatch(candidate -> !candidate.getUsersId().equals(userId))) {
+            throw new FolderNotFoundException(folderId);
+        }
+        fileService.permanentDeleteByFolderIds(userId, subtreeIds);
         // 삭제 순서: DDL의 FK_Folder_ParentFolder(자기참조 FK)에 ON DELETE CASCADE가 없어서,
         // 자식이 아직 참조 중인 부모를 먼저 지우면 FK 제약 위반이 난다. collectSubtreeIds는
         // BFS라 항상 부모가 자식보다 앞에 오므로(깊이 비내림차순), 리스트를 뒤집으면 깊이 내림차순이
         // 되어 모든 부모-자식 쌍에서 자식이 부모보다 항상 먼저 삭제된다.
         Collections.reverse(subtreeIds);
         folderRepository.deleteAllById(subtreeIds);
+        folderRepository.flush();
     }
 
     /** rootId 자신 + 모든 자손 folderId를 BFS로 모은다. */
     private List<Long> collectSubtreeIds(Long rootId, Map<Long, List<Folder>> childrenByParentId) {
         List<Long> ids = new ArrayList<>();
         Deque<Long> queue = new ArrayDeque<>();
+        Set<Long> visited = new HashSet<>();
         queue.add(rootId);
         while (!queue.isEmpty()) {
             Long current = queue.poll();
+            if (!visited.add(current)) {
+                continue;
+            }
             ids.add(current);
             for (Folder child : childrenByParentId.getOrDefault(current, List.of())) {
                 queue.add(child.getId());
