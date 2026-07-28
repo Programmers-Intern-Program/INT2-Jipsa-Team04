@@ -9,8 +9,19 @@ export function getCurrentOrganizeTree(): Promise<OrganizeFolderTreeNode[]> {
 }
 
 /** POST /api/v1/organize/propose — AI 제안 생성. 반환되는 OrganizeProposal은 이미 검증을 통과한 상태. */
-export function proposeOrganization(): Promise<OrganizeProposal> {
-  return apiFetch<OrganizeProposal>("/organize/propose", { method: "POST" });
+export function proposeOrganization(allowRename: boolean): Promise<OrganizeProposal> {
+  return apiFetch<OrganizeProposal>(`/organize/propose?allowRename=${allowRename}`, { method: "POST" });
+}
+
+/**
+ * POST /api/v1/organize/propose-for-upload — 방금 업로드된 파일(fileIds)만 이동/이름변경 대상으로
+ * 삼는 스코프 제안. 나머지 파일은 컨텍스트로만 쓰인다. 업로드 완료 후 한 번만 호출한다.
+ */
+export function proposeForUpload(fileIds: number[], allowRename: boolean): Promise<OrganizeProposal> {
+  return apiFetch<OrganizeProposal>(`/organize/propose-for-upload?allowRename=${allowRename}`, {
+    method: "POST",
+    body: { fileIds },
+  });
 }
 
 /**

@@ -6,7 +6,8 @@ import {
   Folder,
   FileText,
   TrendingUp,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Presentation
 } from "lucide-react";
 import type { Document, Folder as FolderType } from "../types";
 import { formatBytes } from "../utils/formatBytes";
@@ -55,7 +56,7 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
           className="text-primary font-semibold text-label-md flex items-center gap-1 hover:underline cursor-pointer group transition-all"
           id="btn-view-all-reports"
         >
-          전체 리포트 보기 
+          내 문서 보관함으로 이동
           <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
         </button>
       </div>
@@ -131,14 +132,13 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
                 <th className="px-8 py-4">문서 이름</th>
                 <th className="px-8 py-4">AI 추출 태그</th>
                 <th className="px-8 py-4">마지막 수정</th>
-                <th className="px-8 py-4">보안 등급</th>
                 <th className="px-8 py-4 text-center">RAG 즉시 물어보기</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant" id="recent-docs-table-body">
               {documents.length === 0 && (
                 <tr id="recent-docs-empty-row">
-                  <td colSpan={5} className="px-8 py-16 text-center text-body-sm text-outline">
+                  <td colSpan={4} className="px-8 py-24 text-center text-body-sm text-outline">
                     아직 업로드한 문서가 없습니다. 문서를 업로드하면 여기에 표시됩니다.
                   </td>
                 </tr>
@@ -151,6 +151,8 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
                         <FileText className="w-6 h-6 text-rose-500 shrink-0" />
                       ) : doc.fileType === "xlsx" ? (
                         <FileSpreadsheet className="w-6 h-6 text-emerald-500 shrink-0" />
+                      ) : doc.fileType === "pptx" ? (
+                        <Presentation className="w-6 h-6 text-orange-500 shrink-0" />
                       ) : (
                         <FileText className="w-6 h-6 text-blue-500 shrink-0" />
                       )}
@@ -174,14 +176,6 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
                   </td>
                   <td className="px-8 py-5 text-body-sm text-on-surface-variant">
                     {formatDateTime(doc.modifiedAt)}
-                  </td>
-                  <td className="px-8 py-5">
-                    <span className={`inline-flex items-center gap-1 text-xs font-bold ${
-                      doc.securityRank === "기밀" ? "text-error" : "text-secondary"
-                    }`}>
-                      <span className={`w-1.5 h-1.5 rounded-full ${doc.securityRank === "기밀" ? "bg-error" : "bg-secondary"}`}></span>
-                      {doc.securityRank}
-                    </span>
                   </td>
                   <td className="px-8 py-5 text-center">
                     <button 

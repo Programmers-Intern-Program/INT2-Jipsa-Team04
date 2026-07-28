@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -58,6 +59,10 @@ class UploadServiceTest {
 
     private MockMultipartFile pdf(String name) {
         return new MockMultipartFile("files", name, "application/pdf", "content".getBytes());
+    }
+
+    private MockMultipartFile office(String name) {
+        return new MockMultipartFile("files", name, null, "content".getBytes());
     }
 
     private void stubBatchAndFile() {
@@ -186,5 +191,18 @@ class UploadServiceTest {
                 .isInstanceOf(UnsupportedFileTypeException.class);
 
         verify(s3Service, never()).upload(any(), any());
+    }
+
+    @Test
+    void acceptsOfficeExtensions() {
+        stubBatchAndFile();
+
+        uploadService.upload(1L, List.of(office("a.docx"), office("b.pptx"), office("c.xlsx")), null);
+
+        ArgumentCaptor<File> fileCaptor = ArgumentCaptor.forClass(File.class);
+        verify(fileRepository, times(3)).save(fileCaptor.capture());
+        assertThat(fileCaptor.getAllValues())
+                .extracting(File::getFileType)
+                .containsExactly("docx", "pptx", "xlsx");
     }
 }

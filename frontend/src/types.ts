@@ -72,8 +72,6 @@ export interface Document {
   modifiedAt: string;
   /** was: owner */
   ownerName: string;
-  /** was: securityLevel */
-  securityRank: "일반" | "기밀";
   summary: string;
   piiDetected: boolean;
   status?: string;

@@ -25,6 +25,8 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 @Service
 public class UploadService {
@@ -32,7 +34,7 @@ public class UploadService {
     private static final long MAX_FILE_SIZE = 20L * 1024 * 1024;
     private static final int MAX_FILE_COUNT = 5;
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(
-            "pdf", "txt");
+            "pdf", "txt", "docx", "pptx", "xlsx");
 
     private static final Logger log = LoggerFactory.getLogger(UploadService.class);
 
@@ -44,6 +46,7 @@ public class UploadService {
     private final TransactionTemplate transactionTemplate;
     private final String bucket;
     private final long storageQuotaBytes;
+    private final ConcurrentHashMap<Long, ReentrantLock> userQuotaLocks = new ConcurrentHashMap<>();
 
     public UploadService(UploadsRepository uploadsRepository,
                          FileRepository fileRepository,
@@ -52,7 +55,7 @@ public class UploadService {
                          JobService jobService,
                          PlatformTransactionManager transactionManager,
                          @Value("${app.s3.bucket}") String bucket,
-                         @Value("${app.storage.quota-bytes:107374182400}") long storageQuotaBytes) {
+                         @Value("${app.storage.quota-bytes:524288000}") long storageQuotaBytes) {
         this.uploadsRepository = uploadsRepository;
         this.fileRepository = fileRepository;
         this.folderRepository = folderRepository;
@@ -79,26 +82,36 @@ public class UploadService {
         }
 
         long incoming = files.stream().mapToLong(MultipartFile::getSize).sum();
-        if (fileRepository.sumSizeBytesByUsersId(userId) + incoming > storageQuotaBytes) {
-            throw new UploadLimitExceededException("스토리지 용량을 초과했습니다.");
-        }
-
-        Long uploadsId;
-        try {
-            uploadsId = transactionTemplate.execute(status -> createBatch(userId, files.size(), idempotencyKey));
-        } catch (DataIntegrityViolationException e) {
-            Uploads raced = findExistingBatch(userId, idempotencyKey);
-            if (raced != null) {
-                return new UploadResponse(raced.getId(), fileRepository.findIdsByUploadsId(raced.getId()));
-            }
-            throw e;
-        }
-
         List<PendingUpload> pending = files.stream()
                 .map(file -> new PendingUpload(file, s3Service.newKey()))
                 .toList();
-        List<Long> fileIds = transactionTemplate.execute(status ->
-                persistPendingFiles(userId, uploadsId, folderId, pending));
+
+        Long uploadsId;
+        List<Long> fileIds;
+        ReentrantLock quotaLock = userQuotaLocks.computeIfAbsent(userId, k -> new ReentrantLock());
+        quotaLock.lock();
+        try {
+            Uploads racedBeforeQuota = findExistingBatch(userId, idempotencyKey);
+            if (racedBeforeQuota != null) {
+                return new UploadResponse(racedBeforeQuota.getId(), fileRepository.findIdsByUploadsId(racedBeforeQuota.getId()));
+            }
+            if (fileRepository.sumSizeBytesByUsersId(userId) + incoming > storageQuotaBytes) {
+                throw new UploadLimitExceededException("스토리지 용량을 초과했습니다.");
+            }
+            try {
+                uploadsId = transactionTemplate.execute(status -> createBatch(userId, files.size(), idempotencyKey));
+            } catch (DataIntegrityViolationException e) {
+                Uploads raced = findExistingBatch(userId, idempotencyKey);
+                if (raced != null) {
+                    return new UploadResponse(raced.getId(), fileRepository.findIdsByUploadsId(raced.getId()));
+                }
+                throw e;
+            }
+            fileIds = transactionTemplate.execute(status ->
+                    persistPendingFiles(userId, uploadsId, folderId, pending));
+        } finally {
+            quotaLock.unlock();
+        }
         try {
             for (PendingUpload p : pending) {
                 s3Service.upload(bucket, p.key(), p.file());

@@ -16,10 +16,20 @@ import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignReques
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
 public class S3Service {
+
+    private static final String DEFAULT_CONTENT_TYPE = "application/octet-stream";
+
+    private static final Map<String, String> CONTENT_TYPE_BY_EXTENSION = Map.of(
+            "pdf", "application/pdf",
+            "txt", "text/plain",
+            "docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 
     private final S3Client s3Client;
     private final S3Presigner s3Presigner;
@@ -45,12 +55,33 @@ public class S3Service {
                     PutObjectRequest.builder()
                             .bucket(bucket)
                             .key(key)
-                            .contentType(file.getContentType())
+                            .contentType(resolveContentType(file))
                             .build(),
                     RequestBody.fromInputStream(file.getInputStream(), file.getSize()));
         } catch (IOException e) {
             throw new RuntimeException("S3 업로드 실패", e);
         }
+    }
+
+    private String resolveContentType(MultipartFile file) {
+        String extension = extensionOf(file.getOriginalFilename());
+        String mapped = CONTENT_TYPE_BY_EXTENSION.get(extension);
+        if (mapped != null) {
+            return mapped;
+        }
+        String provided = file.getContentType();
+        return provided != null && !provided.isBlank() ? provided : DEFAULT_CONTENT_TYPE;
+    }
+
+    private String extensionOf(String filename) {
+        if (filename == null) {
+            return "";
+        }
+        int dot = filename.lastIndexOf('.');
+        if (dot < 0 || dot == filename.length() - 1) {
+            return "";
+        }
+        return filename.substring(dot + 1).toLowerCase();
     }
 
     public void delete(String bucket, String key) {

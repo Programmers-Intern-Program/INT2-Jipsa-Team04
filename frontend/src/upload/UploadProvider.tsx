@@ -28,9 +28,10 @@ export interface UploadItem {
     status: UploadItemStatus;
     error?: string;
     progress?: number;
+    idempotencyKey: string;
 }
 
-const ALLOWED_EXTS = ["pdf", "txt"];
+const ALLOWED_EXTS = ["pdf", "txt", "docx", "pptx", "xlsx"];
 const MAX_BYTES = 20 * 1024 * 1024;
 
 function validate(file: File): string | null {
@@ -53,9 +54,11 @@ interface UploadContextValue {
     uploadedSignal: number;
     enqueue: (files: File[], folderId: number | null) => void;
     startAll: () => void;
+    uploadQueuedAndWait: () => Promise<number[]>;
     removeItem: (id: string) => void;
     retryItem: (id: string) => void;
     clearSettled: () => void;
+    clearPending: () => void;
     refreshRecent: () => void;
 }
 
@@ -96,12 +99,13 @@ export function UploadProvider({ children }: { children: ReactNode }) {
                 const id = target.id;
                 const file = target.file;
                 const folderId = target.folderId;
+                const idempotencyKey = target.idempotencyKey;
                 patch(id, { status: "UPLOADING", progress: 0, error: undefined });
                 const task = (async () => {
                     try {
                         const result = await uploadOne(file, folderId, (loaded, total) => {
                             patch(id, { progress: total > 0 ? Math.round((loaded / total) * 100) : 0 });
-                        });
+                        }, idempotencyKey);
                         patch(id, { status: "UPLOADED", progress: 100, fileId: result.fileIds[0] });
                         setUploadedSignal((n) => n + 1);
                     } catch (e) {
@@ -137,6 +141,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
                     folderId,
                     status: error ? "INVALID" : "QUEUED",
                     error: error ?? undefined,
+                    idempotencyKey: crypto.randomUUID(),
                 };
             });
             commit([...itemsRef.current, ...added]);
@@ -147,6 +152,18 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     const startAll = useCallback(() => {
         void pump();
     }, [pump]);
+
+    const uploadQueuedAndWait = useCallback(async () => {
+        const runIds = itemsRef.current.filter((it) => it.status === "QUEUED").map((it) => it.id);
+        await pump();
+        return itemsRef.current
+            .filter((it) => runIds.includes(it.id) && it.fileId != null)
+            .map((it) => it.fileId as number);
+    }, [pump]);
+
+    const clearPending = useCallback(() => {
+        commit(itemsRef.current.filter((it) => it.status !== "QUEUED" && it.status !== "INVALID"));
+    }, [commit]);
 
     const removeItem = useCallback(
         (id: string) => {
@@ -196,6 +213,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
                 status: mapServerStatus(r.status),
                 error: r.errorMessage ?? undefined,
                 progress: 100,
+                idempotencyKey: `srv-${r.fileId}`,
             }));
         commit([...updated, ...fresh]);
     }, [commit]);
@@ -216,9 +234,11 @@ export function UploadProvider({ children }: { children: ReactNode }) {
                 uploadedSignal,
                 enqueue,
                 startAll,
+                uploadQueuedAndWait,
                 removeItem,
                 retryItem,
                 clearSettled,
+                clearPending,
                 refreshRecent,
             }}
         >
