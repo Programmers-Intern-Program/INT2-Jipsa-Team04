@@ -576,8 +576,8 @@ export default function App() {
             <HardDrive className="w-5.5 h-5.5" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-primary font-sans leading-tight">AI Drive</h1>
-            <p className="text-[10px] text-outline font-bold tracking-widest uppercase mt-0.5">지능형 문서 관리</p>
+            <h1 className="text-xl font-bold text-primary font-sans leading-tight">Jipsa</h1>
+            <p className="text-[10px] text-outline font-bold tracking-widest uppercase mt-0.5">- 지능형 문서 관리 AI Drive</p>
           </div>
         </div>
 
@@ -706,7 +706,7 @@ export default function App() {
                 value={globalSearch}
                 onChange={handleGlobalSearchChange}
                 onKeyDown={handleGlobalSearchSubmit}
-                placeholder="파일 제목이나 AI 태그로 검색하세요"
+                placeholder="문서 내용을 자연어로 검색하세요"
                 className="w-full bg-surface-container-low border border-outline-variant rounded-full py-2 pl-11 pr-4 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-body-sm font-medium transition-all"
                 id="global-search-input"
               />

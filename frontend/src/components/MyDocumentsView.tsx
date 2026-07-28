@@ -1080,7 +1080,7 @@ export default function MyDocumentsView({
               id="btn-new-multi-uploader"
           >
             <Upload className="w-4 h-4" />
-            새 업로더
+            파일 업로드
           </button>
           {/* AI 스마트 정리 Dropdown Trigger Button */}
           <div className="relative">
@@ -2679,7 +2679,7 @@ export default function MyDocumentsView({
                 <div className="flex items-center justify-between border-b border-outline-variant pb-3">
                   <div className="flex items-center gap-2 text-primary">
                     <Upload className="w-5 h-5" />
-                    <h3 className="text-base font-bold">{newUploaderSmartMode ? "업로드 후 AI 자동 정리" : "다중 파일 업로드"}</h3>
+                    <h3 className="text-base font-bold">{newUploaderSmartMode ? "업로드 후 AI 자동 정리" : "파일 업로드"}</h3>
                   </div>
                   <button
                       onClick={closeUploadModal}
@@ -2701,7 +2701,7 @@ export default function MyDocumentsView({
                 >
                   <Upload className="w-9 h-9 mb-2 text-primary" />
                   <p className="font-bold text-sm text-on-surface">파일을 여기로 끌어다 놓거나 클릭해서 선택하세요</p>
-                  <p className="text-[11px] text-outline mt-1">여러 파일을 한 번에 선택할 수 있습니다 · PDF, TXT (최대 20MB)</p>
+                  <p className="text-[11px] text-outline mt-1">여러 파일을 한 번에 선택할 수 있습니다 · PDF, DOCX, TXT, XLSX, PPTX (최대 20MB)</p>
                   <input
                       ref={newUploaderInputRef}
                       type="file"

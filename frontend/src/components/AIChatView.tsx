@@ -401,7 +401,7 @@ export default function AIChatView({
               <div className="flex items-end gap-2 p-4">
                 <button 
                   type="button"
-                  onClick={() => alert("현재 베타 버전에서는 임의의 새 텍스트 파일 업로드 또는 사내 위키 템플릿 로드를 지원합니다. 왼쪽 '새 문서 추가' 창을 이용해 주세요.")}
+                  onClick={() => alert("문서 첨부는 내 문서에서 지원 형식(PDF, DOCX, TXT, XLSX, PPTX)을 업로드한 뒤 선택해 주세요.")}
                   className="p-2.5 text-outline hover:text-primary transition-colors cursor-pointer"
                   title="파일 첨부"
                 >
@@ -636,4 +636,3 @@ function ChatTab({
     </div>
   );
 }
-
