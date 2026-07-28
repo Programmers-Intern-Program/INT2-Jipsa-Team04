@@ -19,6 +19,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +35,7 @@ import java.util.stream.Collectors;
 public class FileService {
 
     private static final int PAGE_SIZE = 20;
+    private static final Logger log = LoggerFactory.getLogger(FileService.class);
 
     private final FileRepository fileRepository;
     private final JobRepository jobRepository;
@@ -177,18 +180,17 @@ public class FileService {
     /** 폴더 영구 삭제 시 그 안의 삭제된 파일들을 S3 실물까지 함께 정리한다(FolderService에서 호출). */
     @Transactional
     public void permanentDeleteByFolderIds(List<Long> folderIds) {
-        List<File> files = fileRepository.findByFolderIdInAndDeletedAtIsNotNull(folderIds);
+        List<File> files = fileRepository.findByFolderIdIn(folderIds);
         files.forEach(file -> {
-            if (file.getS3Key() != null && !file.getS3Key().isBlank()) {
-                s3Service.delete(bucket, file.getS3Key());
-            }
+            deleteObjectQuietly(file);
             jobRepository.deleteByFileId(file.getId());
-            fileMetadataRepository.findById(file.getId()).ifPresent(fileMetadataRepository::delete);
+            fileMetadataRepository.deleteByFileId(file.getId());
             messageCitationRepository.deleteByFileId(file.getId());
             chunkRepository.deleteByFileId(file.getId());
         });
         fileRepository.deleteAll(files);
-        files.forEach(file -> ragPurgeService.enqueue(file.getId(), file.getUsersId()));
+        fileRepository.flush();
+        files.forEach(this::enqueueRagPurgeQuietly);
     }
 
     @Transactional(readOnly = true)
@@ -235,23 +237,40 @@ public class FileService {
 
     @Transactional
     public void permanentDelete(Long userId, Long fileId) {
-        File file = fileRepository.findById(fileId)
-                .orElseThrow(() -> new FileNotFoundException("파일을 찾을 수 없습니다: " + fileId));
+        File file = fileRepository.findById(fileId).orElse(null);
+        if (file == null) {
+            return;
+        }
         if (!file.getUsersId().equals(userId)) {
             throw new ForbiddenException("해당 파일에 접근할 권한이 없습니다.");
         }
-        if (file.getDeletedAt() == null) {
-            throw new BadRequestException("휴지통에 있는 파일만 영구 삭제할 수 있습니다.");
-        }
-        if (file.getS3Key() != null && !file.getS3Key().isBlank()) {
-            s3Service.delete(bucket, file.getS3Key());
-        }
+        deleteObjectQuietly(file);
         jobRepository.deleteByFileId(fileId);
-        fileMetadataRepository.findById(fileId).ifPresent(fileMetadataRepository::delete);
+        fileMetadataRepository.deleteByFileId(fileId);
         messageCitationRepository.deleteByFileId(fileId);
         chunkRepository.deleteByFileId(fileId);
         fileRepository.delete(file);
-        ragPurgeService.enqueue(file.getId(), file.getUsersId());
+        fileRepository.flush();
+        enqueueRagPurgeQuietly(file);
+    }
+
+    private void deleteObjectQuietly(File file) {
+        if (file.getS3Key() == null || file.getS3Key().isBlank()) {
+            return;
+        }
+        try {
+            s3Service.delete(bucket, file.getS3Key());
+        } catch (RuntimeException e) {
+            log.warn("S3 파일 삭제 실패 — DB에서는 파일을 제거합니다 (file {}, key {}): {}", file.getId(), file.getS3Key(), e.getMessage());
+        }
+    }
+
+    private void enqueueRagPurgeQuietly(File file) {
+        try {
+            ragPurgeService.enqueue(file.getId(), file.getUsersId());
+        } catch (RuntimeException e) {
+            log.warn("RAG 파일 정리 작업 등록을 건너뜁니다 (file {}): {}", file.getId(), e.getMessage());
+        }
     }
 
     @Transactional(readOnly = true)

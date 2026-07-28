@@ -53,6 +53,11 @@ app:
     read-timeout-ms: ${RAG_READ_TIMEOUT_MS:120000}
     search-timeout-ms: ${RAG_SEARCH_TIMEOUT_MS:15000}
     search-score-threshold: ${RAG_SEARCH_SCORE_THRESHOLD:0.3}
+    purge:
+      poll-interval-ms: ${APP_RAG_PURGE_POLL_INTERVAL_MS:30000}
+      retry-backoff-ms: ${APP_RAG_PURGE_RETRY_BACKOFF_MS:60000}
+      max-attempts: ${APP_RAG_PURGE_MAX_ATTEMPTS:5}
+      claim-lease-ms: ${APP_RAG_PURGE_CLAIM_LEASE_MS:300000}
   metadata:
     document-types:
       - 계약서

@@ -17,6 +17,8 @@ import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -165,10 +167,9 @@ public class FolderService {
     /** DELETE /api/v1/folders/{id}/permanent — 휴지통의 폴더를 영구 삭제, 하위 파일 S3 실물까지 정리. */
     @Transactional
     public void permanentDelete(Long userId, Long folderId) {
-        Folder folder = folderRepository.findByIdAndUsersIdIncludingDeleted(folderId, userId)
-                .orElseThrow(() -> new FolderNotFoundException(folderId));
-        if (folder.getDeletedAt() == null) {
-            throw new BadRequestException("휴지통에 있는 폴더만 영구 삭제할 수 있습니다.");
+        Folder folder = folderRepository.findByIdAndUsersIdIncludingDeleted(folderId, userId).orElse(null);
+        if (folder == null) {
+            throw new FolderNotFoundException(folderId);
         }
 
         Map<Long, List<Folder>> childrenByParentId = folderRepository.findByUsersIdIncludingDeleted(userId).stream()
@@ -184,15 +185,20 @@ public class FolderService {
         // 되어 모든 부모-자식 쌍에서 자식이 부모보다 항상 먼저 삭제된다.
         Collections.reverse(subtreeIds);
         folderRepository.deleteAllById(subtreeIds);
+        folderRepository.flush();
     }
 
     /** rootId 자신 + 모든 자손 folderId를 BFS로 모은다. */
     private List<Long> collectSubtreeIds(Long rootId, Map<Long, List<Folder>> childrenByParentId) {
         List<Long> ids = new ArrayList<>();
         Deque<Long> queue = new ArrayDeque<>();
+        Set<Long> visited = new HashSet<>();
         queue.add(rootId);
         while (!queue.isEmpty()) {
             Long current = queue.poll();
+            if (!visited.add(current)) {
+                continue;
+            }
             ids.add(current);
             for (Folder child : childrenByParentId.getOrDefault(current, List.of())) {
                 queue.add(child.getId());

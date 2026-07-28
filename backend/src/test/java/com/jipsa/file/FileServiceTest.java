@@ -29,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -370,7 +371,6 @@ class FileServiceTest {
         file.setDeletedAt(LocalDateTime.now());
         file.setS3Key("files/key-1");
         when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
-        when(fileMetadataRepository.findById(1L)).thenReturn(Optional.empty());
 
         fileService.permanentDelete(1L, 1L);
 
@@ -381,12 +381,27 @@ class FileServiceTest {
     }
 
     @Test
-    void permanentDeleteRejectsFileNotInTrash() {
+    void permanentDeleteRemovesFileEvenWhenActive() {
         File file = ownedFile();
+        file.setS3Key("files/key-active");
         when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
 
-        assertThatThrownBy(() -> fileService.permanentDelete(1L, 1L))
-                .isInstanceOf(BadRequestException.class);
+        fileService.permanentDelete(1L, 1L);
+
+        verify(fileRepository).delete(file);
+    }
+
+    @Test
+    void permanentDeleteRemovesDatabaseRowWhenExternalCleanupFails() {
+        File file = ownedFile();
+        file.setS3Key("files/key-unavailable");
+        when(fileRepository.findById(1L)).thenReturn(Optional.of(file));
+        doThrow(new RuntimeException("S3 unavailable")).when(s3Service).delete("test-bucket", "files/key-unavailable");
+        doThrow(new RuntimeException("RAG unavailable")).when(ragPurgeService).enqueue(1L, 1L);
+
+        fileService.permanentDelete(1L, 1L);
+
+        verify(fileRepository).delete(file);
     }
 
     @Test
@@ -423,8 +438,7 @@ class FileServiceTest {
         file.setFolderId(5L);
         file.setS3Key("files/key-2");
         file.setDeletedAt(LocalDateTime.now());
-        when(fileRepository.findByFolderIdInAndDeletedAtIsNotNull(List.of(5L))).thenReturn(List.of(file));
-        when(fileMetadataRepository.findById(1L)).thenReturn(Optional.empty());
+        when(fileRepository.findByFolderIdIn(List.of(5L))).thenReturn(List.of(file));
 
         fileService.permanentDeleteByFolderIds(List.of(5L));
 

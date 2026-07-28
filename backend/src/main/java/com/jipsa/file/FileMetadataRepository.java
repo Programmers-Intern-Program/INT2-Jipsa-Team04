@@ -11,6 +11,10 @@ import java.util.List;
 
 public interface FileMetadataRepository extends JpaRepository<FileMetadata, Long> {
 
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("delete from FileMetadata m where m.fileId = :fileId")
+    void deleteByFileId(@Param("fileId") Long fileId);
+
     @Query("select m.fileId from FileMetadata m, File f "
             + "where f.id = m.fileId and f.status = com.jipsa.file.FileStatus.READY "
             + "and f.deletedAt is null and m.extractionStatus = 'PROCESSING' "

@@ -1,6 +1,5 @@
 package com.jipsa.folder;
 
-import com.jipsa.common.BadRequestException;
 import com.jipsa.file.FileService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -70,12 +69,15 @@ class FolderServicePermanentDeleteTest {
     }
 
     @Test
-    void permanentDelete_휴지통에_없으면_예외() {
+    void permanentDelete_활성폴더도_강제로_삭제() {
         Folder active = folder(1L, null, null);
         when(folderRepository.findByIdAndUsersIdIncludingDeleted(1L, USER)).thenReturn(Optional.of(active));
+        when(folderRepository.findByUsersIdIncludingDeleted(USER)).thenReturn(List.of(active));
 
-        assertThatThrownBy(() -> folderService.permanentDelete(USER, 1L))
-                .isInstanceOf(BadRequestException.class);
+        folderService.permanentDelete(USER, 1L);
+
+        verify(fileService).permanentDeleteByFolderIds(List.of(1L));
+        verify(folderRepository).deleteAllById(List.of(1L));
     }
 
     @Test
