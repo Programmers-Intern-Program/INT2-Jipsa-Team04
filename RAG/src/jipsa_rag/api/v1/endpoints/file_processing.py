@@ -3,7 +3,7 @@
 from http import HTTPStatus
 from typing import Annotated, Protocol
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from jipsa_rag.core.config import Settings, get_settings
@@ -90,14 +90,23 @@ FileDownloaderDependency = Annotated[
 ]
 
 
-def get_document_parser_factory() -> DocumentParserFactory:
-    """PDF, DOCX, PPTX, TXT, XLSX 파서가 등록된 Factory를 반환한다.
+def get_document_parser_factory(request: Request) -> DocumentParserFactory:
+    """현재 FastAPI lifespan이 소유한 공유 문서 Parser Factory를 반환한다.
 
-    엔드포인트는 구체 파서 클래스를 알지 않고 요청의 ``file_type``만 Factory에
-    전달한다. 새 형식 추가 또는 파서 버전 교체가 API 흐름을 변경하지 않게 한다.
+    Factory를 요청마다 새로 만들면 EasyOCR Reader, CUDA 모델과 OCR semaphore도 요청별로
+    복제된다. lifespan에서 생성해 ``app.state``에 저장한 단일 Factory를 반환하여 PDF,
+    DOCX, PPTX, XLSX의 OCR worker pool과 동시성 제한을 모든 요청이 공유하게 한다.
+
+    lifespan 밖에서 dependency를 직접 호출한 잘못된 실행은 새 Factory를 묵시적으로
+    생성하지 않고 실패시킨다. 이를 통해 종료되지 않는 CUDA worker가 생기는 경로를
+    차단한다. API 테스트는 기존과 동일하게 dependency override로 Stub Factory를 주입할
+    수 있다.
     """
 
-    return DocumentParserFactory()
+    factory = getattr(request.app.state, "document_parser_factory", None)
+    if not isinstance(factory, DocumentParserFactory):
+        raise RuntimeError("DocumentParserFactory is unavailable outside application lifespan.")
+    return factory
 
 
 DocumentParserFactoryDependency = Annotated[

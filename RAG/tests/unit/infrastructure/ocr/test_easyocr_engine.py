@@ -1,4 +1,4 @@
-"""EasyOCR Reader의 CUDA 필수 정책과 초기화 인자 전달을 검증한다."""
+"""worker 내부 EasyOCR Runtime의 CUDA 필수 정책과 초기화 인자를 검증한다."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from jipsa_rag.core.document_processing import DocumentProcessingSettings
-from jipsa_rag.infrastructure.ocr.easyocr import EasyOcrEngine
+from jipsa_rag.infrastructure.ocr.easyocr import EasyOcrRuntime
 from jipsa_rag.infrastructure.ocr.exceptions import (
     OcrGpuUnavailableError,
     OcrModelUnavailableError,
@@ -44,7 +44,7 @@ def test_reader_initialization_rejects_missing_cuda_when_gpu_is_required(
 ) -> None:
     """GPU 필수 설정에서는 torch CUDA 미탐지를 CPU 폴백으로 숨기지 않는다."""
 
-    engine = EasyOcrEngine(
+    runtime = EasyOcrRuntime(
         DocumentProcessingSettings(
             ocr_gpu=True,
             ocr_gpu_required=True,
@@ -54,13 +54,13 @@ def test_reader_initialization_rejects_missing_cuda_when_gpu_is_required(
     fake_easyocr = _FakeEasyOcr()
 
     monkeypatch.setattr(
-        engine,
+        runtime,
         "_import_dependency",
         lambda module_name: fake_easyocr if module_name == "easyocr" else _FakeTorch(False),
     )
 
     with pytest.raises(OcrGpuUnavailableError, match="CUDA OCR is required"):
-        engine._get_or_create_reader()
+        runtime._get_or_create_reader()
 
 
 def test_reader_initialization_uses_configured_cuda_device_and_download_policy(
@@ -79,16 +79,16 @@ def test_reader_initialization_uses_configured_cuda_device_and_download_policy(
         ocr_model_download_enabled=True,
         _env_file=None,
     )
-    engine = EasyOcrEngine(settings)
+    runtime = EasyOcrRuntime(settings)
     fake_easyocr = _FakeEasyOcr()
 
     monkeypatch.setattr(
-        engine,
+        runtime,
         "_import_dependency",
         lambda module_name: fake_easyocr if module_name == "easyocr" else _FakeTorch(True),
     )
 
-    reader = engine._get_or_create_reader()
+    reader = runtime._get_or_create_reader()
 
     assert reader is not None
     assert model_directory.is_dir()
@@ -101,6 +101,41 @@ def test_reader_initialization_uses_configured_cuda_device_and_download_policy(
     assert arguments["verbose"] is False
 
 
+def test_reader_initialization_reuses_same_reader_inside_one_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """같은 worker Runtime은 Reader 팩터리를 한 번만 호출하고 객체를 재사용한다."""
+
+    runtime = EasyOcrRuntime(
+        DocumentProcessingSettings(
+            ocr_gpu=True,
+            ocr_gpu_required=True,
+            _env_file=None,
+        )
+    )
+    fake_easyocr = _FakeEasyOcr()
+    reader_call_count = 0
+    original_reader_factory = fake_easyocr.Reader
+
+    def build_reader(languages: list[str], **kwargs: Any) -> object:
+        nonlocal reader_call_count
+        reader_call_count += 1
+        return original_reader_factory(languages, **kwargs)
+
+    monkeypatch.setattr(fake_easyocr, "Reader", build_reader)
+    monkeypatch.setattr(
+        runtime,
+        "_import_dependency",
+        lambda module_name: fake_easyocr if module_name == "easyocr" else _FakeTorch(True),
+    )
+
+    first_reader = runtime._get_or_create_reader()
+    second_reader = runtime._get_or_create_reader()
+
+    assert first_reader is second_reader
+    assert reader_call_count == 1
+
+
 def test_reader_initialization_rejects_missing_offline_model_directory(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -108,7 +143,7 @@ def test_reader_initialization_rejects_missing_offline_model_directory(
     """다운로드 금지 모드에서는 존재하지 않는 모델 디렉터리를 즉시 거부한다."""
 
     model_directory = tmp_path / "missing-easyocr-models"
-    engine = EasyOcrEngine(
+    runtime = EasyOcrRuntime(
         DocumentProcessingSettings(
             ocr_gpu=True,
             ocr_gpu_required=True,
@@ -119,12 +154,12 @@ def test_reader_initialization_rejects_missing_offline_model_directory(
     )
     fake_easyocr = _FakeEasyOcr()
     monkeypatch.setattr(
-        engine,
+        runtime,
         "_import_dependency",
         lambda module_name: fake_easyocr if module_name == "easyocr" else _FakeTorch(True),
     )
 
     with pytest.raises(OcrModelUnavailableError, match="offline mode"):
-        engine._get_or_create_reader()
+        runtime._get_or_create_reader()
 
     assert fake_easyocr.reader_arguments is None

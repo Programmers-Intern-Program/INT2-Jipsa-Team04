@@ -28,6 +28,26 @@ class OcrEngine(Protocol):
         ...
 
 
+class ManagedOcrEngine(OcrEngine, Protocol):
+    """애플리케이션 생명주기에서 시작·종료할 수 있는 OCR 엔진 계약.
+
+    실제 CUDA EasyOCR 구현은 별도 worker process를 소유한다. FastAPI lifespan은
+    요청이 끝난 뒤에도 worker가 남지 않도록 이 계약의 ``close()``를 호출한다.
+    ``start()``는 worker를 미리 준비해야 하는 통합 테스트와 진단에서 사용하며,
+    운영 요청 경로에서는 첫 OCR 호출 시 지연 시작할 수 있다.
+    """
+
+    async def start(self) -> None:
+        """설정된 수만큼 OCR worker process를 준비한다."""
+
+        ...
+
+    async def close(self) -> None:
+        """소유한 worker process와 IPC 자원을 모두 종료한다."""
+
+        ...
+
+
 class OcrDocumentEnricherProtocol(Protocol):
     """기존 문서에 OCR 단위를 추가하는 비동기 보강 계약."""
 
