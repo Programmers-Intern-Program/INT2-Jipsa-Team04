@@ -3,6 +3,7 @@ package com.jipsa.file;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jipsa.chat.MessageCitationRepository;
 import com.jipsa.common.BadRequestException;
 import com.jipsa.common.exception.FileNotFoundException;
 import com.jipsa.common.exception.ForbiddenException;
@@ -44,6 +45,7 @@ public class FileService {
     private final long storageQuotaBytes;
     private final ChunkRepository chunkRepository;
     private final RagPurgeService ragPurgeService;
+    private final MessageCitationRepository messageCitationRepository;
 
     public FileService(FileRepository fileRepository,
                        JobRepository jobRepository,
@@ -54,7 +56,8 @@ public class FileService {
                        @Value("${app.s3.bucket}") String bucket,
                        @Value("${app.storage.quota-bytes:524288000}") long storageQuotaBytes,
                        ChunkRepository chunkRepository,
-                       RagPurgeService ragPurgeService) {
+                       RagPurgeService ragPurgeService,
+                       MessageCitationRepository messageCitationRepository) {
         this.fileRepository = fileRepository;
         this.jobRepository = jobRepository;
         this.jobService = jobService;
@@ -65,6 +68,7 @@ public class FileService {
         this.storageQuotaBytes = storageQuotaBytes;
         this.chunkRepository = chunkRepository;
         this.ragPurgeService = ragPurgeService;
+        this.messageCitationRepository = messageCitationRepository;
     }
 
     @Transactional(readOnly = true)
@@ -180,6 +184,7 @@ public class FileService {
             }
             jobRepository.deleteByFileId(file.getId());
             fileMetadataRepository.findById(file.getId()).ifPresent(fileMetadataRepository::delete);
+            messageCitationRepository.deleteByFileId(file.getId());
             chunkRepository.deleteByFileId(file.getId());
         });
         fileRepository.deleteAll(files);
@@ -243,6 +248,7 @@ public class FileService {
         }
         jobRepository.deleteByFileId(fileId);
         fileMetadataRepository.findById(fileId).ifPresent(fileMetadataRepository::delete);
+        messageCitationRepository.deleteByFileId(fileId);
         chunkRepository.deleteByFileId(fileId);
         fileRepository.delete(file);
         ragPurgeService.enqueue(file.getId(), file.getUsersId());

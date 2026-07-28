@@ -33,6 +33,7 @@ import { formatBytes } from "../utils/formatBytes";
 import { formatDateTime } from "../utils/formatDateTime";
 import { fetchWithRetry } from "../utils/retry";
 import { getFolderPath, getFolderAncestors, isDescendantOrSelf } from "../utils/folderTree";
+import { ApiError } from "../api/client";
 import {
   listFolders,
   createFolder,
@@ -256,6 +257,8 @@ export default function MyDocumentsView({
   // Document checkbox selection state for batch actions
   const [checkedDocIds, setCheckedDocIds] = useState<string[]>([]);
   const [checkedTrashFolderIds, setCheckedTrashFolderIds] = useState<number[]>([]);
+  const [isPermanentDeleting, setIsPermanentDeleting] = useState(false);
+  const permanentDeleteInFlightRef = useRef(false);
   const [detailFileId, setDetailFileId] = useState<number | null>(null);
 
   // Modals state
@@ -583,22 +586,83 @@ export default function MyDocumentsView({
     setCheckedDocIds([]);
   };
 
+  const describeDeleteError = (error: unknown): string => {
+    if (error instanceof ApiError) {
+      return `${error.message || "서버 오류"} (HTTP ${error.status})`;
+    }
+    if (error instanceof Error && error.message) {
+      return error.message;
+    }
+    return "알 수 없는 오류";
+  };
+
+  const retryPermanentDelete = async (operation: () => Promise<void>): Promise<{ succeeded: boolean; error: unknown }> => {
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await operation();
+        return { succeeded: true, error: null };
+      } catch (error) {
+        lastError = error;
+        if (error instanceof ApiError && error.status === 404) {
+          return { succeeded: true, error: null };
+        }
+        const isRetryable = !(error instanceof ApiError)
+          || error.status === 408
+          || error.status === 429
+          || error.status >= 500;
+        if (!isRetryable || attempt === 2) break;
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 300 * (attempt + 1)));
+      }
+    }
+    return { succeeded: false, error: lastError };
+  };
+
+  const withPermanentDeleteLock = async (operation: () => Promise<void>): Promise<void> => {
+    if (permanentDeleteInFlightRef.current) return;
+    permanentDeleteInFlightRef.current = true;
+    setIsPermanentDeleting(true);
+    try {
+      await operation();
+    } finally {
+      permanentDeleteInFlightRef.current = false;
+      setIsPermanentDeleting(false);
+    }
+  };
+
   const handlePermanentDeleteDocuments = async (docIds: string[]) => {
+    if (permanentDeleteInFlightRef.current) return;
     if (!window.confirm(`${docIds.length}개의 문서를 영구 삭제하시겠습니까? 되돌릴 수 없습니다.`)) return;
-    const ids = docIds.map(Number).filter((id) => Number.isFinite(id));
-    const results = await Promise.allSettled(ids.map((id) => permanentDeleteFile(id)));
-    const deletedIds = ids.filter((_, i) => results[i].status === "fulfilled").map(String);
-    if (deletedIds.length < ids.length) {
-      console.warn("[files] 영구 삭제 일부 실패:", ids.length - deletedIds.length);
-    }
-    if (deletedIds.length > 0) {
-      setTrashDocs((prev) => (prev ? prev.filter((d) => !deletedIds.includes(d.id)) : prev));
-      getStorageUsage().then(setStorage).catch(() => {});
-      alert(`${deletedIds.length}개의 문서를 영구 삭제했습니다.`);
-    } else {
-      alert("영구 삭제에 실패했습니다.");
-    }
-    setCheckedDocIds([]);
+    await withPermanentDeleteLock(async () => {
+      const ids = docIds.map(Number).filter((id) => Number.isFinite(id));
+      const results: Array<{ succeeded: boolean; error: unknown }> = [];
+      for (const id of ids) {
+        results.push(await retryPermanentDelete(() => permanentDeleteFile(id)));
+      }
+      const deletedIds = ids.filter((_, i) => results[i].succeeded).map(String);
+      const failedResults = results
+        .map((result, index) => ({ ...result, id: ids[index] }))
+        .filter((result) => !result.succeeded);
+      if (deletedIds.length > 0) {
+        setTrashDocs((prev) => (prev ? prev.filter((d) => !deletedIds.includes(d.id)) : prev));
+        getStorageUsage().then(setStorage).catch(() => {});
+      }
+      if (failedResults.length === 0) {
+        alert(`${deletedIds.length}개의 문서를 영구 삭제했습니다.`);
+      } else {
+        const details = failedResults.slice(0, 3).map(({ id, error }) => {
+          const name = trashDocs?.find((doc) => Number(doc.id) === id)?.name ?? `문서 ${id}`;
+          return `${name}: ${describeDeleteError(error)}`;
+        }).join("\n");
+        const suffix = failedResults.length > 3 ? "\n외 항목은 콘솔 로그에서 확인할 수 있습니다." : "";
+        const summary = deletedIds.length > 0
+          ? `${deletedIds.length}개 문서를 영구 삭제했습니다. ${failedResults.length}개 문서는 삭제하지 못했습니다.`
+          : "영구 삭제에 실패했습니다.";
+        console.warn("[files] 영구 삭제 실패:", failedResults);
+        alert(`${summary}\n${details}${suffix}`);
+      }
+      setCheckedDocIds(failedResults.map(({ id }) => String(id)));
+    });
   };
 
   const mimeByType: Record<string, string> = {
@@ -975,6 +1039,11 @@ export default function MyDocumentsView({
    */
   const handleRestoreFolder = async (folderId: number, folderName: string) => {
     const processedFolderIds = getTrashFolderSubtreeIds(folderId);
+    const processedDocumentIds = new Set(
+      (trashDocs ?? [])
+        .filter((doc) => doc.folderId !== null && processedFolderIds.has(doc.folderId))
+        .map((doc) => doc.id)
+    );
     try {
       await restoreFolder(folderId);
     } catch (err) {
@@ -982,6 +1051,7 @@ export default function MyDocumentsView({
       alert("폴더 복원에 실패했습니다.");
       return;
     }
+    setCheckedDocIds((prev) => prev.filter((id) => !processedDocumentIds.has(id)));
     setCheckedTrashFolderIds((prev) => prev.filter((id) => !processedFolderIds.has(id)));
     const refreshFailed = await refreshFolderViews();
     if (refreshFailed) {
@@ -997,23 +1067,31 @@ export default function MyDocumentsView({
    * 하위 폴더·파일이 휴지통 화면에 유령처럼 남으므로 휴지통 목록을 통째로 재동기화한다.
    */
   const handlePermanentDeleteFolder = async (folderId: number, folderName: string) => {
+    if (permanentDeleteInFlightRef.current) return;
     if (!window.confirm(`'${folderName}' 폴더를 영구 삭제하시겠습니까? 안의 파일까지 모두 되돌릴 수 없습니다.`)) return;
-    const processedFolderIds = getTrashFolderSubtreeIds(folderId);
-    try {
-      await permanentDeleteFolder(folderId);
-    } catch (err) {
-      console.warn("[folders] DELETE /api/v1/folders/{id}/permanent 실패:", err);
-      alert("폴더 영구 삭제에 실패했습니다.");
-      return;
-    }
-    setCheckedTrashFolderIds((prev) => prev.filter((id) => !processedFolderIds.has(id)));
-    const refreshFailed = await refreshTrashViews();
-    getStorageUsage().then(setStorage).catch(() => {});
-    if (refreshFailed) {
-      alert("폴더 영구 삭제는 완료되었지만 일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요.");
-    } else {
-      alert(`'${folderName}' 폴더를 영구 삭제했습니다.`);
-    }
+    await withPermanentDeleteLock(async () => {
+      const processedFolderIds = getTrashFolderSubtreeIds(folderId);
+      const processedDocumentIds = new Set(
+        (trashDocs ?? [])
+          .filter((doc) => doc.folderId !== null && processedFolderIds.has(doc.folderId))
+          .map((doc) => doc.id)
+      );
+      const result = await retryPermanentDelete(() => permanentDeleteFolder(folderId));
+      if (!result.succeeded) {
+        console.warn("[folders] DELETE /api/v1/folders/{id}/permanent 실패:", result.error);
+        alert(`'${folderName}' 폴더 영구 삭제에 실패했습니다.\n사유: ${describeDeleteError(result.error)}`);
+        return;
+      }
+      setCheckedDocIds((prev) => prev.filter((id) => !processedDocumentIds.has(id)));
+      setCheckedTrashFolderIds((prev) => prev.filter((id) => !processedFolderIds.has(id)));
+      const refreshFailed = await refreshTrashViews();
+      getStorageUsage().then(setStorage).catch(() => {});
+      if (refreshFailed) {
+        alert("폴더 영구 삭제는 완료되었지만 일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요.");
+      } else {
+        alert(`'${folderName}' 폴더를 영구 삭제했습니다.`);
+      }
+    });
   };
 
   const closeNewFolderModal = useCallback(() => {
@@ -1177,24 +1255,40 @@ export default function MyDocumentsView({
   };
 
   const handlePermanentDeleteTrashFolders = async (folderIds: number[]) => {
+    if (permanentDeleteInFlightRef.current) return;
     const roots = getSelectedTrashFolderRoots(folderIds);
     if (roots.length === 0) return;
     if (!window.confirm(`선택한 ${folderIds.length}개의 폴더를 영구 삭제하시겠습니까? 안의 파일까지 모두 되돌릴 수 없습니다.`)) return;
-    const results = await Promise.allSettled(roots.map((folderId) => permanentDeleteFolder(folderId)));
-    const deletedCount = results.filter((result) => result.status === "fulfilled").length;
-    const refreshFailed = await refreshTrashViews();
-    getStorageUsage().then(setStorage).catch(() => {});
-    setCheckedDocIds([]);
-    setCheckedTrashFolderIds([]);
-    const deleteMessage = deletedCount === 0
-      ? "폴더를 영구 삭제하지 못했습니다."
-      : deletedCount === roots.length
-        ? `${folderIds.length}개의 폴더를 영구 삭제했습니다.`
-        : `${deletedCount}개의 폴더를 영구 삭제했습니다. ${roots.length - deletedCount}개의 폴더는 삭제하지 못했습니다.`;
-    const refreshMessage = refreshFailed
-      ? "일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요."
-      : "";
-    alert([deleteMessage, refreshMessage].filter(Boolean).join(" "));
+    await withPermanentDeleteLock(async () => {
+      const results: Array<{ succeeded: boolean; error: unknown; folderId: number }> = [];
+      for (const folderId of roots) {
+        const result = await retryPermanentDelete(() => permanentDeleteFolder(folderId));
+        results.push({ ...result, folderId });
+      }
+      const deletedCount = results.filter((result) => result.succeeded).length;
+      const failedResults = results.filter((result) => !result.succeeded);
+      const refreshFailed = await refreshTrashViews();
+      getStorageUsage().then(setStorage).catch(() => {});
+      setCheckedDocIds([]);
+      const deleteMessage = deletedCount === 0
+        ? "폴더를 영구 삭제하지 못했습니다."
+        : deletedCount === roots.length
+          ? `${folderIds.length}개의 폴더를 영구 삭제했습니다.`
+          : `${deletedCount}개의 폴더를 영구 삭제했습니다. ${roots.length - deletedCount}개의 폴더는 삭제하지 못했습니다.`;
+      const failureDetails = failedResults.slice(0, 3).map(({ folderId, error }) => {
+        const name = trashFolders?.find((folder) => folder.folderId === folderId)?.name ?? `폴더 ${folderId}`;
+        return `${name}: ${describeDeleteError(error)}`;
+      }).join("\n");
+      const failureSuffix = failedResults.length > 3 ? "\n외 항목은 콘솔 로그에서 확인할 수 있습니다." : "";
+      const refreshMessage = refreshFailed
+        ? "일부 목록을 갱신하지 못했습니다. 잠시 후 다시 확인해 주세요."
+        : "";
+      if (failedResults.length > 0) {
+        console.warn("[folders] 영구 삭제 실패:", failedResults);
+      }
+      setCheckedTrashFolderIds(failedResults.map(({ folderId }) => folderId));
+      alert([deleteMessage, failureDetails, failureSuffix, refreshMessage].filter(Boolean).join("\n"));
+    });
   };
 
   const switchDocumentTab = (tab: "mydrive" | "starred" | "recent" | "trash", folderId: number | null = null) => {
@@ -1321,13 +1415,7 @@ export default function MyDocumentsView({
     && trashFolderIdsForSelection.every((id) => checkedTrashFolderIds.includes(id));
 
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 15 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -15 }}
-      className="space-y-8"
-      id="my-documents-view"
-    >
+    <div className="space-y-8" id="my-documents-view">
       {/* Breadcrumb, Title & AI Smart Organize Action */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6" id="documents-header-container">
         <div>
@@ -1789,13 +1877,15 @@ export default function MyDocumentsView({
                       <>
                         <button
                             onClick={() => handleRestoreDocuments(checkedDocIds)}
-                            className="px-3.5 py-2 bg-primary text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                            disabled={isPermanentDeleting}
+                            className="px-3.5 py-2 bg-primary text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <Undo2 className="w-3.5 h-3.5" /> 선택 복원
                         </button>
                         <button
                             onClick={() => handlePermanentDeleteDocuments(checkedDocIds)}
-                            className="px-3.5 py-2 bg-red-600 text-white text-[11px] font-extrabold rounded-xl hover:bg-red-700 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                            disabled={isPermanentDeleting}
+                            className="px-3.5 py-2 bg-red-600 text-white text-[11px] font-extrabold rounded-xl hover:bg-red-700 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <Trash2 className="w-3.5 h-3.5" /> 문서 영구 삭제
                         </button>
@@ -1805,13 +1895,15 @@ export default function MyDocumentsView({
                     <>
                       <button
                         onClick={() => handleRestoreTrashFolders(checkedTrashFolderIds)}
-                        className="px-3.5 py-2 bg-primary text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        disabled={isPermanentDeleting}
+                        className="px-3.5 py-2 bg-primary text-white text-[11px] font-extrabold rounded-xl hover:bg-opacity-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <Undo2 className="w-3.5 h-3.5" /> 폴더 복원
                       </button>
                       <button
                         onClick={() => handlePermanentDeleteTrashFolders(checkedTrashFolderIds)}
-                        className="px-3.5 py-2 bg-red-600 text-white text-[11px] font-extrabold rounded-xl hover:bg-red-700 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                        disabled={isPermanentDeleting}
+                        className="px-3.5 py-2 bg-red-600 text-white text-[11px] font-extrabold rounded-xl hover:bg-red-700 transition-all flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <Trash2 className="w-3.5 h-3.5" /> 폴더 영구 삭제
                       </button>
@@ -1953,7 +2045,8 @@ export default function MyDocumentsView({
                             <button
                               type="button"
                               onClick={() => handleRestoreFolder(folder.folderId, folder.name)}
-                              className="p-1.5 rounded-lg text-outline hover:text-primary hover:bg-primary/5 transition-all cursor-pointer"
+                              disabled={isPermanentDeleting}
+                              className="p-1.5 rounded-lg text-outline hover:text-primary hover:bg-primary/5 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                               title="폴더 복원"
                             >
                               <Undo2 className="w-3.5 h-3.5" />
@@ -1961,7 +2054,8 @@ export default function MyDocumentsView({
                             <button
                               type="button"
                               onClick={() => handlePermanentDeleteFolder(folder.folderId, folder.name)}
-                              className="p-1.5 rounded-lg text-outline hover:text-rose-500 hover:bg-rose-50 transition-all cursor-pointer"
+                              disabled={isPermanentDeleting}
+                              className="p-1.5 rounded-lg text-outline hover:text-rose-500 hover:bg-rose-50 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                               title="폴더 영구 삭제"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -2293,14 +2387,16 @@ export default function MyDocumentsView({
                             <button
                               type="button"
                               onClick={() => handleRestoreFolder(folder.folderId, folder.name)}
-                              className="px-2.5 py-1.5 bg-primary/10 text-primary text-[10px] font-extrabold rounded-lg hover:bg-primary/20 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1"
+                              disabled={isPermanentDeleting}
+                              className="px-2.5 py-1.5 bg-primary/10 text-primary text-[10px] font-extrabold rounded-lg hover:bg-primary/20 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               <Undo2 className="w-3 h-3" /> 복원
                             </button>
                             <button
                               type="button"
                               onClick={() => handlePermanentDeleteFolder(folder.folderId, folder.name)}
-                              className="p-1.5 rounded-lg text-outline hover:text-rose-500 hover:bg-rose-50 transition-all cursor-pointer"
+                              disabled={isPermanentDeleting}
+                              className="p-1.5 rounded-lg text-outline hover:text-rose-500 hover:bg-rose-50 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                               title="폴더 영구 삭제"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -3555,6 +3651,6 @@ export default function MyDocumentsView({
             </div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </div>
   );
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Sparkles,
@@ -143,6 +143,10 @@ export default function App() {
   const navigateToTab = (tab: string) => {
     if (!smartApplyLocked) setActiveTab(tab);
   };
+  useLayoutEffect(() => {
+    const main = document.getElementById("main-scrollable-area");
+    if (main) main.scrollTop = 0;
+  }, [activeTab]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const { uploadedSignal } = useUploads();
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
@@ -836,19 +840,28 @@ export default function App() {
                 <AdminView />
               </motion.div>
             )}
+
+            {activeTab === "documents" && (
+              <motion.div
+                key="documents"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                transition={{ duration: 0.25 }}
+              >
+                <MyDocumentsView
+                  documents={documents}
+                  onNavigateToChat={handleNavigateToChat}
+                  isUploadOpen={isUploadOpen}
+                  setIsUploadOpen={setIsUploadOpen}
+                  isNewUploadOpen={isNewUploadOpen}
+                  setIsNewUploadOpen={setIsNewUploadOpen}
+                  onUpdateDocuments={setDocuments}
+                  sensitivity={committedSettings?.sensitivity ?? 0.85}
+                />
+              </motion.div>
+            )}
           </AnimatePresence>
-          <div className={activeTab === "documents" ? "block" : "hidden"}>
-            <MyDocumentsView
-              documents={documents}
-              onNavigateToChat={handleNavigateToChat}
-              isUploadOpen={isUploadOpen}
-              setIsUploadOpen={setIsUploadOpen}
-              isNewUploadOpen={isNewUploadOpen}
-              setIsNewUploadOpen={setIsNewUploadOpen}
-              onUpdateDocuments={setDocuments}
-              sensitivity={committedSettings?.sensitivity ?? 0.85}
-            />
-          </div>
         </main>
       </div>
     </div>
