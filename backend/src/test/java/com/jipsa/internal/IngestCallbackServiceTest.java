@@ -4,6 +4,7 @@ import com.jipsa.chunk.ChunkSyncService;
 import com.jipsa.file.File;
 import com.jipsa.file.FileRepository;
 import com.jipsa.file.FileStatus;
+import com.jipsa.job.JobRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -26,6 +27,8 @@ class IngestCallbackServiceTest {
     private FileRepository fileRepository;
     @Mock
     private ChunkSyncService chunkSyncService;
+    @Mock
+    private JobRepository jobRepository;
 
     @InjectMocks
     private IngestCallbackService ingestCallbackService;
@@ -44,7 +47,7 @@ class IngestCallbackServiceTest {
     @Test
     void staleCallbackDoesNotMarkFileReady() {
         File file = processingFile();
-        when(fileRepository.findByIdAndDeletedAtIsNull(7L)).thenReturn(Optional.of(file));
+        when(fileRepository.findForUpdate(7L)).thenReturn(Optional.of(file));
         when(chunkSyncService.sync(anyLong(), any(), any())).thenReturn(ChunkSyncService.SyncOutcome.STALE);
 
         ingestCallbackService.complete(7L, new IngestCompleteRequest(true, null, 1, null, List.of(chunk())));
@@ -56,7 +59,7 @@ class IngestCallbackServiceTest {
     @Test
     void storedCallbackMarksFileReady() {
         File file = processingFile();
-        when(fileRepository.findByIdAndDeletedAtIsNull(7L)).thenReturn(Optional.of(file));
+        when(fileRepository.findForUpdate(7L)).thenReturn(Optional.of(file));
         when(chunkSyncService.sync(anyLong(), any(), any())).thenReturn(ChunkSyncService.SyncOutcome.STORED);
 
         ingestCallbackService.complete(7L, new IngestCompleteRequest(true, null, 2, null, List.of(chunk())));
@@ -66,12 +69,12 @@ class IngestCallbackServiceTest {
     }
 
     @Test
-    void successWithoutChunksFails() {
+    void successWithoutChunksIsIgnored() {
         File file = processingFile();
-        when(fileRepository.findByIdAndDeletedAtIsNull(7L)).thenReturn(Optional.of(file));
+        when(fileRepository.findForUpdate(7L)).thenReturn(Optional.of(file));
 
         ingestCallbackService.complete(7L, new IngestCompleteRequest(true, null, 2, null, List.of()));
 
-        assertThat(file.getStatus()).isEqualTo(FileStatus.FAILED);
+        assertThat(file.getStatus()).isEqualTo(FileStatus.PROCESSING);
     }
 }
