@@ -45,6 +45,17 @@ class TeiChunkEmbedder:
 
         return self._settings.embedding_model
 
+    @property
+    def embedding_batch_size(self) -> int:
+        """문서 임베딩에서 실제로 사용하는 최대 TEI 요청 배치 크기를 반환한다.
+
+        파일 처리 서비스는 이 값을 사용해 최종 완료 로그의 ``batch_count``를
+        계산한다. 개별 배치마다 INFO 로그를 남기지 않으므로 청크 수가 증가해도
+        로그 행 수는 문서당 한 줄로 유지된다.
+        """
+
+        return self._settings.embedding_batch_size
+
     async def embed(
         self,
         *,
@@ -131,10 +142,8 @@ class TeiChunkEmbedder:
                     "inputs": inputs,
                 },
             )
-
         except httpx2.TimeoutException as error:
             raise EmbeddingServiceTimeoutError from error
-
         except httpx2.RequestError as error:
             raise EmbeddingServiceUnavailableError from error
 

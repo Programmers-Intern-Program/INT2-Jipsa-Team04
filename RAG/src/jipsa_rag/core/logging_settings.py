@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from jipsa_rag.core.config import resolve_env_file, resolve_environment
@@ -59,6 +59,16 @@ class LoggingSettings(BaseSettings):
     # 명시하지 않으면 local/development는 console, test는 json을 기본값으로 사용한다.
     log_format: LogFormat | None = None
 
+    # JIPSA_RAG_SLOW_STAGE_THRESHOLD_MS 환경 변수로 설정한다.
+    # 다운로드, 파싱/OCR, 청킹, 임베딩, 색인 및 백엔드 통신 단계가 이 값을 넘으면
+    # 정상 완료 로그라도 WARNING으로 승격하여 장시간 처리 구간을 빠르게 식별한다.
+    # 1시간을 상한으로 두어 단위 입력 오류로 사실상 경고가 비활성화되는 상황을 막는다.
+    slow_stage_threshold_ms: float = Field(
+        default=5000.0,
+        gt=0,
+        le=3_600_000,
+    )
+
     model_config = SettingsConfigDict(
         env_prefix="JIPSA_RAG_",
         case_sensitive=False,
@@ -97,7 +107,8 @@ class LoggingSettings(BaseSettings):
                 )
             )
             raise ValueError(
-                f"지원하지 않는 로그 레벨입니다: {normalized_value}. 지원 값: {supported_values}"
+                "지원하지 않는 로그 레벨입니다: "
+                f"{normalized_value}. 지원 값: {supported_values}"
             )
 
         return normalized_value

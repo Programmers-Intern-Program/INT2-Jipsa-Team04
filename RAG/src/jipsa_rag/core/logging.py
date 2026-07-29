@@ -5,7 +5,7 @@ import logging
 import re
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any, Final, cast
 
@@ -31,6 +31,7 @@ _JSON_LOG_FIELDS = [
 _REDACTED_VALUE: Final[str] = "[REDACTED]"
 _REDACTED_PRESIGNED_URL: Final[str] = "[REDACTED_PRESIGNED_URL]"
 _REDACTED_DATABASE_DSN: Final[str] = "[REDACTED_DATABASE_DSN]"
+_OMITTED_VALUE: Final[str] = "[OMITTED]"
 
 # Console Formatter가 LogRecord의 기본 속성을 구조화 extra로 중복 출력하지 않도록
 # Python logging이 기본적으로 생성하는 필드 집합을 한 번만 계산한다.
@@ -50,6 +51,9 @@ _CONSOLE_PREFERRED_EXTRA_FIELDS: Final[tuple[str, ...]] = (
     "method",
     "path",
     "status_code",
+    "stage",
+    "callback_type",
+    "success",
     "users_idx",
     "user_idx",
     "file_idx",
@@ -59,12 +63,50 @@ _CONSOLE_PREFERRED_EXTRA_FIELDS: Final[tuple[str, ...]] = (
     "structure_unit_count",
     "text_unit_count",
     "chunk_count",
+    "batch_count",
+    "embedding_dim",
+    "rag_document_idx",
+    "rag_index_run_idx",
+    "index_version",
     "parser_type",
     "parser_version",
     "ocr_enabled",
     "duration_ms",
+    "total_duration_ms",
+    "slow_stage_threshold_ms",
+    "is_slow_stage",
     "response_started",
     "error_code",
+)
+
+# 로그에 기록할 필요가 없고 크기·개인정보·모델 정보 노출 위험이 큰 원문 필드다.
+# 호출부에서 실수로 extra에 전달하더라도 Formatter 경계에서 값 전체를 제거한다.
+# content_hash, token_count, chunk_count처럼 진단에 필요한 요약 필드는 포함하지 않는다.
+_PROHIBITED_LOG_FIELD_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "content",
+        "chunk_content",
+        "chunk_contents",
+        "chunks",
+        "question",
+        "user_question",
+        "prompt",
+        "system_prompt",
+        "ocr_text",
+        "answer",
+        "generation_response",
+        "embedding",
+        "embeddings",
+        "embedding_vector",
+        "embedding_vectors",
+        "vector",
+        "vectors",
+        "payload",
+        "request_body",
+        "response_body",
+        "request_payload",
+        "response_payload",
+    }
 )
 
 # 구조화 로그의 필드명이 아래 값과 일치하면
@@ -517,7 +559,10 @@ def _format_console_value(value: object) -> str:
         if not value:
             return '""'
 
-        if any(character.isspace() or character in {"|", "=", '"'} for character in value):
+        if any(
+            character.isspace() or character in {"|", "=", '"'}
+            for character in value
+        ):
             return json.dumps(
                 value,
                 ensure_ascii=False,
@@ -561,6 +606,12 @@ def _is_sensitive_log_field(field_name: str) -> bool:
             _SENSITIVE_LOG_FIELD_SUFFIXES,
         )
     )
+
+
+def _is_prohibited_log_field(field_name: str) -> bool:
+    """원문·벡터·요청 본문처럼 로그에 저장하지 않을 필드인지 확인한다."""
+
+    return _normalize_log_field_name(field_name) in _PROHIBITED_LOG_FIELD_NAMES
 
 
 def _replace_sensitive_assignment(
@@ -630,6 +681,13 @@ def _sanitize_log_value(
 ) -> object:
     """중첩 로그 값을 순회하여 민감 필드와 문자열을 안전한 값으로 바꾼다."""
 
+    # 청크 원문, 사용자 질문, 임베딩 벡터, 요청·응답 본문처럼
+    # 로그에 저장할 필요가 없는 데이터는 민감도 판정과 관계없이 값 전체를 제거한다.
+    # 이 방어 계층은 호출부의 실수로 큰 payload가 전달된 경우에도 직렬화 비용과
+    # 정보 노출 위험을 제한한다.
+    if field_name is not None and _is_prohibited_log_field(field_name):
+        return _OMITTED_VALUE
+
     # 필드명이 민감 정보로 분류되면 값의 데이터 타입을 확인하지 않고
     # 전체 값을 고정된 마스킹 문자열로 교체한다.
     #
@@ -667,6 +725,96 @@ def _sanitize_log_value(
     # 정수, 실수, bool, None 등 비문자 스칼라 값은
     # 민감 필드명에 속하지 않는 경우 원본 값을 유지한다.
     return value
+
+
+def calculate_duration_ms(started_at: float) -> float:
+    """``perf_counter`` 시작값으로부터 경과 시간을 밀리초로 계산한다."""
+
+    return round(
+        (time.perf_counter() - started_at) * 1000,
+        3,
+    )
+
+
+def resolve_stage_log_level(
+    *,
+    duration_ms: float,
+    slow_stage_threshold_ms: float,
+) -> int:
+    """처리 시간이 임계값 이상이면 WARNING, 아니면 INFO를 반환한다."""
+
+    if duration_ms >= slow_stage_threshold_ms:
+        return logging.WARNING
+
+    return logging.INFO
+
+
+def log_stage_completed(
+    logger: logging.Logger,
+    message: str,
+    *,
+    event: str,
+    started_at: float,
+    extra: Mapping[str, object],
+    slow_stage_threshold_ms: float | None = None,
+    total_duration_field: bool = False,
+) -> float:
+    """단계 완료 시간과 느린 단계 여부를 한 번의 구조화 로그로 기록한다.
+
+    INFO에서는 단계별 완료 요약 한 줄만 생성한다. 임계값을 넘은 정상 완료는
+    WARNING으로 승격하되 동일 이벤트를 중복 기록하지 않는다. 호출부는 원문,
+    벡터, 요청·응답 본문이 아닌 작은 스칼라 진단값만 ``extra``로 전달해야 한다.
+    """
+
+    duration_ms = calculate_duration_ms(started_at)
+    threshold_ms = (
+        slow_stage_threshold_ms
+        if slow_stage_threshold_ms is not None
+        else get_logging_settings().slow_stage_threshold_ms
+    )
+    is_slow_stage = duration_ms >= threshold_ms
+    duration_field_name = "total_duration_ms" if total_duration_field else "duration_ms"
+
+    # 호출부가 event나 시간 필드를 덮어쓰지 못하도록 공통 필드는 마지막에 병합한다.
+    log_extra = {
+        **dict(extra),
+        "event": event,
+        duration_field_name: duration_ms,
+        "slow_stage_threshold_ms": threshold_ms,
+        "is_slow_stage": is_slow_stage,
+    }
+
+    logger.log(
+        resolve_stage_log_level(
+            duration_ms=duration_ms,
+            slow_stage_threshold_ms=threshold_ms,
+        ),
+        message,
+        extra=log_extra,
+    )
+
+    return duration_ms
+
+
+def log_debug_lazy(
+    logger: logging.Logger,
+    message: str,
+    *,
+    event: str,
+    extra_factory: Callable[[], Mapping[str, object]],
+) -> None:
+    """DEBUG가 활성화된 경우에만 진단 필드를 계산하고 로그를 생성한다."""
+
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    logger.debug(
+        message,
+        extra={
+            **dict(extra_factory()),
+            "event": event,
+        },
+    )
 
 
 def _resolve_log_level(log_level: str) -> int:

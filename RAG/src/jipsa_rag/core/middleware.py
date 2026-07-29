@@ -64,14 +64,18 @@ class RequestLoggingMiddleware:
 
         # 요청 시작 로그는 DEBUG에서만 출력한다.
         # INFO 운영에서는 완료 또는 실패 로그 한 줄만 남겨 정상 요청의 로그량을 줄인다.
-        logger.debug(
-            "HTTP request started.",
-            extra={
-                "event": "http_request_started",
-                "method": request.method,
-                "path": request.url.path,
-            },
-        )
+        #
+        # DEBUG가 비활성화된 상태에서는 extra dict도 만들지 않아 고빈도 HTTP 요청에서
+        # 불필요한 객체 생성과 문자열 접근 비용이 누적되지 않도록 한다.
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "HTTP request started.",
+                extra={
+                    "event": "http_request_started",
+                    "method": request.method,
+                    "path": request.url.path,
+                },
+            )
 
         async def send_with_request_id(message: Message) -> None:
             """응답 상태 코드를 수집하고 요청 식별자 헤더를 추가한다."""
