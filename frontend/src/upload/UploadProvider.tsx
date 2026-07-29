@@ -177,7 +177,13 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     }, [pump]);
 
     const clearPending = useCallback((sessionId: string = DEFAULT_UPLOAD_SESSION_ID) => {
-        commit(itemsRef.current.filter((it) => it.sessionId !== sessionId || (it.status !== "QUEUED" && it.status !== "INVALID")));
+        const current = itemsRef.current;
+        const next = current.filter(
+            (it) => it.sessionId !== sessionId || (it.status !== "QUEUED" && it.status !== "INVALID")
+        );
+        if (next.length !== current.length) {
+            commit(next);
+        }
     }, [commit]);
 
     const clearSession = useCallback((sessionId: string) => {
@@ -245,11 +251,15 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         void refreshRecent(DEFAULT_UPLOAD_SESSION_ID);
     }, [refreshRecent]);
 
-    const isBusyForSession = useCallback((sessionId: string) => items.some(
+    const isBusyForSession = useCallback((sessionId: string) => itemsRef.current.some(
         (it) => it.sessionId === sessionId && (it.status === "QUEUED" || it.status === "UPLOADING")
-    ), [items]);
+    ), []);
 
-    const isBusy = isBusyForSession(DEFAULT_UPLOAD_SESSION_ID);
+    const isBusy = items.some(
+        (it) =>
+            it.sessionId === DEFAULT_UPLOAD_SESSION_ID
+            && (it.status === "QUEUED" || it.status === "UPLOADING")
+    );
 
     return (
         <UploadContext.Provider

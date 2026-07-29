@@ -154,9 +154,14 @@ export default function MyDocumentsView({
   const [smartUploadSessionId, setSmartUploadSessionId] = useState<string | null>(null);
   const [autoRename, setAutoRename] = useState(true);
   const [isRenamePromptOpen, setIsRenamePromptOpen] = useState(false);
-  const { items: uploadQueue, enqueue, startAll, clearSession, isBusyForSession, clearPending, removeItem: removeUploadQueueItem, retryItem, refreshRecent } = useUploads();
+  const { items: uploadQueue, enqueue, startAll, clearSession, clearPending, removeItem: removeUploadQueueItem, retryItem, refreshRecent } = useUploads();
   const activeUploadSessionId = newUploaderSmartMode ? (smartUploadSessionId ?? "") : DEFAULT_UPLOAD_SESSION_ID;
   const activeUploadQueue = uploadQueue.filter((item) => item.sessionId === activeUploadSessionId);
+  const isDefaultUploadBusy = uploadQueue.some(
+    (item) =>
+      item.sessionId === DEFAULT_UPLOAD_SESSION_ID
+      && (item.status === "QUEUED" || item.status === "UPLOADING")
+  );
   const isSmartUploadLocked = newUploaderSmartMode && (smartStage === "uploading" || smartStage === "proposing");
   const isQueueUploading = activeUploadQueue.some((item) => item.status === "UPLOADING")
     || (newUploaderSmartMode && smartStage === "uploading");
@@ -164,11 +169,14 @@ export default function MyDocumentsView({
 
   useEffect(() => {
     if (!isNewUploadOpen || newUploaderSmartMode) return;
-    if (!isBusyForSession(DEFAULT_UPLOAD_SESSION_ID)) clearPending(DEFAULT_UPLOAD_SESSION_ID);
-    refreshRecent(DEFAULT_UPLOAD_SESSION_ID);
-    const timer = setInterval(refreshRecent, 5000);
-    return () => clearInterval(timer);
-  }, [isNewUploadOpen, newUploaderSmartMode, isBusyForSession, clearPending, refreshRecent]);
+    if (!isDefaultUploadBusy) clearPending(DEFAULT_UPLOAD_SESSION_ID);
+    void refreshRecent(DEFAULT_UPLOAD_SESSION_ID);
+    const timer = window.setInterval(
+      () => void refreshRecent(DEFAULT_UPLOAD_SESSION_ID),
+      5000
+    );
+    return () => window.clearInterval(timer);
+  }, [isNewUploadOpen, newUploaderSmartMode, isDefaultUploadBusy, clearPending, refreshRecent]);
 
   const uploadModalEpochRef = useRef(0);
   const uploadModalOpenRef = useRef(isNewUploadOpen);
