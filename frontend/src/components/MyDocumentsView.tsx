@@ -2576,9 +2576,10 @@ export default function MyDocumentsView({
       )}
 
       {/* 1) AI 스마트 정리중 로딩 오버레이 모달 */}
-      <AnimatePresence>
-        {isOrganizing && isSmartWorkflowVisible && createPortal((
-          <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/60 backdrop-blur-md" onClick={dismissSmartWorkflow}>
+      {createPortal(
+        <AnimatePresence>
+          {isOrganizing && isSmartWorkflowVisible && (
+            <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/60 backdrop-blur-md" onClick={dismissSmartWorkflow}>
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -2639,14 +2640,17 @@ export default function MyDocumentsView({
                 </div>
               </div>
             </motion.div>
-          </div>
-        ), document.body)}
-      </AnimatePresence>
+            </div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
 
       {/* 2) AI 스마트 정리 완료 미리보기 및 대조 검토 모달 */}
-      <AnimatePresence>
-        {organizeResult && isSmartWorkflowVisible && createPortal((
-          <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={closeOrganizeModal}>
+      {createPortal(
+        <AnimatePresence>
+          {organizeResult && isSmartWorkflowVisible && (
+            <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={closeOrganizeModal}>
             <motion.div 
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
@@ -2888,9 +2892,11 @@ export default function MyDocumentsView({
                 );
               })()}
             </motion.div>
-          </div>
-        ), document.body)}
-      </AnimatePresence>
+            </div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
 
       {/* 3) AI 스마트 업로드 자동 배치 결과 모달 */}
       <AnimatePresence>
@@ -3117,8 +3123,9 @@ export default function MyDocumentsView({
           </div>
         )}
       </AnimatePresence>
-      {isNewUploadOpen && createPortal((
-          <AnimatePresence>
+      {createPortal(
+        <AnimatePresence>
+          {isNewUploadOpen && (
             <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={closeUploadModal}>
               <motion.div
                   initial={{ scale: 0.95, opacity: 0 }}
@@ -3248,8 +3255,10 @@ export default function MyDocumentsView({
                 </div>
               </motion.div>
             </div>
-          </AnimatePresence>
-      ), document.body)}
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
 
       <AnimatePresence>
         {isRenamePromptOpen && (
