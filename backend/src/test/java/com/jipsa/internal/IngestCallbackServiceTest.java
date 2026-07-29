@@ -4,6 +4,7 @@ import com.jipsa.chunk.ChunkSyncService;
 import com.jipsa.file.File;
 import com.jipsa.file.FileRepository;
 import com.jipsa.file.FileStatus;
+import com.jipsa.job.JobRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -26,6 +27,8 @@ class IngestCallbackServiceTest {
     private FileRepository fileRepository;
     @Mock
     private ChunkSyncService chunkSyncService;
+    @Mock
+    private JobRepository jobRepository;
 
     @InjectMocks
     private IngestCallbackService ingestCallbackService;
