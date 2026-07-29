@@ -1,6 +1,8 @@
 """애플리케이션 서버에서 전달한 다중 형식 문서를 처리하고 색인 결과를 반환한다."""
 
+import logging
 from http import HTTPStatus
+from time import perf_counter
 from typing import Annotated, Protocol
 
 from fastapi import APIRouter, Depends, Request
@@ -13,6 +15,8 @@ from jipsa_rag.core.document_processing import (
 )
 from jipsa_rag.core.error_codes import ErrorCode
 from jipsa_rag.core.exceptions import AppException
+from jipsa_rag.core.logging import log_stage_completed
+from jipsa_rag.core.logging_settings import get_logging_settings
 from jipsa_rag.infrastructure.chunking.exceptions import (
     DocumentChunkingError,
     InvalidChunkingConfigurationError,
@@ -67,6 +71,8 @@ from jipsa_rag.schemas.file_processing import (
     FileProcessingRequest,
 )
 from jipsa_rag.services.file_indexing import FileIndexingService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/files", tags=["File Processing"])
 
@@ -432,27 +438,95 @@ async def process_file_processing_request(
     읽는다. 이 함수는 FastAPI 엔드포인트뿐 아니라 ``POST /ingest`` 내부에서도
     직접 호출되므로, 추가 위치 인자를 강제하지 않아 기존 내부 호출 계약을
     유지한다.
+
+    INFO 로그는 다운로드, 파싱/OCR, 청킹, 임베딩, 색인의 완료 시점에만 한 줄씩
+    기록한다. 청크 원문, 파일명, Presigned URL, 사용자 질문, 요청·응답 본문 및
+    임베딩 벡터는 기록하지 않고 식별자, 개수, 파일 유형과 처리 시간 같은 작은
+    스칼라 값만 사용하여 로그 비용을 제한한다.
     """
 
     # 색인 버전은 Chunk ID와 Local RAG 문서 정체성에 사용된다. 환경별 dotenv를
     # 읽는 공급자는 캐시되므로 요청마다 파일을 다시 파싱하지 않는다.
     processing_settings = get_document_processing_settings()
+    logging_settings = get_logging_settings()
+    slow_stage_threshold_ms = logging_settings.slow_stage_threshold_ms
+    total_started_at = perf_counter()
+
+    # DEBUG가 비활성화된 일반 운영에서는 시작 단계용 extra dict를 생성하지 않는다.
+    # 원문이나 요청 본문을 포함하지 않고 처리 범위를 식별하는 작은 값만 사용한다.
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "File processing pipeline started.",
+            extra={
+                "event": "file_processing_started",
+                "stage": "file_processing",
+                "users_idx": request.user_idx,
+                "file_idx": request.file_idx,
+                "file_type": str(request.file_type),
+            },
+        )
 
     try:
         # 지원하지 않는 형식은 네트워크 요청 전에 실패시켜 임시 파일과 외부 트래픽을
         # 만들지 않는다. Factory는 다섯 형식의 구체 구현 선택을 캡슐화한다.
         document_parser = document_parser_factory.get_parser(request.file_type)
 
+        download_started_at = perf_counter()
+
         async with file_downloader.download_and_validate(
             file_url=request.download_url,
             users_idx=request.user_idx,
             file_idx=request.file_idx,
         ) as downloaded_file:
-            parsed_document = await document_parser.parse(downloaded_file.path)
+            # async context 진입 시점에는 URL 검증, 재시도, 스트리밍 다운로드,
+            # 크기 제한과 SHA-256 계산이 모두 끝난 상태다. 이 지점에서 측정해야
+            # 파싱 시간과 분리된 실제 다운로드 단계 시간을 얻을 수 있다.
             file_size_bytes = downloaded_file.size_bytes
             calculated_file_hash = downloaded_file.sha256
 
+            log_stage_completed(
+                logger,
+                "File download completed.",
+                event="file_download_completed",
+                started_at=download_started_at,
+                slow_stage_threshold_ms=slow_stage_threshold_ms,
+                extra={
+                    "stage": "download",
+                    "users_idx": request.user_idx,
+                    "file_idx": request.file_idx,
+                    "file_type": str(request.file_type),
+                    "size_bytes": file_size_bytes,
+                },
+            )
+
+            parsing_started_at = perf_counter()
+            parsed_document = await document_parser.parse(downloaded_file.path)
+
+            # PDF, DOCX, PPTX, XLSX의 이미지 OCR은 각 Parser 내부의 동일 parse 호출에
+            # 포함된다. 따라서 Parser가 반환된 직후의 시간은 텍스트 추출과 활성화된
+            # OCR 보강 작업을 모두 포함하며, 별도 이미지별 INFO 로그를 만들지 않는다.
+            log_stage_completed(
+                logger,
+                "Document parsing and OCR phase completed.",
+                event="document_parsing_ocr_completed",
+                started_at=parsing_started_at,
+                slow_stage_threshold_ms=slow_stage_threshold_ms,
+                extra={
+                    "stage": "parsing_ocr",
+                    "users_idx": request.user_idx,
+                    "file_idx": request.file_idx,
+                    "file_type": str(parsed_document.file_type),
+                    "parser_type": document_parser.parser_type,
+                    "parser_version": document_parser.parser_version,
+                    "ocr_enabled": processing_settings.ocr_enabled,
+                    "structure_unit_count": parsed_document.unit_count,
+                    "text_unit_count": parsed_document.text_unit_count,
+                },
+            )
+
         # 임시 파일은 파싱 직후 정리하고, 이후 단계는 불변 메모리 모델만 사용한다.
+        chunking_started_at = perf_counter()
+
         chunked_document = await document_chunker.chunk(
             document=parsed_document,
             context=ChunkingContext(
@@ -465,8 +539,63 @@ async def process_file_processing_request(
             ),
         )
 
+        log_stage_completed(
+            logger,
+            "Document chunking completed.",
+            event="document_chunking_completed",
+            started_at=chunking_started_at,
+            slow_stage_threshold_ms=slow_stage_threshold_ms,
+            extra={
+                "stage": "chunking",
+                "users_idx": request.user_idx,
+                "file_idx": request.file_idx,
+                "file_type": str(chunked_document.file_type),
+                "structure_unit_count": chunked_document.source_unit_count,
+                "text_unit_count": chunked_document.text_unit_count,
+                "chunk_count": chunked_document.chunk_count,
+            },
+        )
+
+        embedding_started_at = perf_counter()
         embedded_document = await chunk_embedder.embed(document=chunked_document)
 
+        # 운영 구현인 TeiChunkEmbedder는 실제 요청 배치 크기를 속성으로 제공한다.
+        # 일부 기존 단위 테스트의 Stub이 해당 속성을 구현하지 않아도 동작하도록
+        # 전체 청크를 한 배치로 처리한 것으로 계산하는 안전한 fallback을 둔다.
+        embedding_batch_size = getattr(
+            chunk_embedder,
+            "embedding_batch_size",
+            chunked_document.chunk_count,
+        )
+        if (
+            isinstance(embedding_batch_size, bool)
+            or not isinstance(embedding_batch_size, int)
+            or embedding_batch_size <= 0
+        ):
+            embedding_batch_size = chunked_document.chunk_count
+
+        embedding_batch_count = (
+            chunked_document.chunk_count + embedding_batch_size - 1
+        ) // embedding_batch_size
+
+        log_stage_completed(
+            logger,
+            "Document embedding completed.",
+            event="document_embedding_completed",
+            started_at=embedding_started_at,
+            slow_stage_threshold_ms=slow_stage_threshold_ms,
+            extra={
+                "stage": "embedding",
+                "users_idx": request.user_idx,
+                "file_idx": request.file_idx,
+                "file_type": str(chunked_document.file_type),
+                "chunk_count": embedded_document.chunk_count,
+                "embedding_dim": embedded_document.embedding_dim,
+                "batch_count": embedding_batch_count,
+            },
+        )
+
+        indexing_started_at = perf_counter()
         indexing_result = await file_indexing_service.index(
             metadata=DocumentIndexMetadata(
                 users_idx=request.user_idx,
@@ -480,6 +609,26 @@ async def process_file_processing_request(
                 parser_version=document_parser.parser_version,
             ),
             embedded_document=embedded_document,
+        )
+
+        # 이 구간은 Local RAG DB 준비·상태 확정과 Qdrant staging·활성 전환을
+        # 모두 포함한다. 두 저장소 내부의 청크별 로그 대신 최종 문서·실행 식별자와
+        # 전체 소요 시간만 한 줄로 기록하여 INFO 로그량을 청크 수와 무관하게 유지한다.
+        log_stage_completed(
+            logger,
+            "Local RAG DB and Qdrant indexing completed.",
+            event="file_indexing_completed",
+            started_at=indexing_started_at,
+            slow_stage_threshold_ms=slow_stage_threshold_ms,
+            extra={
+                "stage": "indexing",
+                "users_idx": request.user_idx,
+                "file_idx": request.file_idx,
+                "file_type": str(parsed_document.file_type),
+                "rag_document_idx": indexing_result.rag_document_idx,
+                "rag_index_run_idx": indexing_result.rag_index_run_idx,
+                "chunk_count": indexing_result.chunk_count,
+            },
         )
 
         response_data = FileProcessingCompletedResponse(
@@ -523,6 +672,25 @@ async def process_file_processing_request(
             users_idx=request.user_idx,
             file_idx=request.file_idx,
         ) from error
+
+    log_stage_completed(
+        logger,
+        "File processing pipeline completed.",
+        event="file_processing_completed",
+        started_at=total_started_at,
+        slow_stage_threshold_ms=slow_stage_threshold_ms,
+        total_duration_field=True,
+        extra={
+            "stage": "file_processing",
+            "success": True,
+            "users_idx": request.user_idx,
+            "file_idx": request.file_idx,
+            "file_type": str(request.file_type),
+            "rag_document_idx": indexing_result.rag_document_idx,
+            "rag_index_run_idx": indexing_result.rag_index_run_idx,
+            "chunk_count": indexing_result.chunk_count,
+        },
+    )
 
     return ApiResponse[FileProcessingCompletedResponse](
         success=True,

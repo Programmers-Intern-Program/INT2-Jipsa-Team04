@@ -1,4 +1,4 @@
-"""구조화 로그의 민감 정보 마스킹 동작을 검증한다."""
+"""구조화 로그의 민감 정보 마스킹과 원문 payload 제거 동작을 검증한다."""
 
 import json
 import logging
@@ -24,6 +24,11 @@ _TEST_PRESIGNED_URL = (
     "X-Amz-Credential=temporary-credential&"
     "X-Amz-Signature=temporary-signature-value"
 )
+_TEST_CHUNK_CONTENT = "confidential chunk content that must not be logged"
+_TEST_USER_QUESTION = "private user question that must not be logged"
+_TEST_REQUEST_BODY = {"private": "request-body-value"}
+_TEST_RESPONSE_BODY = {"private": "response-body-value"}
+_TEST_EMBEDDING_VECTOR = [0.111111, 0.222222, 0.333333]
 
 
 def _create_test_logger(stream: StringIO) -> logging.Logger:
@@ -187,3 +192,61 @@ def test_formatter_redacts_sensitive_values_inside_exception_traceback() -> None
     assert "[REDACTED_PRESIGNED_URL]" in exception_text
     assert "[REDACTED_DATABASE_DSN]" in exception_text
     assert "X-Internal-Token=[REDACTED]" in exception_text
+
+
+def test_formatter_omits_content_question_vectors_and_http_bodies() -> None:
+    """원문, 질문, 벡터 및 HTTP 본문은 구조화 로그에 실제 값을 남기지 않아야 한다."""
+
+    stream = StringIO()
+    logger = _create_test_logger(stream)
+
+    logger.info(
+        "Safe stage summary only.",
+        extra={
+            "event": "payload_omission_regression",
+            "file_idx": 152,
+            "chunk_count": 3,
+            "content": _TEST_CHUNK_CONTENT,
+            "question": _TEST_USER_QUESTION,
+            "embedding_vector": _TEST_EMBEDDING_VECTOR,
+            "request_body": _TEST_REQUEST_BODY,
+            "response_body": _TEST_RESPONSE_BODY,
+            "context": {
+                "chunks": [
+                    {
+                        "content": _TEST_CHUNK_CONTENT,
+                    }
+                ],
+                "vectors": [_TEST_EMBEDDING_VECTOR],
+            },
+        },
+    )
+
+    raw_log = stream.getvalue()
+
+    for prohibited_value in (
+        _TEST_CHUNK_CONTENT,
+        _TEST_USER_QUESTION,
+        "0.111111",
+        "request-body-value",
+        "response-body-value",
+    ):
+        assert prohibited_value not in raw_log
+
+    payload = _read_single_json_log(stream)
+
+    # 금지 필드는 마스킹 문자열조차 남기지 않고 구조화 로그에서 완전히 제거한다.
+    assert "content" not in payload
+    assert "question" not in payload
+    assert "embedding_vector" not in payload
+    assert "request_body" not in payload
+    assert "response_body" not in payload
+
+    context = payload["context"]
+    assert isinstance(context, dict)
+    assert "chunks" not in context
+    assert "vectors" not in context
+
+    # 요약 진단값은 제거하지 않아 장애 분석에 필요한 최소 관측성을 유지한다.
+    assert payload["file_idx"] == 152
+    assert payload["chunk_count"] == 3

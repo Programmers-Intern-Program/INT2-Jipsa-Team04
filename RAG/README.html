@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Jipsa Local RAG의 문서 처리, CUDA OCR·임베딩, Qdrant 검색, Claude 답변, 운영과 검증 계약을 제공하는 시각적 README입니다.">
+  <meta name="description" content="Jipsa Local RAG의 전체 구조, 문서 처리, CUDA OCR·임베딩, API, 구조화 로그, 검색·인용, 실행, 보안과 검증 문서를 연결하는 시각적 README 허브입니다.">
   <meta name="theme-color" content="#00236f">
   <meta name="color-scheme" content="light dark">
   <title>Jipsa Local RAG · Engineering README</title>
@@ -609,9 +609,9 @@
           <p class="eyebrow">Local-first document intelligence</p>
           <h1>Jipsa <span>Local RAG</span></h1>
           <p class="hero-lead">
-            AWS Backend와 분리된 GPU 기반 문서 검색·답변 서비스입니다. PDF, DOCX, PPTX,
-            XLSX, TXT와 문서 내부 이미지를 구조 보존 방식으로 처리하고, 선택한 문서의
-            근거만으로 검증 가능한 답변과 원본 위치를 반환합니다.
+            AWS Backend와 분리된 GPU 기반 문서 검색·답변 서비스의 총괄 문서입니다.
+            PDF, DOCX, PPTX, XLSX, TXT와 내부 이미지를 구조 보존 방식으로 처리하고,
+            API·검색 범위·인용·구조화 로그·실행·검증 문서로 연결합니다.
           </p>
           <div class="hero-meta" aria-label="문서 상태">
             <span class="hero-chip">Stable</span>
@@ -619,11 +619,13 @@
             <span class="hero-chip">API Spec 1.0.0</span>
             <span class="hero-chip">Answer Contract 1.3.0</span>
             <span class="hero-chip">Verified 2026-07-28</span>
+            <span class="hero-chip">README Hub 2026-07-29</span>
             <span class="hero-chip">AWS credentials free</span>
           </div>
           <div class="hero-actions">
             <a class="button primary" href="docs/api/comprehensive-api-specification.md">종합 API 명세서</a>
             <a class="button" href="#documentation-map">문서 탐색 시작</a>
+            <a class="button" href="#observability">로그·요청 추적</a>
             <a class="button" href="#verified-test-results">검증 결과 보기</a>
             <a class="button" href="docs/README.md">전체 문서 인덱스</a>
           </div>
@@ -634,84 +636,132 @@
           <div class="snapshot-item"><strong>GPU-native pipeline</strong><span>CUDA EasyOCR · TEI embeddings</span></div>
           <div class="snapshot-item"><strong>Strict document scope</strong><span>user · active · reference_file_idxs</span></div>
           <div class="snapshot-item"><strong>Traceable answers</strong><span>SOURCE-N · source_locator</span></div>
-          <div class="snapshot-item"><strong>Complete API surface</strong><span>7 inbound · 2 backend callbacks</span></div>
+          <div class="snapshot-item"><strong>Structured observability</strong><span>Request ID · Console · JSON</span></div>
         </section>
 
         <div class="article-body">
-          <section aria-labelledby="documentation-map" class="doc-section" data-search-section=""><h2 id="documentation-map" tabindex="-1">1. 문서 바로가기</h2><div aria-label="표 가로 스크롤 영역" class="table-scroll" role="region" tabindex="0"><table>
+<section aria-labelledby="documentation-map" class="doc-section" data-search-section="">
+<h2 id="documentation-map" tabindex="-1">1. 문서 바로가기</h2>
+<div aria-label="표 가로 스크롤 영역" class="table-scroll" role="region" tabindex="0"><table>
 <thead>
 <tr>
-<th>주제</th>
-<th>문서</th>
+  <th>주제</th>
+  <th>문서</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>전체 문서 인덱스</td>
-<td><a href="docs/README.md"><code>docs/README.md</code></a></td>
+  <td>전체 문서 인덱스</td>
+  <td><a href="docs/README.md"><code>docs/README.md</code></a></td>
 </tr>
 <tr>
-<td>용어집</td>
-<td><a href="docs/glossary.md"><code>docs/glossary.md</code></a></td>
+  <td>용어집</td>
+  <td><a href="docs/glossary.md"><code>docs/glossary.md</code></a></td>
 </tr>
 <tr>
-<td>AWS Backend와 Local RAG 경계</td>
-<td><a href="docs/architecture/responsibility-boundary.md"><code>docs/architecture/responsibility-boundary.md</code></a></td>
+  <td>AWS Backend와 Local RAG 경계</td>
+  <td><a href="docs/architecture/responsibility-boundary.md"><code>docs/architecture/responsibility-boundary.md</code></a></td>
 </tr>
 <tr>
-<td>지원 형식과 OCR</td>
-<td><a href="docs/features/document-support-and-ocr.md"><code>docs/features/document-support-and-ocr.md</code></a></td>
+  <td>지원 형식과 OCR</td>
+  <td><a href="docs/features/document-support-and-ocr.md"><code>docs/features/document-support-and-ocr.md</code></a></td>
 </tr>
 <tr>
-<td><strong>종합 API 명세서</strong></td>
-<td><a href="docs/api/comprehensive-api-specification.md"><code>docs/api/comprehensive-api-specification.md</code></a></td>
+  <td><strong>종합 API 명세서</strong></td>
+  <td><a href="docs/api/comprehensive-api-specification.md"><code>docs/api/comprehensive-api-specification.md</code></a></td>
 </tr>
 <tr>
-<td>API 거버넌스·호환성</td>
-<td><a href="docs/api/api-governance-and-compatibility.md"><code>docs/api/api-governance-and-compatibility.md</code></a></td>
+  <td>API 거버넌스·호환성</td>
+  <td><a href="docs/api/api-governance-and-compatibility.md"><code>docs/api/api-governance-and-compatibility.md</code></a></td>
 </tr>
 <tr>
-<td>청크 검색 API</td>
-<td><a href="docs/chunk-search-api.md"><code>docs/chunk-search-api.md</code></a></td>
+  <td>청크 검색 API</td>
+  <td><a href="docs/chunk-search-api.md"><code>docs/chunk-search-api.md</code></a></td>
 </tr>
 <tr>
-<td>답변 API</td>
-<td><a href="docs/api/rag-answer-api-contract.md"><code>docs/api/rag-answer-api-contract.md</code></a></td>
+  <td>답변 API</td>
+  <td><a href="docs/api/rag-answer-api-contract.md"><code>docs/api/rag-answer-api-contract.md</code></a></td>
 </tr>
 <tr>
-<td>Source Locator 상세</td>
-<td><a href="docs/api/rag-answer-contract.md"><code>docs/api/rag-answer-contract.md</code></a></td>
+  <td>Source Locator 상세</td>
+  <td><a href="docs/api/rag-answer-contract.md"><code>docs/api/rag-answer-contract.md</code></a></td>
 </tr>
 <tr>
-<td>재인제스트와 보상</td>
-<td><a href="docs/operations/ingest-recovery-policy.md"><code>docs/operations/ingest-recovery-policy.md</code></a></td>
+  <td>재인제스트와 보상</td>
+  <td><a href="docs/operations/ingest-recovery-policy.md"><code>docs/operations/ingest-recovery-policy.md</code></a></td>
 </tr>
 <tr>
-<td>로컬 인프라 실행</td>
-<td><a href="docs/operations/local-runtime.md"><code>docs/operations/local-runtime.md</code></a></td>
+  <td>로컬 인프라 실행</td>
+  <td><a href="docs/operations/local-runtime.md"><code>docs/operations/local-runtime.md</code></a></td>
 </tr>
 <tr>
-<td>관측성과 문제 해결</td>
-<td><a href="docs/operations/observability-and-troubleshooting.md"><code>docs/operations/observability-and-troubleshooting.md</code></a></td>
+  <td>관측성과 문제 해결</td>
+  <td><a href="docs/operations/observability-and-troubleshooting.md"><code>docs/operations/observability-and-troubleshooting.md</code></a></td>
 </tr>
 <tr>
-<td>테스트</td>
-<td><a href="docs/testing/test-guide.md"><code>docs/testing/test-guide.md</code></a></td>
+  <td>테스트</td>
+  <td><a href="docs/testing/test-guide.md"><code>docs/testing/test-guide.md</code></a></td>
 </tr>
 <tr>
-<td>환경 변수와 비밀정보</td>
-<td><a href="docs/security/environment-and-secrets.md"><code>docs/security/environment-and-secrets.md</code></a></td>
+  <td>PowerShell 실제 E2E</td>
+  <td><a href="docs/testing/powershell-e2e.md"><code>docs/testing/powershell-e2e.md</code></a></td>
 </tr>
 <tr>
-<td>문서 품질 표준</td>
-<td><a href="docs/governance/documentation-quality-standard.md"><code>docs/governance/documentation-quality-standard.md</code></a></td>
+  <td>환경 변수와 비밀정보</td>
+  <td><a href="docs/security/environment-and-secrets.md"><code>docs/security/environment-and-secrets.md</code></a></td>
 </tr>
 <tr>
-<td>품질 검토 보고서</td>
-<td><a href="docs/governance/documentation-review-report.md"><code>docs/governance/documentation-review-report.md</code></a></td>
+  <td>문서 품질 표준</td>
+  <td><a href="docs/governance/documentation-quality-standard.md"><code>docs/governance/documentation-quality-standard.md</code></a></td>
+</tr>
+<tr>
+  <td>품질 검토 보고서</td>
+  <td><a href="docs/governance/documentation-review-report.md"><code>docs/governance/documentation-review-report.md</code></a></td>
 </tr>
 </tbody>
-</table></div></section><section aria-labelledby="responsibilities" class="doc-section" data-search-section=""><h2 id="responsibilities" tabindex="-1">2. 서비스 책임</h2><h3 id="local-rag-책임" tabindex="-1">Local RAG 책임</h3><ul>
+</table></div>
+<h3 id="역할별-빠른-진입" tabindex="-1">역할별 빠른 진입</h3>
+<div aria-label="표 가로 스크롤 영역" class="table-scroll" role="region" tabindex="0"><table>
+<thead>
+<tr>
+  <th>역할</th>
+  <th>먼저 볼 내용</th>
+  <th>다음 문서</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Local RAG 개발자</td>
+  <td>처리 흐름, 로그, 인제스트, 테스트</td>
+  <td><code>local-runtime.md</code>, <code>test-guide.md</code></td>
+</tr>
+<tr>
+  <td>AWS Backend 연동 개발자</td>
+  <td>책임 경계, API 표면, callback</td>
+  <td><code>comprehensive-api-specification.md</code></td>
+</tr>
+<tr>
+  <td>검색·답변 개발자</td>
+  <td>검색 범위, lookup·synthesis, 인용</td>
+  <td><code>rag-answer-api-contract.md</code></td>
+</tr>
+<tr>
+  <td>QA·리뷰어</td>
+  <td>검증 기록, 품질 게이트, 병합 체크리스트</td>
+  <td><code>powershell-e2e.md</code></td>
+</tr>
+<tr>
+  <td>장애 대응 담당자</td>
+  <td>구조화 로그, 대표 이벤트, 복구 원칙</td>
+  <td><code>observability-and-troubleshooting.md</code></td>
+</tr>
+</tbody>
+</table></div>
+</section>
+<section aria-labelledby="responsibilities" class="doc-section" data-search-section="">
+<h2 id="responsibilities" tabindex="-1">2. 서비스 책임</h2>
+<h3 id="local-rag-책임" tabindex="-1">Local RAG 책임</h3>
+<ul>
 <li><code>X-Internal-Token</code> 기반 내부 인증</li>
 <li>Backend 파일 manifest 조회</li>
 <li>Presigned GET URL 기반 스트리밍 다운로드</li>
@@ -726,7 +776,9 @@
 <li><code>lookup</code>과 <code>synthesis</code> 답변</li>
 <li><code>[SOURCE-N]</code>, <code>cited_source_ids</code>, <code>sources</code> 무결성 검증</li>
 <li>Request ID 기반 구조화 로그와 민감정보 마스킹</li>
-</ul><h3 id="aws-backend-책임" tabindex="-1">AWS Backend 책임</h3><ul>
+</ul>
+<h3 id="aws-backend-책임" tabindex="-1">AWS Backend 책임</h3>
+<ul>
 <li>사용자 인증·인가</li>
 <li>파일 업로드, 소유권과 상태 관리</li>
 <li>S3 접근과 IAM Role 관리</li>
@@ -734,60 +786,68 @@
 <li>manifest와 ingest-complete 내부 API 제공</li>
 <li>사용자 선택 <code>File_IDX</code> 목록 확정</li>
 <li>Local RAG 호출과 최종 사용자 응답 전달</li>
-</ul><h3 id="local-rag-제외-범위" tabindex="-1">Local RAG 제외 범위</h3><ul>
+</ul>
+<h3 id="local-rag-제외-범위" tabindex="-1">Local RAG 제외 범위</h3>
+<ul>
 <li>AWS Access Key 또는 Secret Access Key 보관</li>
 <li><code>boto3</code> 기반 S3 직접 접근</li>
 <li>AWS Backend DB 직접 수정</li>
 <li>선택하지 않은 전체 문서 자동 검색</li>
 <li>Docker Desktop 또는 Local DB 서버 자체 실행</li>
-</ul></section><section aria-labelledby="formats-and-ocr" class="doc-section" data-search-section=""><h2 id="formats-and-ocr" tabindex="-1">3. 지원 문서와 OCR</h2><div aria-label="표 가로 스크롤 영역" class="table-scroll" role="region" tabindex="0"><table>
+</ul>
+</section>
+<section aria-labelledby="formats-and-ocr" class="doc-section" data-search-section="">
+<h2 id="formats-and-ocr" tabindex="-1">3. 지원 문서와 OCR</h2>
+<div aria-label="표 가로 스크롤 영역" class="table-scroll" role="region" tabindex="0"><table>
 <thead>
 <tr>
-<th>형식</th>
-<th style="text-align:right">일반 텍스트</th>
-<th style="text-align:right">구조</th>
-<th style="text-align:right">이미지 OCR</th>
-<th>대표 위치</th>
+  <th>형식</th>
+  <th style="text-align:right">일반 텍스트</th>
+  <th style="text-align:right">구조</th>
+  <th style="text-align:right">이미지 OCR</th>
+  <th>대표 위치</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>PDF</td>
-<td style="text-align:right">지원</td>
-<td style="text-align:right">페이지·표</td>
-<td style="text-align:right">지원</td>
-<td>페이지, 이미지 순번</td>
+  <td>PDF</td>
+  <td style="text-align:right">지원</td>
+  <td style="text-align:right">페이지·표</td>
+  <td style="text-align:right">지원</td>
+  <td>페이지, 이미지 순번</td>
 </tr>
 <tr>
-<td>DOCX</td>
-<td style="text-align:right">지원</td>
-<td style="text-align:right">섹션·문단·표</td>
-<td style="text-align:right">지원</td>
-<td>섹션, 블록, 문단, 표</td>
+  <td>DOCX</td>
+  <td style="text-align:right">지원</td>
+  <td style="text-align:right">섹션·문단·표</td>
+  <td style="text-align:right">지원</td>
+  <td>섹션, 블록, 문단, 표</td>
 </tr>
 <tr>
-<td>PPTX</td>
-<td style="text-align:right">지원</td>
-<td style="text-align:right">슬라이드·도형·표·노트</td>
-<td style="text-align:right">지원</td>
-<td>슬라이드, 도형 경로</td>
+  <td>PPTX</td>
+  <td style="text-align:right">지원</td>
+  <td style="text-align:right">슬라이드·도형·표·노트</td>
+  <td style="text-align:right">지원</td>
+  <td>슬라이드, 도형 경로</td>
 </tr>
 <tr>
-<td>XLSX</td>
-<td style="text-align:right">지원</td>
-<td style="text-align:right">시트·행·셀·표·병합 범위</td>
-<td style="text-align:right">지원</td>
-<td>시트, 셀 범위</td>
+  <td>XLSX</td>
+  <td style="text-align:right">지원</td>
+  <td style="text-align:right">시트·행·셀·표·병합 범위</td>
+  <td style="text-align:right">지원</td>
+  <td>시트, 셀 범위</td>
 </tr>
 <tr>
-<td>TXT</td>
-<td style="text-align:right">지원</td>
-<td style="text-align:right">줄·문자 범위</td>
-<td style="text-align:right">해당 없음</td>
-<td>줄, 문자 범위</td>
+  <td>TXT</td>
+  <td style="text-align:right">지원</td>
+  <td style="text-align:right">줄·문자 범위</td>
+  <td style="text-align:right">해당 없음</td>
+  <td>줄, 문자 범위</td>
 </tr>
 </tbody>
-</table></div><p>공통 원칙:</p><ul>
+</table></div>
+<p>공통 원칙:</p>
+<ul>
 <li>확장자만 신뢰하지 않고 내부 형식과 Magic Byte를 검증합니다.</li>
 <li>OCR 청크는 원본 페이지, 문단, 슬라이드 또는 시트 위치를 상속합니다.</li>
 <li>같은 이미지 바이트는 SHA-256 Hash로 중복 OCR을 방지합니다.</li>
@@ -796,7 +856,11 @@
 신규 소비자는 <code>source_locator</code>를 기준으로 위치를 해석합니다.</li>
 <li>PPTX 차트·SmartArt와 XLSX 차트 렌더링은 Windows 대화형 세션의
 Microsoft Office COM을 사용합니다.</li>
-</ul></section><section aria-labelledby="architecture-flow" class="doc-section" data-search-section=""><h2 id="architecture-flow" tabindex="-1">4. 처리 흐름</h2><pre><code class="language-text">AWS Backend
+</ul>
+</section>
+<section aria-labelledby="architecture-flow" class="doc-section" data-search-section="">
+<h2 id="architecture-flow" tabindex="-1">4. 처리 흐름</h2>
+<pre><code class="language-text">AWS Backend
   ├─ 사용자·파일 권한 검증
   ├─ S3 파일 관리
   ├─ Presigned GET URL 발급
@@ -812,42 +876,184 @@ Local RAG FastAPI
   ├─ Local RAG DB
   ├─ Qdrant VectorDB
   └─ Claude lookup/synthesis
-</code></pre><p>기본 로컬 구성:</p><div aria-label="표 가로 스크롤 영역" class="table-scroll" role="region" tabindex="0"><table>
+</code></pre>
+<p>기본 로컬 구성:</p>
+<div aria-label="표 가로 스크롤 영역" class="table-scroll" role="region" tabindex="0"><table>
 <thead>
 <tr>
-<th>구성요소</th>
-<th>기본 주소</th>
-<th>역할</th>
+  <th>구성요소</th>
+  <th>기본 주소</th>
+  <th>역할</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>FastAPI</td>
-<td><code>0.0.0.0:8077</code></td>
-<td>Local RAG API</td>
+  <td>FastAPI</td>
+  <td><code>0.0.0.0:8077</code></td>
+  <td>Local RAG API</td>
 </tr>
 <tr>
-<td>Qdrant REST</td>
-<td><code>127.0.0.1:6333</code></td>
-<td>벡터 검색</td>
+  <td>Qdrant REST</td>
+  <td><code>127.0.0.1:6333</code></td>
+  <td>벡터 검색</td>
 </tr>
 <tr>
-<td>Qdrant gRPC</td>
-<td><code>127.0.0.1:6334</code></td>
-<td>선택적 gRPC</td>
+  <td>Qdrant gRPC</td>
+  <td><code>127.0.0.1:6334</code></td>
+  <td>선택적 gRPC</td>
 </tr>
 <tr>
-<td>CUDA TEI</td>
-<td><code>127.0.0.1:18081</code></td>
-<td>임베딩</td>
+  <td>CUDA TEI</td>
+  <td><code>127.0.0.1:18081</code></td>
+  <td>임베딩</td>
 </tr>
 <tr>
-<td>Local RAG DB</td>
-<td><code>127.0.0.1:3306</code></td>
-<td>문서·청크·실행 이력</td>
+  <td>Local RAG DB</td>
+  <td><code>127.0.0.1:3306</code></td>
+  <td>문서·청크·실행 이력</td>
 </tr>
 </tbody>
-</table></div><p>Qdrant와 TEI는 기본적으로 루프백 인터페이스에만 바인딩합니다.</p></section><section aria-labelledby="ingest-and-reingest" class="doc-section" data-search-section=""><h2 id="ingest-and-reingest" tabindex="-1">5. 인제스트와 재인제스트</h2><pre><code class="language-text">POST /ingest
+</table></div>
+<p>Qdrant와 TEI는 기본적으로 루프백 인터페이스에만 바인딩합니다.</p>
+</section>
+<section aria-labelledby="api-surface" class="doc-section" data-search-section="">
+<h2 id="api-surface" tabindex="-1">5. API 표면</h2>
+<div aria-label="표 가로 스크롤 영역" class="table-scroll" role="region" tabindex="0"><table>
+<thead>
+<tr>
+  <th>Method·Path</th>
+  <th>인증</th>
+  <th>목적</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>POST /ingest</code></td>
+  <td>내부 토큰</td>
+  <td>최신 manifest 재조회·색인·Backend callback</td>
+</tr>
+<tr>
+  <td><code>POST /api/v1/files/process</code></td>
+  <td>내부 토큰</td>
+  <td>전달 manifest 직접 처리·색인</td>
+</tr>
+<tr>
+  <td><code>GET /api/v1/health/live</code></td>
+  <td>공개</td>
+  <td>프로세스 생존 확인</td>
+</tr>
+<tr>
+  <td><code>GET /api/v1/health/ready</code></td>
+  <td>공개</td>
+  <td>Local RAG DB 연결 확인</td>
+</tr>
+<tr>
+  <td><code>GET /api/v1/diagnostics/network</code></td>
+  <td>내부 토큰</td>
+  <td>bind·외부 주소·egress 진단</td>
+</tr>
+<tr>
+  <td><code>POST /api/v1/chunks/search</code></td>
+  <td>내부 토큰</td>
+  <td>선택 문서 활성 청크 검색</td>
+</tr>
+<tr>
+  <td><code>POST /api/v1/rag/answers</code></td>
+  <td>내부 토큰</td>
+  <td>선택 문서 기반 lookup·synthesis 답변</td>
+</tr>
+</tbody>
+</table></div>
+<p>요청·응답 필드, 공통 envelope, 인증 방향, 오류 코드, 재시도와 Local RAG → Backend
+manifest·callback 계약은
+<a href="docs/api/comprehensive-api-specification.md"><code>docs/api/comprehensive-api-specification.md</code></a>를
+기준으로 확인합니다.</p>
+<blockquote>
+<p>모든 응답은 <code>X-Request-ID</code>를 포함합니다. 현재 outbound Backend client는 inbound
+<code>X-Request-ID</code>를 manifest·callback 요청에 자동 전파하지 않으므로 cross-service 전파를
+구현된 계약으로 가정하지 않습니다.</p>
+</blockquote>
+</section>
+<section aria-labelledby="observability" class="doc-section" data-search-section="">
+<h2 id="observability" tabindex="-1">6. 구조화 로그와 요청 추적</h2>
+<p>Local RAG는 사람이 읽기 쉬운 Console 로그와 수집기용 JSON 로그를 분리합니다.</p>
+<div aria-label="표 가로 스크롤 영역" class="table-scroll" role="region" tabindex="0"><table>
+<thead>
+<tr>
+  <th>형식</th>
+  <th>목적</th>
+  <th>시간·Request ID</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>console</code></td>
+  <td>Windows 로컬 개발·장애 분석</td>
+  <td>로컬/UTC 선택, 기본 8자리 Request ID</td>
+</tr>
+<tr>
+  <td><code>json</code></td>
+  <td>로그 수집기·자동 분석</td>
+  <td>UTC RFC 3339, 전체 Request ID, <code>log_schema_version=1</code></td>
+</tr>
+</tbody>
+</table></div>
+<p>기본 로컬 설정:</p>
+<pre><code class="language-dotenv">JIPSA_RAG_LOG_LEVEL=INFO
+JIPSA_RAG_LOG_FORMAT=console
+JIPSA_RAG_LOG_CONSOLE_TIMEZONE=local
+JIPSA_RAG_LOG_COLOR=auto
+JIPSA_RAG_LOG_REQUEST_ID_LENGTH=8
+JIPSA_RAG_LOG_THIRD_PARTY_LEVEL=WARNING
+JIPSA_RAG_SLOW_STAGE_THRESHOLD_MS=5000
+</code></pre>
+<p>대표 Console 로그:</p>
+<pre><code class="language-text">2026-07-29 15:46:41.030+09:00 INFO     [jipsa-rag/local] [file-processing] file_download_completed req=5a506ea3 | File download completed. | file=952301 type=pdf size=2.09KiB duration=1.70ms
+</code></pre>
+<h3 id="요청-전체-흐름" tabindex="-1">요청 전체 흐름</h3>
+<p>같은 Request ID를 기준으로 inbound HTTP 요청부터 manifest 조회, 파일 처리, Backend
+callback과 최종 HTTP 결과까지 연결합니다.</p>
+<pre><code class="language-text">ingest_manifest_fetch_completed
+file_download_completed
+document_parsing_ocr_completed
+document_chunking_completed
+document_embedding_completed
+file_indexing_completed
+file_processing_completed
+ingest_success_callback_completed
+http_request_completed
+</code></pre>
+<p>실패 시에는 실패 지점에 따라 다음 이벤트가 함께 기록될 수 있습니다.</p>
+<pre><code class="language-text">ingest_failure_callback_completed
+rag_answer_search_failed
+application_exception
+http_request_completed
+</code></pre>
+<h3 id="레벨-판정" tabindex="-1">레벨 판정</h3>
+<ul>
+<li><code>DEBUG</code>: 명시적으로 활성화한 상세 진단</li>
+<li><code>INFO</code>: 정상 단계 완료와 정상 HTTP 결과</li>
+<li><code>WARNING</code>: OCR 부분 실패 또는 지연 임계값을 넘은 정상 단계</li>
+<li><code>ERROR</code>: 요청 실패, 외부 연동 실패, HTTP 5xx와 예외</li>
+<li><code>CRITICAL</code>: 프로세스 지속이 어려운 필수 자원 초기화 실패</li>
+</ul>
+<p><code>is_slow_stage=true</code>와 <code>success=true</code>가 같이 있으면 장애가 아니라 성능 경고입니다.</p>
+<h3 id="기록하지-않는-정보" tabindex="-1">기록하지 않는 정보</h3>
+<ul>
+<li>사용자 질문, 청크·OCR 텍스트</li>
+<li>Claude 전체 프롬프트·응답</li>
+<li>임베딩 벡터</li>
+<li>HTTP 요청·응답 본문</li>
+<li>내부 토큰, API Key, Presigned URL과 DB DSN</li>
+<li>원본·임시 파일 절대 경로</li>
+</ul>
+<p>자세한 이벤트, 장애 해석과 복구 순서는
+<a href="docs/operations/observability-and-troubleshooting.md"><code>docs/operations/observability-and-troubleshooting.md</code></a>를
+참조합니다.</p>
+</section>
+<section aria-labelledby="ingest-and-reingest" class="doc-section" data-search-section="">
+<h2 id="ingest-and-reingest" tabindex="-1">7. 인제스트와 재인제스트</h2>
+<pre><code class="language-text">POST /ingest
   → 내부 인증
   → 최신 manifest 조회
   → 원본 다운로드와 형식 검증
@@ -860,52 +1066,86 @@ Local RAG FastAPI
   → 이전 정상 point 비활성화
   → Local RAG 성공 확정
   → 최신 활성 청크 ingest-complete callback
-</code></pre><p>동일 파일 Hash, Parser Version, Embedding Model, Index Version이면 기존 정상 문서와
+</code></pre>
+<p>동일 파일 Hash, Parser Version, Embedding Model, Index Version이면 기존 정상 문서와
 결정적 Chunk ID를 멱등 재사용합니다. 정체성이 달라지면 신규 문서를 만든 뒤 새 색인이
-성공한 경우에만 이전 문서를 soft delete하고 이전 Qdrant point를 비활성화합니다.</p><p>실패 시 원칙:</p><ul>
+성공한 경우에만 이전 문서를 soft delete하고 이전 Qdrant point를 비활성화합니다.</p>
+<p>실패 시 원칙:</p>
+<ul>
 <li>신규 업서트 실패: 신규 staging point만 정리합니다.</li>
 <li>활성 전환 실패: 이전 정상 point를 복구하고 신규 point를 제거합니다.</li>
 <li>Local 성공 확정 실패: Qdrant 전환을 되돌립니다.</li>
 <li>기존 정상 색인 재사용 실패: 기존 문서와 point는 유지하고 신규 실행만 실패 처리합니다.</li>
 <li>같은 <code>File_IDX</code> 동시 요청: MySQL advisory lock으로 직렬화합니다.</li>
 <li>오래된 실행이 소유권을 잃으면 최신 실행의 point에 보상 작업을 수행하지 않습니다.</li>
-</ul><p>상세 정책은
+</ul>
+<p>상세 정책은
 <a href="docs/operations/ingest-recovery-policy.md"><code>docs/operations/ingest-recovery-policy.md</code></a>를
-참조합니다.</p></section><section aria-labelledby="search-scope" class="doc-section" data-search-section=""><h2 id="search-scope" tabindex="-1">6. 검색 범위</h2><p>Qdrant 검색은 다음 조건을 하나의 <code>must</code> 필터로 결합합니다.</p><pre><code class="language-text">users_idx == request.user_idx
+참조합니다.</p>
+</section>
+<section aria-labelledby="search-scope" class="doc-section" data-search-section="">
+<h2 id="search-scope" tabindex="-1">8. 검색 범위</h2>
+<p>Qdrant 검색은 다음 조건을 하나의 <code>must</code> 필터로 결합합니다.</p>
+<pre><code class="language-text">users_idx == request.user_idx
 AND is_active == true
 AND file_idx IN request.reference_file_idxs
-</code></pre><p>검색 저장소, 서비스 계층과 최종 답변 계층이 같은 범위를 반복 검증합니다.
+</code></pre>
+<p>검색 저장소, 서비스 계층과 최종 답변 계층이 같은 범위를 반복 검증합니다.
 선택하지 않은 문서, 다른 사용자, 비활성 staging point와 이전 색인은 정상 출처가 될 수
-없습니다.</p><p><code>reference_file_idxs</code>가 비어 있거나 생략되면 전체 문서 검색으로 확대하지 않고
-<code>REFERENCE_DOCUMENT_REQUIRED</code> 또는 요청 검증 오류로 거부합니다.</p></section><section aria-labelledby="query-strategies" class="doc-section" data-search-section=""><h2 id="query-strategies" tabindex="-1">7. lookup과 synthesis</h2><h3 id="lookup" tabindex="-1">lookup</h3><p>명시적인 다문서 비교·종합 의도가 없으면 선택 문서 전체를 한 번 검색하고 단일 Claude
-생성 흐름을 사용합니다.</p><h3 id="synthesis" tabindex="-1">synthesis</h3><p>두 개 이상의 문서를 선택하고 비교, 대조, 종합, 통합 또는 문서별 요약 의도가 있으면
-파일별 독립 검색과 부분 답변을 사용합니다.</p><pre><code class="language-text">선택 파일별 독립 검색
+없습니다.</p>
+<p><code>reference_file_idxs</code>가 비어 있거나 생략되면 전체 문서 검색으로 확대하지 않고
+<code>REFERENCE_DOCUMENT_REQUIRED</code> 또는 요청 검증 오류로 거부합니다.</p>
+</section>
+<section aria-labelledby="query-strategies" class="doc-section" data-search-section="">
+<h2 id="query-strategies" tabindex="-1">9. lookup과 synthesis</h2>
+<h3 id="lookup" tabindex="-1">lookup</h3>
+<p>명시적인 다문서 비교·종합 의도가 없으면 선택 문서 전체를 한 번 검색하고 단일 Claude
+생성 흐름을 사용합니다.</p>
+<h3 id="synthesis" tabindex="-1">synthesis</h3>
+<p>두 개 이상의 문서를 선택하고 비교, 대조, 종합, 통합 또는 문서별 요약 의도가 있으면
+파일별 독립 검색과 부분 답변을 사용합니다.</p>
+<pre><code class="language-text">선택 파일별 독립 검색
   → 문서별 컨텍스트 제한
   → 문서별 부분 Claude 답변
   → 문서 로컬 SOURCE-N 검증
   → 전역 SOURCE-N 재매핑
   → 유효한 부분 답변만 최종 종합
   → 최종 인용과 선택 범위 검증
-</code></pre><p>한 문서의 임베딩, Qdrant 검색 또는 부분 Claude 호출이 실패해도 유효한 다른 문서가
+</code></pre>
+<p>한 문서의 임베딩, Qdrant 검색 또는 부분 Claude 호출이 실패해도 유효한 다른 문서가
 있으면 계속 처리하는 문서별 부분 실패 정책을 적용합니다. 사용자·선택 문서 범위 위반과
-인용 무결성 위반은 전체 요청 실패입니다.</p></section><section aria-labelledby="evidence-and-citations" class="doc-section" data-search-section=""><h2 id="evidence-and-citations" tabindex="-1">8. 근거 부족과 인용</h2><p>검색 가능한 청크가 없거나 유효한 문서별 부분 답변이 없으면 최종 Claude 호출을 생략하고
-다음 의미의 응답을 반환합니다.</p><pre><code class="language-json">{
-  "answer": "제공된 문서 근거만으로는 답변할 수 없습니다.",
-  "status": "insufficient_evidence",
-  "cited_source_ids": [],
-  "sources": [],
-  "model": null,
-  "usage": null,
-  "stop_reason": null
+인용 무결성 위반은 전체 요청 실패입니다.</p>
+</section>
+<section aria-labelledby="evidence-and-citations" class="doc-section" data-search-section="">
+<h2 id="evidence-and-citations" tabindex="-1">10. 근거 부족과 인용</h2>
+<p>검색 가능한 청크가 없거나 유효한 문서별 부분 답변이 없으면 최종 Claude 호출을 생략하고
+다음 의미의 응답을 반환합니다.</p>
+<pre><code class="language-json">{
+  &quot;answer&quot;: &quot;제공된 문서 근거만으로는 답변할 수 없습니다.&quot;,
+  &quot;status&quot;: &quot;insufficient_evidence&quot;,
+  &quot;cited_source_ids&quot;: [],
+  &quot;sources&quot;: [],
+  &quot;model&quot;: null,
+  &quot;usage&quot;: null,
+  &quot;stop_reason&quot;: null
 }
-</code></pre><p>정상 답변의 순서 계약:</p><pre><code class="language-text">본문 SOURCE-N 최초 등장 순서
+</code></pre>
+<p>정상 답변의 순서 계약:</p>
+<pre><code class="language-text">본문 SOURCE-N 최초 등장 순서
 =
 cited_source_ids
 =
 sources[].source_id 순서
-</code></pre><p>최종 <code>sources</code>에는 실제 인용한 출처만 포함하며 같은 <code>source_id</code> 또는 <code>chunk_id</code>를
-중복 반환하지 않습니다.</p><p><code>source_locator</code>의 공통 필드는 <code>file_type</code>, <code>kind</code>, <code>content_origin</code>, <code>unit_type</code>,
-<code>structure_path</code>이며 형식별 위치와 OCR 이미지 위치를 추가합니다.</p></section><section aria-labelledby="installation-and-runtime" class="doc-section" data-search-section=""><h2 id="installation-and-runtime" tabindex="-1">9. 설치와 실행</h2><p>필수 환경:</p><ul>
+</code></pre>
+<p>최종 <code>sources</code>에는 실제 인용한 출처만 포함하며 같은 <code>source_id</code> 또는 <code>chunk_id</code>를
+중복 반환하지 않습니다.</p>
+<p><code>source_locator</code>의 공통 필드는 <code>file_type</code>, <code>kind</code>, <code>content_origin</code>, <code>unit_type</code>,
+<code>structure_path</code>이며 형식별 위치와 OCR 이미지 위치를 추가합니다.</p>
+</section>
+<section aria-labelledby="installation-and-runtime" class="doc-section" data-search-section="">
+<h2 id="installation-and-runtime" tabindex="-1">11. 설치와 실행</h2>
+<p>필수 환경:</p>
+<ul>
 <li>Windows PowerShell 5.1 이상</li>
 <li>Python 3.12</li>
 <li><code>uv</code></li>
@@ -915,121 +1155,221 @@ sources[].source_id 순서
 <li>Local MySQL 또는 MariaDB</li>
 <li>실제 답변·E2E용 Anthropic API Key</li>
 <li>Office 렌더링용 PowerPoint·Excel과 Windows 대화형 세션</li>
-</ul><p>의존성 동기화:</p><pre><code class="language-powershell">uv sync --frozen
-</code></pre><p>일반 Local RAG 실행:</p><pre><code class="language-powershell">.\scripts\start-local-rag.ps1
-</code></pre><p>인프라 정지:</p><pre><code class="language-powershell">.\scripts\stop-local-rag.ps1
-</code></pre><p>스크립트는 Docker Desktop 프로그램과 Local DB 서버를 시작하지 않습니다.
+</ul>
+<h3 id="powershell-실행-정책" tabindex="-1">PowerShell 실행 정책</h3>
+<p>다음 오류는 Python, Docker 또는 RAG 기능 문제가 아니라 PowerShell이 <code>.ps1</code> 실행을
+차단한 상태입니다.</p>
+<pre><code class="language-text">running scripts is disabled on this system
+PSSecurityException
+UnauthorizedAccess
+</code></pre>
+<p>프로젝트 권장 방식은 현재 PowerShell 프로세스에만 <code>Bypass</code>를 적용하는 것입니다.</p>
+<pre><code class="language-powershell">Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+Set-ExecutionPolicy `
+    -Scope Process `
+    -ExecutionPolicy Bypass `
+    -Force
+
+Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG'
+</code></pre>
+<p>이 설정은 관리자 권한이 필요하지 않고 현재 PowerShell 창을 닫으면 자동으로 사라집니다.
+시스템 전체 <code>LocalMachine</code> 정책이나 <code>Unrestricted</code> 정책은 변경하지 않습니다.</p>
+<p>현재 사용자 계정에 지속 적용해야 하는 개인 개발 PC에서는 다음 선택지를 사용할 수
+있습니다.</p>
+<pre><code class="language-powershell">Set-ExecutionPolicy `
+    -Scope CurrentUser `
+    -ExecutionPolicy RemoteSigned `
+    -Force
+
+Get-ExecutionPolicy -List
+</code></pre>
+<p>조직의 <code>MachinePolicy</code> 또는 <code>UserPolicy</code>가 우선하는 환경에서는 현재 프로세스에만 다음
+방식으로 실행합니다.</p>
+<pre><code class="language-powershell">powershell.exe `
+    -NoProfile `
+    -ExecutionPolicy Bypass `
+    -File '.\scripts\run-all-rag-tests.ps1'
+</code></pre>
+<p>의존성 동기화:</p>
+<pre><code class="language-powershell">uv sync --frozen
+</code></pre>
+<p>일반 Local RAG 실행:</p>
+<pre><code class="language-powershell">&amp; .\scripts\start-local-rag.ps1
+</code></pre>
+<p>인프라 정지:</p>
+<pre><code class="language-powershell">&amp; .\scripts\stop-local-rag.ps1
+</code></pre>
+<p>스크립트는 Docker Desktop 프로그램과 Local DB 서버를 시작하지 않습니다.
 상세 절차는
-<a href="docs/operations/local-runtime.md"><code>docs/operations/local-runtime.md</code></a>를 참조합니다.</p></section><section aria-labelledby="quality-and-e2e" class="doc-section" data-search-section=""><h2 id="quality-and-e2e" tabindex="-1">10. 품질 게이트와 실제 E2E</h2><p>일반 품질 게이트:</p><pre><code class="language-powershell">.\scripts\verify-rag-quality.ps1
-</code></pre><p>검사 순서:</p><ol>
+<a href="docs/operations/local-runtime.md"><code>docs/operations/local-runtime.md</code></a>를 참조합니다.</p>
+</section>
+<section aria-labelledby="quality-and-e2e" class="doc-section" data-search-section="">
+<h2 id="quality-and-e2e" tabindex="-1">12. 품질 게이트와 실제 E2E</h2>
+<p>일반 품질 게이트:</p>
+<pre><code class="language-powershell">&amp; .\scripts\verify-rag-quality.ps1
+</code></pre>
+<p>검사 순서:</p>
+<ol>
 <li><code>uv sync --frozen</code></li>
 <li><code>uv run ruff format --check .</code></li>
 <li><code>uv run ruff check .</code></li>
 <li><code>uv run mypy src tests</code></li>
 <li><code>uv run pytest</code></li>
-</ol><p>일반 Pytest는 <code>JIPSA_RAG_RUN_E2E</code>를 제거하여 실제 GPU, Local DB, Qdrant, Office COM과
-Claude 호출이 필요한 opt-in E2E를 명시적으로 skip합니다.</p><p>고정 다중 형식·OCR 전체 파이프라인 E2E:</p><pre><code class="language-powershell">.\scripts\run-issue-123-e2e.ps1
-</code></pre><p>전체 실제 E2E:</p><pre><code class="language-powershell">.\scripts\run-all-rag-tests.ps1
-</code></pre><p>지원 옵션:</p><pre><code class="language-powershell">.\scripts\run-all-rag-tests.ps1 -SkipQualityGate
-.\scripts\run-all-rag-tests.ps1 -KeepInfrastructureRunning
-</code></pre><p>상세 절차와 검증 범위는
-<a href="docs/testing/test-guide.md"><code>docs/testing/test-guide.md</code></a>를 참조합니다.</p></section><section aria-labelledby="verified-test-results-title" class="doc-section verification" data-search-section="" id="verified-test-results">
-<div class="section-heading-row">
-<div>
-<p class="section-kicker">VERIFIED ON WINDOWS · 2026-07-28</p>
-<h2 id="verified-test-results-title" tabindex="-1">실제 전체 테스트 검증 기록</h2>
-</div>
-<span class="status-pill status-pass"><span aria-hidden="true">✓</span> 전체 통과</span>
-</div>
-<p class="lead">
-    문서 회귀 테스트, 정적 품질 게이트, CUDA·Qdrant·Local DB·Office COM과 실제 Claude E2E를
-    단계별로 실행했습니다. 최종 실행기는 모든 검증 통과를 출력한 뒤 자신이 시작한
-    Qdrant와 TEI 컨테이너를 정상 정지했습니다.
+</ol>
+<p>일반 Pytest는 <code>JIPSA_RAG_RUN_E2E</code>를 제거하여 실제 GPU, Local DB, Qdrant, Office COM과
+Claude 호출이 필요한 opt-in E2E를 명시적으로 skip합니다.</p>
+<p>고정 다중 형식·OCR 전체 파이프라인 E2E:</p>
+<pre><code class="language-powershell">&amp; .\scripts\run-issue-123-e2e.ps1
+</code></pre>
+<p>전체 실제 E2E:</p>
+<pre><code class="language-powershell">&amp; .\scripts\run-all-rag-tests.ps1
+</code></pre>
+<p>지원 옵션:</p>
+<pre><code class="language-powershell">&amp; .\scripts\run-all-rag-tests.ps1 -SkipQualityGate
+&amp; .\scripts\run-all-rag-tests.ps1 -KeepInfrastructureRunning
+</code></pre>
+<p>상세 절차와 검증 범위는
+<a href="docs/testing/test-guide.md"><code>docs/testing/test-guide.md</code></a>를 참조합니다.</p>
+</section>
+<section aria-labelledby="verified-test-results-title"
+         class="doc-section verification"
+         data-search-section=""
+         id="verified-test-results">
+  <div class="section-heading-row">
+    <div>
+      <p class="section-kicker">LAST FUNCTIONAL VERIFICATION · 2026-07-28</p>
+      <h2 id="verified-test-results-title" tabindex="-1">13. 실제 검증 기록</h2>
+    </div>
+    <span class="status-pill status-pass">
+      <span aria-hidden="true">✓</span> 기능·인프라 검증 완료
+    </span>
+  </div>
+  <p class="lead">
+    구조화 로그, 일반 회귀, CUDA·Qdrant·Local DB·Office COM과 Claude E2E의 마지막
+    정상 기록입니다. README 재구성분은 제공된 테스트 명령으로 문서 계약을 다시
+    확인한 뒤 병합합니다.
   </p>
-<div aria-label="테스트 결과 요약" class="metric-grid">
-<article class="metric-card">
-<span class="metric-value">17</span>
-<span class="metric-label">문서 계약 테스트</span>
-<span class="metric-note">README·계약·링크·용어</span>
-</article>
-<article class="metric-card">
-<span class="metric-value">810</span>
-<span class="metric-label">일반 Pytest 통과</span>
-<span class="metric-note">128개 opt-in E2E는 의도적 skip</span>
-</article>
-<article class="metric-card">
-<span class="metric-value">93</span>
-<span class="metric-label">고정 전체 파이프라인</span>
-<span class="metric-note">다중 형식·OCR·보상·보안</span>
-</article>
-<article class="metric-card">
-<span class="metric-value">33</span>
-<span class="metric-label">실제 문서 E2E</span>
-<span class="metric-note">PDF 12 + 비PDF 21</span>
-</article>
-</div>
-<div class="result-grid">
-<article class="result-card">
-<div aria-hidden="true" class="result-icon">01</div>
-<div>
-<h3>정적 품질 게이트</h3>
-<ul class="compact-list">
-<li>Ruff format: 224 files already formatted</li>
-<li>Ruff lint: All checks passed</li>
-<li>Mypy: 224 source files, no issues</li>
-<li>일반 Pytest: 810 passed, 128 skipped</li>
-</ul>
-</div>
-</article>
-<article class="result-card">
-<div aria-hidden="true" class="result-icon">02</div>
-<div>
-<h3>실제 인프라</h3>
-<ul class="compact-list">
-<li>Qdrant readiness와 실제 질의 성공</li>
-<li>CUDA TEI 실제 1024차원 임베딩 성공</li>
-<li>PyTorch CUDA 장치 검증 성공</li>
-<li>Local RAG DB 연결: 1 passed</li>
-</ul>
-</div>
-</article>
-<article class="result-card">
-<div aria-hidden="true" class="result-icon">03</div>
-<div>
-<h3>문서·OCR·Office</h3>
-<ul class="compact-list">
-<li>Office COM 이미지·차트: 4 passed</li>
-<li>PDF·DOCX·PPTX·XLSX·TXT 처리</li>
-<li>CUDA EasyOCR와 부분 실패 보존</li>
-<li>고정 전체 파이프라인: 93 passed</li>
-</ul>
-</div>
-</article>
-<article class="result-card">
-<div aria-hidden="true" class="result-icon">04</div>
-<div>
-<h3>검색·답변·Claude</h3>
-<ul class="compact-list">
-<li>실제 PDF·Claude·생성 제한: 12 passed</li>
-<li>실제 비PDF 혼합 문서: 21 passed</li>
-<li>선택 문서 범위와 인용 무결성 검증</li>
-<li>lookup·synthesis와 부분 실패 검증</li>
-</ul>
-</div>
-</article>
-</div>
-<aside aria-label="로그 경고 해석" class="callout callout-info">
-<div aria-hidden="true" class="callout-icon">i</div>
-<div>
-<h3>로그의 WARNING·ERROR는 테스트 실패가 아닙니다</h3>
-<p>
-        OCR 한 이미지 실패, Qdrant 503, Claude 503, 생성 예산 429 같은 로그는 장애 처리와
-        부분 실패 정책을 검증하기 위해 의도적으로 발생시킨 시나리오입니다. 각 시나리오 뒤에
-        <code>PASSED</code>가 기록됐고 최종 요약에는 실패가 없습니다.
+  <div aria-label="테스트 결과 요약" class="metric-grid">
+    <article class="metric-card">
+      <span class="metric-value">32</span>
+      <span class="metric-label">로그 집중 회귀</span>
+      <span class="metric-note">Console · JSON · 마스킹 · 요청 흐름</span>
+    </article>
+    <article class="metric-card">
+      <span class="metric-value">863</span>
+      <span class="metric-label">일반 Pytest 통과</span>
+      <span class="metric-note">129개 opt-in E2E는 별도 실행</span>
+    </article>
+    <article class="metric-card">
+      <span class="metric-value">4</span>
+      <span class="metric-label">Office COM</span>
+      <span class="metric-note">PowerPoint · Excel 이미지·차트</span>
+    </article>
+    <article class="metric-card">
+      <span class="metric-value">21</span>
+      <span class="metric-label">실제 비PDF E2E</span>
+      <span class="metric-note">DOCX · PPTX · XLSX · TXT</span>
+    </article>
+  </div>
+  <div class="result-grid">
+    <article class="result-card">
+      <div aria-hidden="true" class="result-icon">01</div>
+      <div>
+        <h3>정적 품질과 일반 회귀</h3>
+        <ul class="compact-list">
+          <li>Ruff format과 lint 통과</li>
+          <li>Mypy 전체 Source 오류 없음</li>
+          <li>일반 Pytest 863 passed</li>
+          <li>opt-in 실제 E2E 129 skipped</li>
+        </ul>
+      </div>
+    </article>
+    <article class="result-card">
+      <div aria-hidden="true" class="result-icon">02</div>
+      <div>
+        <h3>실제 인프라</h3>
+        <ul class="compact-list">
+          <li>Qdrant readiness와 실제 질의</li>
+          <li>CUDA TEI 1024차원 임베딩</li>
+          <li>PyTorch CUDA 장치 검증</li>
+          <li>Local RAG DB 연결 1 passed</li>
+        </ul>
+      </div>
+    </article>
+    <article class="result-card">
+      <div aria-hidden="true" class="result-icon">03</div>
+      <div>
+        <h3>문서·OCR·Office</h3>
+        <ul class="compact-list">
+          <li>PDF·DOCX·PPTX·XLSX·TXT</li>
+          <li>CUDA EasyOCR와 부분 실패 보존</li>
+          <li>PowerPoint·Excel COM 4 passed</li>
+          <li>실제 비PDF 혼합 문서 21 passed</li>
+        </ul>
+      </div>
+    </article>
+    <article class="result-card">
+      <div aria-hidden="true" class="result-icon">04</div>
+      <div>
+        <h3>로그·검색·답변</h3>
+        <ul class="compact-list">
+          <li>Request ID 기반 요청 전체 추적</li>
+          <li>Console·JSON과 민감정보 보호</li>
+          <li>lookup·synthesis와 인용 무결성</li>
+          <li>보상·장애 변환 시나리오</li>
+        </ul>
+      </div>
+    </article>
+  </div>
+  <aside aria-label="검증 기록 해석" class="callout callout-info">
+    <div aria-hidden="true" class="callout-icon">i</div>
+    <div>
+      <h3>문서 변경은 별도 재검증 대상입니다</h3>
+      <p>
+        위 수치는 기능·인프라의 마지막 정상 기록입니다. 이번 README 구조 변경은
+        문서 계약 테스트와 전체 품질 게이트를 다시 통과한 뒤 현재 Commit의 검증
+        결과로 기록합니다.
       </p>
-</div>
-</aside>
-</section><section aria-labelledby="security-and-secrets" class="doc-section" data-search-section=""><h2 id="security-and-secrets" tabindex="-1">11. 환경 변수와 비밀정보</h2><ul>
+    </div>
+  </aside>
+</section>
+<section aria-labelledby="security-and-secrets" class="doc-section" data-search-section="">
+<h2 id="security-and-secrets" tabindex="-1">14. 환경 변수와 비밀정보</h2>
+<p>환경 파일 역할:</p>
+<div aria-label="표 가로 스크롤 영역" class="table-scroll" role="region" tabindex="0"><table>
+<thead>
+<tr>
+  <th>파일</th>
+  <th>목적</th>
+  <th style="text-align:right">Git 커밋</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><code>.env.example</code></td>
+  <td>변수 설명과 안전한 예시</td>
+  <td style="text-align:right">허용</td>
+</tr>
+<tr>
+  <td><code>.env.local</code></td>
+  <td>실제 로컬 실행과 전체 E2E</td>
+  <td style="text-align:right">금지</td>
+</tr>
+<tr>
+  <td><code>.env.development</code></td>
+  <td>개발 프로필</td>
+  <td style="text-align:right">금지</td>
+</tr>
+<tr>
+  <td><code>.env.test</code></td>
+  <td>일반 테스트 프로필</td>
+  <td style="text-align:right">금지</td>
+</tr>
+</tbody>
+</table></div>
+<ul>
 <li>실제 로컬 실행은 <code>.env.local</code>, 일반 테스트는 <code>.env.test</code>를 사용합니다.</li>
 <li><code>.env.local</code>, <code>.env.development</code>, <code>.env.test</code>는 Git에 커밋하지 않습니다.</li>
 <li>예시와 변수 설명은 <a href=".env.example"><code>.env.example</code></a>을 사용합니다.</li>
@@ -1037,19 +1377,28 @@ Claude 호출이 필요한 opt-in E2E를 명시적으로 skip합니다.</p><p>�
 <li><code>INTERNAL_TOKEN</code>과 <code>RAG_INGEST_TOKEN</code>은 호출 방향이 다르므로 혼용하지 않습니다.</li>
 <li>질문, 청크·OCR 원문, 전체 프롬프트, 내부 토큰, API Key, Presigned URL과 DB DSN은
 로그에 기록하지 않습니다.</li>
-</ul><p>상세 정책은
+</ul>
+<p>상세 정책은
 <a href="docs/security/environment-and-secrets.md"><code>docs/security/environment-and-secrets.md</code></a>를
-참조합니다.</p></section><section aria-labelledby="merge-checklist" class="doc-section" data-search-section=""><h2 id="merge-checklist" tabindex="-1">12. 병합 전 체크리스트</h2><ul>
-<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/><code>.env.local</code>과 비밀값이 Git 추적 대상이 아님</li>
-<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>문서 상대 링크와 경로가 실제 저장소 구조와 일치함</li>
-<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>PDF, DOCX, PPTX, XLSX, TXT와 OCR 지원 범위가 문서 전체에서 일치함</li>
-<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>AWS Backend와 Local RAG 책임 경계가 뒤바뀌지 않음</li>
-<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>검색·답변·출처 API 계약이 OpenAPI와 스키마에 일치함</li>
-<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>재인제스트, 부분 실패와 보상 처리 설명이 현재 서비스 코드와 일치함</li>
-<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/><code>verify-rag-quality.ps1</code> 통과</li>
-<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>필요한 실제 E2E를 별도로 실행하고 결과를 기록함</li>
-<li class="task-list-item"><input class="task-list-item-checkbox" disabled="" type="checkbox"/>실제로 실행하지 않은 검증을 통과로 기록하지 않음</li>
-</ul></section>
+참조합니다.</p>
+</section>
+<section aria-labelledby="merge-checklist" class="doc-section" data-search-section="">
+<h2 id="merge-checklist" tabindex="-1">15. 병합 전 체크리스트</h2>
+<ul>
+<li class="task-list-item"><input class="task-list-item-checkbox" type="checkbox" disabled/><code>.env.local</code>과 비밀값이 Git 추적 대상이 아님</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" type="checkbox" disabled/>문서 상대 링크와 경로가 실제 저장소 구조와 일치함</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" type="checkbox" disabled/>PDF, DOCX, PPTX, XLSX, TXT와 OCR 지원 범위가 문서 전체에서 일치함</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" type="checkbox" disabled/>AWS Backend와 Local RAG 책임 경계가 뒤바뀌지 않음</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" type="checkbox" disabled/>검색·답변·출처 API 계약이 OpenAPI와 스키마에 일치함</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" type="checkbox" disabled/>재인제스트, 부분 실패와 보상 처리 설명이 현재 서비스 코드와 일치함</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" type="checkbox" disabled/>Console·JSON 로그 변수, 이벤트와 민감정보 정책이 현재 구현과 일치함</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" type="checkbox" disabled/>PowerShell 실행 정책 안내가 Markdown·HTML·테스트 문서에서 일치함</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" type="checkbox" disabled/>HTML의 Markdown 보기, 인쇄, 검색, 테마와 내부 링크가 정상 동작함</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" type="checkbox" disabled/><code>verify-rag-quality.ps1</code> 통과</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" type="checkbox" disabled/>필요한 실제 E2E를 별도로 실행하고 결과를 기록함</li>
+<li class="task-list-item"><input class="task-list-item-checkbox" type="checkbox" disabled/>실제로 실행하지 않은 검증을 통과로 기록하지 않음</li>
+</ul>
+</section>
         </div>
       </article>
     </main>
@@ -1063,23 +1412,30 @@ Claude 호출이 필요한 opt-in E2E를 명시적으로 skip합니다.</p><p>�
       </div>
       <div class="search-status" id="search-status" aria-live="polite"></div>
       <nav id="toc" aria-label="페이지 목차"><a href="#documentation-map" data-level="2">1. 문서 바로가기</a>
+<a href="#역할별-빠른-진입" data-level="3">역할별 빠른 진입</a>
 <a href="#responsibilities" data-level="2">2. 서비스 책임</a>
 <a href="#local-rag-책임" data-level="3">Local RAG 책임</a>
 <a href="#aws-backend-책임" data-level="3">AWS Backend 책임</a>
 <a href="#local-rag-제외-범위" data-level="3">Local RAG 제외 범위</a>
 <a href="#formats-and-ocr" data-level="2">3. 지원 문서와 OCR</a>
 <a href="#architecture-flow" data-level="2">4. 처리 흐름</a>
-<a href="#ingest-and-reingest" data-level="2">5. 인제스트와 재인제스트</a>
-<a href="#search-scope" data-level="2">6. 검색 범위</a>
-<a href="#query-strategies" data-level="2">7. lookup과 synthesis</a>
+<a href="#api-surface" data-level="2">5. API 표면</a>
+<a href="#observability" data-level="2">6. 구조화 로그와 요청 추적</a>
+<a href="#요청-전체-흐름" data-level="3">요청 전체 흐름</a>
+<a href="#레벨-판정" data-level="3">레벨 판정</a>
+<a href="#기록하지-않는-정보" data-level="3">기록하지 않는 정보</a>
+<a href="#ingest-and-reingest" data-level="2">7. 인제스트와 재인제스트</a>
+<a href="#search-scope" data-level="2">8. 검색 범위</a>
+<a href="#query-strategies" data-level="2">9. lookup과 synthesis</a>
 <a href="#lookup" data-level="3">lookup</a>
 <a href="#synthesis" data-level="3">synthesis</a>
-<a href="#evidence-and-citations" data-level="2">8. 근거 부족과 인용</a>
-<a href="#installation-and-runtime" data-level="2">9. 설치와 실행</a>
-<a href="#quality-and-e2e" data-level="2">10. 품질 게이트와 실제 E2E</a>
+<a href="#evidence-and-citations" data-level="2">10. 근거 부족과 인용</a>
+<a href="#installation-and-runtime" data-level="2">11. 설치와 실행</a>
+<a href="#powershell-실행-정책" data-level="3">PowerShell 실행 정책</a>
+<a href="#quality-and-e2e" data-level="2">12. 품질 게이트와 실제 E2E</a>
 <a href="#verified-test-results" data-level="2">검증 기록 · 2026-07-28</a>
-<a href="#security-and-secrets" data-level="2">11. 환경 변수와 비밀정보</a>
-<a href="#merge-checklist" data-level="2">12. 병합 전 체크리스트</a></nav>
+<a href="#security-and-secrets" data-level="2">14. 환경 변수와 비밀정보</a>
+<a href="#merge-checklist" data-level="2">15. 병합 전 체크리스트</a></nav>
       <div class="sidebar-footer">Primary · <strong>#00236F</strong><br>Secondary · <strong>#00687A</strong></div>
     </aside>
   </div>
@@ -1089,7 +1445,7 @@ Claude 호출이 필요한 opt-in E2E를 명시적으로 skip합니다.</p><p>�
   </button>
 
   <footer class="page-footer">
-    <p><strong>Jipsa Local RAG</strong> · Self-contained engineering documentation · No external runtime assets</p>
+    <p><strong>Jipsa Local RAG</strong> · Comprehensive engineering documentation hub · No external runtime assets</p>
   </footer>
 
   <script>

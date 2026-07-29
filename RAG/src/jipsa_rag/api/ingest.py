@@ -2,6 +2,7 @@
 
 import logging
 from http import HTTPStatus
+from time import perf_counter
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends
@@ -21,6 +22,8 @@ from jipsa_rag.api.v1.endpoints.file_processing import (
 from jipsa_rag.core.config import Settings, get_settings
 from jipsa_rag.core.error_codes import ErrorCode
 from jipsa_rag.core.exceptions import AppException
+from jipsa_rag.core.logging import calculate_duration_ms, log_stage_completed
+from jipsa_rag.core.logging_settings import get_logging_settings
 from jipsa_rag.infrastructure.app_server.ingest_client import (
     ApplicationServerIngestClient,
 )
@@ -169,6 +172,7 @@ async def _notify_ingest_failure_safely(
     client: ApplicationServerIngestClient,
     file_idx: int,
     processing_error: Exception,
+    slow_stage_threshold_ms: float | None = None,
 ) -> None:
     """원본 처리 예외를 보존하면서 청크 없는 실패 콜백을 전송한다.
 
@@ -177,8 +181,12 @@ async def _notify_ingest_failure_safely(
     ``index_version``, ``chunk_count`` 및 ``chunks``를 인자로 넘기지 않으므로
     부분 생성되었거나 이전 색인에 속한 청크가 실패 payload에 포함되지 않는다.
 
-    실패 콜백 자체가 실패해도 원래 파일 처리 예외를 덮어쓰지 않는다.
+    실패 콜백 자체가 실패해도 원래 파일 처리 예외를 덮어쓰지 않는다. 로그에는
+    콜백 payload와 오류 메시지 원문을 남기지 않고 파일 식별자, 예외 타입 및
+    처리 시간만 기록한다.
     """
+
+    callback_started_at = perf_counter()
 
     try:
         await client.notify_ingest_complete(
@@ -188,7 +196,6 @@ async def _notify_ingest_failure_safely(
                 processing_error,
             ),
         )
-
     except Exception as callback_error:
         # 콜백 오류를 다시 발생시키면 원래 다운로드, 파싱, 청킹,
         # 임베딩, 저장 또는 스냅샷 조회 오류가 유실될 수 있다.
@@ -199,12 +206,29 @@ async def _notify_ingest_failure_safely(
             "Failed to report ingestion failure to the application server.",
             extra={
                 "event": "ingest_failure_callback_failed",
+                "stage": "failure_callback",
+                "callback_type": "failure",
+                "success": False,
                 "file_idx": file_idx,
-                "callback_error_type": (
-                    type(
-                        callback_error,
-                    ).__name__
-                ),
+                "duration_ms": calculate_duration_ms(callback_started_at),
+                "slow_stage_threshold_ms": slow_stage_threshold_ms,
+                "processing_error_type": type(processing_error).__name__,
+                "callback_error_type": type(callback_error).__name__,
+            },
+        )
+    else:
+        log_stage_completed(
+            logger,
+            "Ingestion failure callback completed.",
+            event="ingest_failure_callback_completed",
+            started_at=callback_started_at,
+            slow_stage_threshold_ms=slow_stage_threshold_ms,
+            extra={
+                "stage": "failure_callback",
+                "callback_type": "failure",
+                "success": False,
+                "file_idx": file_idx,
+                "processing_error_type": type(processing_error).__name__,
             },
         )
 
@@ -394,15 +418,57 @@ async def ingest_file(
     이전 청크가 아니라 콜백 시점의 최신 청크 전체가 전달된다.
     """
 
-    # manifest 조회 실패는 아직 파일 다운로드나 색인 처리가
-    # 시작되지 않은 상태다.
-    #
-    # 동일한 백엔드에 실패 콜백을 다시 전송해도 같은 인증 또는
-    # 네트워크 오류가 반복될 가능성이 높으므로 manifest 조회 오류는
-    # 그대로 호출자에게 전달한다.
-    latest_manifest = await application_server_client.fetch_manifest(
-        file_idx=request.file_idx,
-    )
+    logging_settings = get_logging_settings()
+    slow_stage_threshold_ms = logging_settings.slow_stage_threshold_ms
+
+    # DEBUG가 꺼진 INFO 운영에서는 시작 로그의 extra dict도 생성하지 않는다.
+    # 요청 본문이나 manifest 전체를 복사하지 않고 최초 file_idx만 기록한다.
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "Ingestion orchestration started.",
+            extra={
+                "event": "ingest_orchestration_started",
+                "stage": "manifest_fetch",
+                "file_idx": request.file_idx,
+            },
+        )
+
+    # manifest 조회 실패는 아직 파일 다운로드나 색인 처리가 시작되지 않은 상태다.
+    # 동일한 백엔드에 실패 콜백을 다시 전송해도 같은 인증 또는 네트워크 오류가
+    # 반복될 가능성이 높으므로 manifest 조회 오류는 그대로 호출자에게 전달한다.
+    manifest_started_at = perf_counter()
+
+    try:
+        latest_manifest = await application_server_client.fetch_manifest(
+            file_idx=request.file_idx,
+        )
+    except Exception as manifest_error:
+        logger.error(
+            "Application server manifest fetch failed.",
+            extra={
+                "event": "ingest_manifest_fetch_failed",
+                "stage": "manifest_fetch",
+                "file_idx": request.file_idx,
+                "duration_ms": calculate_duration_ms(manifest_started_at),
+                "slow_stage_threshold_ms": slow_stage_threshold_ms,
+                "manifest_error_type": type(manifest_error).__name__,
+            },
+        )
+        raise
+    else:
+        log_stage_completed(
+            logger,
+            "Application server manifest fetch completed.",
+            event="ingest_manifest_fetch_completed",
+            started_at=manifest_started_at,
+            slow_stage_threshold_ms=slow_stage_threshold_ms,
+            extra={
+                "stage": "manifest_fetch",
+                "users_idx": latest_manifest.user_idx,
+                "file_idx": latest_manifest.file_idx,
+                "file_type": str(latest_manifest.file_type),
+            },
+        )
 
     try:
         # process_file_processing_request()의 반환값은
@@ -418,7 +484,6 @@ async def ingest_file(
         )
 
         # 실제 색인 결과 필드는 ApiResponse.data 안에 존재한다.
-        #
         # data가 없는 성공 응답은 내부 계약 위반이므로 콜백 전에 거부한다.
         processing_data = processing_response.data
 
@@ -438,20 +503,19 @@ async def ingest_file(
     except Exception as processing_error:
         # 다운로드 이후 파싱, 청킹, 임베딩 또는 저장이 실패하면
         # 백엔드 File 상태를 FAILED로 전환할 수 있도록 실패 콜백을 보낸다.
-        #
         # 실패 콜백에는 index_version, chunk_count 또는 chunks를 전달하지 않는다.
         await _notify_ingest_failure_safely(
             client=application_server_client,
             file_idx=latest_manifest.file_idx,
             processing_error=processing_error,
+            slow_stage_threshold_ms=slow_stage_threshold_ms,
         )
 
         raise
 
     # 성공 콜백 호출이 시작된 뒤 발생한 오류에는 실패 콜백을 추가로 보내지 않는다.
-    #
-    # 성공 콜백 네트워크 오류 뒤 실패 콜백을 보내면 백엔드가 성공 요청을
-    # 실제로 반영했는지 알 수 없는 상태에서 FAILED로 덮어쓸 수 있기 때문이다.
+    # 성공 콜백 네트워크 오류 뒤 실패 콜백을 보내면 백엔드가 성공 요청을 실제로
+    # 반영했는지 알 수 없는 상태에서 FAILED로 덮어쓸 수 있기 때문이다.
     success_callback_started = False
 
     try:
@@ -471,7 +535,6 @@ async def ingest_file(
 
                 # 저장소는 특정 processing_data.rag_document_idx가 아니라
                 # 파일 범위의 최신 SUCCESS 실행을 기준으로 스냅샷을 반환한다.
-                #
                 # 따라서 더 최신 재색인이 먼저 완료된 경우에도 이전 실행의
                 # 청크 수나 문서 식별자와 비교하지 않고 최신 스냅샷 자체를
                 # 성공 payload의 단일 진실 공급원으로 사용한다.
@@ -479,20 +542,59 @@ async def ingest_file(
                     active_snapshot,
                 )
 
-                # chunk_count는 ApplicationServerIngestClient가
-                # callback_chunks의 실제 길이로 계산하며
-                # IngestCompleteRequest가 다시 검증한다.
-                #
-                # 동일 인제스트 요청은 결정적 UUIDv5 Chunk_ID를 재사용하므로
-                # 같은 최신 스냅샷을 여러 번 전달해도 식별자는 변하지 않는다.
+                # chunk_count는 ApplicationServerIngestClient가 callback_chunks의
+                # 실제 길이로 계산하며 IngestCompleteRequest가 다시 검증한다.
+                # 동일 요청은 결정적 UUIDv5 Chunk_ID를 재사용하므로 같은 최신
+                # 스냅샷을 여러 번 전달해도 식별자는 변하지 않는다.
                 success_callback_started = True
+                callback_started_at = perf_counter()
 
-                await application_server_client.notify_ingest_complete(
-                    file_idx=(latest_manifest.file_idx),
-                    success=True,
-                    index_version=(active_snapshot.index_version),
-                    chunks=callback_chunks,
-                )
+                try:
+                    await application_server_client.notify_ingest_complete(
+                        file_idx=(latest_manifest.file_idx),
+                        success=True,
+                        index_version=(active_snapshot.index_version),
+                        chunks=callback_chunks,
+                    )
+                except Exception as callback_error:
+                    # 청크 원문과 callback payload는 기록하지 않는다. 실패 시점의
+                    # 파일·문서 식별자, 개수, 예외 타입 및 소요 시간만 남긴다.
+                    logger.exception(
+                        "Ingestion success callback failed.",
+                        extra={
+                            "event": "ingest_success_callback_failed",
+                            "stage": "success_callback",
+                            "callback_type": "success",
+                            "success": False,
+                            "users_idx": latest_manifest.user_idx,
+                            "file_idx": latest_manifest.file_idx,
+                            "rag_document_idx": active_snapshot.rag_document_idx,
+                            "index_version": active_snapshot.index_version,
+                            "chunk_count": active_snapshot.chunk_count,
+                            "duration_ms": calculate_duration_ms(callback_started_at),
+                            "slow_stage_threshold_ms": slow_stage_threshold_ms,
+                            "callback_error_type": type(callback_error).__name__,
+                        },
+                    )
+                    raise
+                else:
+                    log_stage_completed(
+                        logger,
+                        "Ingestion success callback completed.",
+                        event="ingest_success_callback_completed",
+                        started_at=callback_started_at,
+                        slow_stage_threshold_ms=slow_stage_threshold_ms,
+                        extra={
+                            "stage": "success_callback",
+                            "callback_type": "success",
+                            "success": True,
+                            "users_idx": latest_manifest.user_idx,
+                            "file_idx": latest_manifest.file_idx,
+                            "rag_document_idx": active_snapshot.rag_document_idx,
+                            "index_version": active_snapshot.index_version,
+                            "chunk_count": active_snapshot.chunk_count,
+                        },
+                    )
 
         except LocalRagStorageError as error:
             # SQL, 연결 정보 또는 청크 원문을 노출하지 않고 기존 공통 오류로
@@ -516,6 +618,7 @@ async def ingest_file(
                 client=application_server_client,
                 file_idx=latest_manifest.file_idx,
                 processing_error=synchronization_error,
+                slow_stage_threshold_ms=slow_stage_threshold_ms,
             )
 
         # 성공 콜백 자체가 실패한 경우에는 같은 서버에 실패 콜백을
@@ -523,7 +626,6 @@ async def ingest_file(
         raise
 
     # 기존 /ingest 응답 계약은 그대로 유지한다.
-    #
     # 내부 성공 콜백은 콜백 시점의 최신 활성 스냅샷을 사용하지만,
     # API 호출자에게는 현재 요청의 파일 처리 응답을 그대로 반환한다.
     return processing_response
