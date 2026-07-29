@@ -559,10 +559,7 @@ def _format_console_value(value: object) -> str:
         if not value:
             return '""'
 
-        if any(
-            character.isspace() or character in {"|", "=", '"'}
-            for character in value
-        ):
+        if any(character.isspace() or character in {"|", "=", '"'} for character in value):
             return json.dumps(
                 value,
                 ensure_ascii=False,

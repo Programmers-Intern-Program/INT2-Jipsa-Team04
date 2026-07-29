@@ -378,7 +378,6 @@ def _convert_index_storage_error(
     return AppException(error_code, log_context=log_context)
 
 
-
 @router.post(
     "/process",
     status_code=HTTPStatus.OK,

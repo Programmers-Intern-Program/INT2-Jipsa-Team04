@@ -107,8 +107,7 @@ class LoggingSettings(BaseSettings):
                 )
             )
             raise ValueError(
-                "지원하지 않는 로그 레벨입니다: "
-                f"{normalized_value}. 지원 값: {supported_values}"
+                f"지원하지 않는 로그 레벨입니다: {normalized_value}. 지원 값: {supported_values}"
             )
 
         return normalized_value
