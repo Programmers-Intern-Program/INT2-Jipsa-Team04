@@ -56,7 +56,7 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
     void startProposal(() => proposeOrganization(allowRename), false);
   }, [startProposal]);
 
-  const startSmartUpload = useCallback(async (allowRename: boolean) => {
+  const startSmartUpload = useCallback(async (sessionId: string, allowRename: boolean) => {
     setStage("uploading");
     setProposal(null);
     setApplyResult(null);
@@ -64,7 +64,7 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
     setIsUploadFlow(true);
     setUploadFileIds([]);
     try {
-      const fileIds = await uploadQueuedAndWait();
+      const fileIds = await uploadQueuedAndWait(sessionId);
       setUploadFileIds(fileIds);
       if (fileIds.length === 0) {
         setStage("failed");
@@ -96,12 +96,13 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
 
   const dismiss = useCallback(() => {
     if (stage === "applying") return;
+    if (isUploadFlow && (stage === "uploading" || stage === "proposing")) return;
     if (stage === "proposing" || stage === "reviewing") {
       setIsVisible(false);
       return;
     }
     reset();
-  }, [reset, stage]);
+  }, [isUploadFlow, reset, stage]);
 
   const show = useCallback(() => setIsVisible(true), []);
 

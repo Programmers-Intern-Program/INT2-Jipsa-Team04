@@ -20,6 +20,7 @@ export type UploadItemStatus =
 
 export interface UploadItem {
     id: string;
+    sessionId: string;
     name: string;
     size: number;
     file?: File;
@@ -30,6 +31,8 @@ export interface UploadItem {
     progress?: number;
     idempotencyKey: string;
 }
+
+export const DEFAULT_UPLOAD_SESSION_ID = "regular";
 
 const ALLOWED_EXTS = ["pdf", "txt", "docx", "pptx", "xlsx"];
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -51,15 +54,17 @@ function mapServerStatus(status: string): UploadItemStatus {
 interface UploadContextValue {
     items: UploadItem[];
     isBusy: boolean;
+    isBusyForSession: (sessionId: string) => boolean;
     uploadedSignal: number;
-    enqueue: (files: File[], folderId: number | null) => void;
-    startAll: () => void;
-    uploadQueuedAndWait: () => Promise<number[]>;
+    enqueue: (files: File[], folderId: number | null, sessionId?: string) => void;
+    startAll: (sessionId?: string) => void;
+    uploadQueuedAndWait: (sessionId?: string) => Promise<number[]>;
     removeItem: (id: string) => void;
     retryItem: (id: string) => void;
-    clearSettled: () => void;
-    clearPending: () => void;
-    refreshRecent: () => void;
+    clearSettled: (sessionId?: string) => void;
+    clearSession: (sessionId: string) => void;
+    clearPending: (sessionId?: string) => void;
+    refreshRecent: (sessionId?: string) => void;
 }
 
 const UploadContext = createContext<UploadContextValue | null>(null);
@@ -68,7 +73,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     const [items, setItems] = useState<UploadItem[]>([]);
     const [uploadedSignal, setUploadedSignal] = useState(0);
     const itemsRef = useRef<UploadItem[]>([]);
-    const runningRef = useRef(false);
+    const pumpPromisesRef = useRef(new Map<string, Promise<void>>());
 
     const commit = useCallback((next: UploadItem[]) => {
         itemsRef.current = next;
@@ -82,15 +87,16 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         [commit]
     );
 
-    const pump = useCallback(async () => {
-        if (runningRef.current) return;
-        runningRef.current = true;
-        try {
+    const pump = useCallback((sessionId: string = DEFAULT_UPLOAD_SESSION_ID) => {
+        const existing = pumpPromisesRef.current.get(sessionId);
+        if (existing) return existing;
+
+        const task = (async () => {
             const CONCURRENCY = 5;
             const inFlight = new Set<Promise<void>>();
-            const hasQueued = () => itemsRef.current.some((it) => it.status === "QUEUED");
+            const hasQueued = () => itemsRef.current.some((it) => it.sessionId === sessionId && it.status === "QUEUED");
             const startNext = () => {
-                const target = itemsRef.current.find((it) => it.status === "QUEUED");
+                const target = itemsRef.current.find((it) => it.sessionId === sessionId && it.status === "QUEUED");
                 if (!target) return;
                 if (!target.file) {
                     patch(target.id, { status: "FAILED", error: "파일을 다시 선택해 주세요" });
@@ -123,18 +129,25 @@ export function UploadProvider({ children }: { children: ReactNode }) {
                 if (inFlight.size === 0) break;
                 await Promise.race(inFlight);
             }
-        } finally {
-            runningRef.current = false;
-        }
+        })();
+        pumpPromisesRef.current.set(sessionId, task);
+        const clearPump = () => {
+            if (pumpPromisesRef.current.get(sessionId) === task) {
+                pumpPromisesRef.current.delete(sessionId);
+            }
+        };
+        task.then(clearPump, clearPump);
+        return task;
     }, [patch]);
 
     const enqueue = useCallback(
-        (files: File[], folderId: number | null) => {
+        (files: File[], folderId: number | null, sessionId: string = DEFAULT_UPLOAD_SESSION_ID) => {
             if (files.length === 0) return;
             const added: UploadItem[] = files.map((file) => {
                 const error = validate(file);
                 return {
                     id: crypto.randomUUID(),
+                    sessionId,
                     name: file.name,
                     size: file.size,
                     file,
@@ -149,20 +162,26 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         [commit]
     );
 
-    const startAll = useCallback(() => {
-        void pump();
+    const startAll = useCallback((sessionId: string = DEFAULT_UPLOAD_SESSION_ID) => {
+        void pump(sessionId);
     }, [pump]);
 
-    const uploadQueuedAndWait = useCallback(async () => {
-        const runIds = itemsRef.current.filter((it) => it.status === "QUEUED").map((it) => it.id);
-        await pump();
+    const uploadQueuedAndWait = useCallback(async (sessionId: string = DEFAULT_UPLOAD_SESSION_ID) => {
+        const runIds = itemsRef.current
+            .filter((it) => it.sessionId === sessionId && it.status === "QUEUED")
+            .map((it) => it.id);
+        await pump(sessionId);
         return itemsRef.current
-            .filter((it) => runIds.includes(it.id) && it.fileId != null)
+            .filter((it) => it.sessionId === sessionId && runIds.includes(it.id) && it.fileId != null)
             .map((it) => it.fileId as number);
     }, [pump]);
 
-    const clearPending = useCallback(() => {
-        commit(itemsRef.current.filter((it) => it.status !== "QUEUED" && it.status !== "INVALID"));
+    const clearPending = useCallback((sessionId: string = DEFAULT_UPLOAD_SESSION_ID) => {
+        commit(itemsRef.current.filter((it) => it.sessionId !== sessionId || (it.status !== "QUEUED" && it.status !== "INVALID")));
+    }, [commit]);
+
+    const clearSession = useCallback((sessionId: string) => {
+        commit(itemsRef.current.filter((it) => it.sessionId !== sessionId));
     }, [commit]);
 
     const removeItem = useCallback(
@@ -174,21 +193,24 @@ export function UploadProvider({ children }: { children: ReactNode }) {
 
     const retryItem = useCallback(
         (id: string) => {
+            const item = itemsRef.current.find((it) => it.id === id);
+            if (!item) return;
             patch(id, { status: "QUEUED", error: undefined });
-            void pump();
+            void pump(item.sessionId);
         },
         [patch, pump]
     );
 
-    const clearSettled = useCallback(() => {
+    const clearSettled = useCallback((sessionId: string = DEFAULT_UPLOAD_SESSION_ID) => {
         commit(
             itemsRef.current.filter(
-                (it) => it.status === "QUEUED" || it.status === "UPLOADING"
+                (it) => it.sessionId !== sessionId || it.status === "QUEUED" || it.status === "UPLOADING"
             )
         );
     }, [commit]);
 
-    const refreshRecent = useCallback(async () => {
+    const refreshRecent = useCallback(async (sessionId: string = DEFAULT_UPLOAD_SESSION_ID) => {
+        if (sessionId !== DEFAULT_UPLOAD_SESSION_ID) return;
         const rows = await getRecentUploads(20).catch(() => null);
         if (!rows) return;
         const known = new Set(
@@ -206,6 +228,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
             .filter((r) => r.status !== "DELETED" && !known.has(r.fileId))
             .map((r) => ({
                 id: `srv-${r.fileId}`,
+                sessionId,
                 name: r.name,
                 size: r.sizeBytes,
                 folderId: null,
@@ -219,18 +242,21 @@ export function UploadProvider({ children }: { children: ReactNode }) {
     }, [commit]);
 
     useEffect(() => {
-        void refreshRecent();
+        void refreshRecent(DEFAULT_UPLOAD_SESSION_ID);
     }, [refreshRecent]);
 
-    const isBusy = items.some(
-        (it) => it.status === "QUEUED" || it.status === "UPLOADING"
-    );
+    const isBusyForSession = useCallback((sessionId: string) => items.some(
+        (it) => it.sessionId === sessionId && (it.status === "QUEUED" || it.status === "UPLOADING")
+    ), [items]);
+
+    const isBusy = isBusyForSession(DEFAULT_UPLOAD_SESSION_ID);
 
     return (
         <UploadContext.Provider
             value={{
                 items,
                 isBusy,
+                isBusyForSession,
                 uploadedSignal,
                 enqueue,
                 startAll,
@@ -238,6 +264,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
                 removeItem,
                 retryItem,
                 clearSettled,
+                clearSession,
                 clearPending,
                 refreshRecent,
             }}

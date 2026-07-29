@@ -139,10 +139,11 @@ export default function App() {
   );
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [documentsVisible, setDocumentsVisible] = useState(false);
-  const { stage: smartOrganizeStage } = useSmartOrganize();
-  const smartApplyLocked = smartOrganizeStage === "applying";
+  const { stage: smartOrganizeStage, isUploadFlow: isSmartUploadFlow } = useSmartOrganize();
+  const smartWorkflowLocked = smartOrganizeStage === "applying"
+    || (isSmartUploadFlow && (smartOrganizeStage === "uploading" || smartOrganizeStage === "proposing"));
   const navigateToTab = (tab: string) => {
-    if (!smartApplyLocked) {
+    if (!smartWorkflowLocked) {
       if (tab !== activeTab) setDocumentsVisible(false);
       setActiveTab(tab);
     }
@@ -332,7 +333,7 @@ export default function App() {
   // 로그아웃: 가능하면 refresh token 폐기 API를 호출하고(실패해도 무시),
   // 항상 localStorage(토큰·리프레시·사용자)를 정리한 뒤 랜딩으로 돌아간다.
   const handleLogout = async () => {
-    if (smartApplyLocked) return;
+    if (smartWorkflowLocked) return;
     const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
     if (refreshToken) {
       try {
@@ -554,7 +555,7 @@ export default function App() {
   };
 
   const handleUploadClickOnSidebar = () => {
-    if (smartApplyLocked) return;
+    if (smartWorkflowLocked) return;
     navigateToTab("documents");
     setIsNewUploadOpen(true);
   };
