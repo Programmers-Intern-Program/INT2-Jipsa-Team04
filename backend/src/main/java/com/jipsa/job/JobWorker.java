@@ -57,6 +57,15 @@ public class JobWorker {
         }
     }
 
+    @Scheduled(fixedDelayString = "${app.ingest.reconcile-interval-ms:30000}")
+    public void reconcile() {
+        try {
+            processingService.reconcileTimedOutCallbacks();
+        } catch (RuntimeException e) {
+            log.error("Unexpected error reconciling ingest callbacks", e);
+        }
+    }
+
     private static String buildWorkerId() {
         String host;
         try {

@@ -44,7 +44,7 @@ class JobProcessingServiceTest {
     void setUp() {
         lenient().when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
         service = new JobProcessingService(jobRepository, fileRepository, fileMetadataRepository,
-                ingestManifestService, ragIngestClient, transactionManager, 1000L);
+                ingestManifestService, ragIngestClient, transactionManager, 1000L, 600000L);
     }
 
     private Job runningJob(int attempts) {
@@ -78,8 +78,9 @@ class JobProcessingServiceTest {
 
         assertThat(file.getStatus()).isEqualTo(FileStatus.PROCESSING);
         assertThat(file.getProcessingStage()).isNull();
-        assertThat(job.getJobStatus()).isEqualTo(JobStatus.SUCCESS);
-        assertThat(job.getFinishedAt()).isNotNull();
+        assertThat(job.getJobStatus()).isEqualTo(JobStatus.WAITING_CALLBACK);
+        assertThat(job.getOwnershipExpiresAt()).isNotNull();
+        assertThat(job.getFinishedAt()).isNull();
     }
 
     @Test
@@ -144,5 +145,38 @@ class JobProcessingServiceTest {
         assertThat(job.getJobStatus()).isEqualTo(JobStatus.FAILED);
         assertThat(job.getFinishedAt()).isNotNull();
         assertThat(file.getStatus()).isEqualTo(FileStatus.FAILED);
+    }
+
+    @Test
+    void reconcileTimedOutCallbackReschedulesRetry() {
+        Job job = runningJob(1);
+        job.setJobStatus(JobStatus.WAITING_CALLBACK);
+        File file = uploadedFile();
+        file.setStatus(FileStatus.PROCESSING);
+        when(jobRepository.findTimedOutWaitingCallbackIds(any())).thenReturn(java.util.List.of(1L));
+        when(jobRepository.findById(1L)).thenReturn(Optional.of(job));
+        when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(file));
+
+        service.reconcileTimedOutCallbacks();
+
+        assertThat(job.getJobStatus()).isEqualTo(JobStatus.RETRY_WAIT);
+        assertThat(job.getNextAttemptAt()).isNotNull();
+        assertThat(file.getStatus()).isNotEqualTo(FileStatus.FAILED);
+    }
+
+    @Test
+    void reconcileClosesJobWhenFileAlreadyReady() {
+        Job job = runningJob(1);
+        job.setJobStatus(JobStatus.WAITING_CALLBACK);
+        File file = uploadedFile();
+        file.setStatus(FileStatus.READY);
+        when(jobRepository.findTimedOutWaitingCallbackIds(any())).thenReturn(java.util.List.of(1L));
+        when(jobRepository.findById(1L)).thenReturn(Optional.of(job));
+        when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(file));
+
+        service.reconcileTimedOutCallbacks();
+
+        assertThat(job.getJobStatus()).isEqualTo(JobStatus.SUCCESS);
+        assertThat(file.getStatus()).isEqualTo(FileStatus.READY);
     }
 }

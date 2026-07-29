@@ -8,11 +8,14 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Collection;
 import java.util.Optional;
 
 public interface JobRepository extends JpaRepository<Job, Long> {
 
     Optional<Job> findTopByFileIdOrderByCreatedAtDesc(Long fileId);
+
+    Optional<Job> findTopByFileIdAndJobStatusInOrderByCreatedAtDesc(Long fileId, Collection<JobStatus> statuses);
 
     @Query("""
             select j.id from Job j
@@ -47,6 +50,14 @@ public interface JobRepository extends JpaRepository<Job, Long> {
               and j.attempts >= j.maxAttempts
             """)
     List<Long> findExpiredExhaustedIds(@Param("now") LocalDateTime now);
+
+    @Query("""
+            select j.id from Job j
+            where j.jobStatus = com.jipsa.job.JobStatus.WAITING_CALLBACK
+              and j.ownershipExpiresAt is not null
+              and j.ownershipExpiresAt < :now
+            """)
+    List<Long> findTimedOutWaitingCallbackIds(@Param("now") LocalDateTime now);
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("delete from Job j where j.fileId = :fileId")
