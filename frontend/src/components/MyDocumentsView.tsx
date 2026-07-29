@@ -3117,8 +3117,8 @@ export default function MyDocumentsView({
           </div>
         )}
       </AnimatePresence>
-      <AnimatePresence>
-        {isNewUploadOpen && createPortal((
+      {isNewUploadOpen && createPortal((
+          <AnimatePresence>
             <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={closeUploadModal}>
               <motion.div
                   initial={{ scale: 0.95, opacity: 0 }}
@@ -3248,8 +3248,8 @@ export default function MyDocumentsView({
                 </div>
               </motion.div>
             </div>
-        ), document.body)}
-      </AnimatePresence>
+          </AnimatePresence>
+      ), document.body)}
 
       <AnimatePresence>
         {isRenamePromptOpen && (
