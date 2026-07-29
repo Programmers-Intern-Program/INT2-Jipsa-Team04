@@ -110,7 +110,6 @@ export default function MyDocumentsView({
     proposal: organizeResult,
     applyResult,
     error: smartError,
-    organizeStep,
     isVisible: isSmartWorkflowVisible,
     startOrganization,
     startSmartUpload,
@@ -2640,39 +2639,10 @@ export default function MyDocumentsView({
                 </p>
               </div>
 
-              {/* Progressive text indicators */}
-              <div className="bg-surface-container-low p-4 rounded-2xl border border-outline-variant/30 space-y-3">
-                <div className="flex items-center gap-2.5 text-left text-xs">
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                    organizeStep >= 1 ? "bg-primary text-white" : "bg-outline-variant/30 text-outline"
-                  }`}>
-                    {organizeStep > 1 ? "✓" : "1"}
-                  </div>
-                  <span className={`${organizeStep === 1 ? "font-bold text-primary" : "text-outline"}`}>
-                    전체 보관함 메타데이터 인덱싱
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2.5 text-left text-xs">
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                    organizeStep >= 2 ? "bg-primary text-white" : "bg-outline-variant/30 text-outline"
-                  }`}>
-                    {organizeStep > 2 ? "✓" : "2"}
-                  </div>
-                  <span className={`${organizeStep === 2 ? "font-bold text-primary" : "text-outline"}`}>
-                    LLM 의미적 연관도 분석 및 임베딩 군집화
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2.5 text-left text-xs">
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                    organizeStep >= 3 ? "bg-primary text-white" : "bg-outline-variant/30 text-outline"
-                  }`}>
-                    {organizeStep > 3 ? "✓" : "3"}
-                  </div>
-                  <span className={`${organizeStep === 3 ? "font-bold text-primary animate-pulse" : "text-outline"}`}>
-                    표준 부서 분류 폴더 생성 및 재정비 적용
-                  </span>
+              <div className="bg-surface-container-low p-4 rounded-2xl border border-outline-variant/30">
+                <div className="flex items-center justify-center gap-2.5 text-xs font-bold text-primary">
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent"></span>
+                  AI가 문서와 폴더 구조를 분석하고 있습니다.
                 </div>
               </div>
             </motion.div>

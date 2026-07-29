@@ -11,7 +11,6 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
   const [proposal, setProposal] = useState<OrganizeProposal | null>(null);
   const [applyResult, setApplyResult] = useState<OrganizeApplyResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [organizeStep, setOrganizeStep] = useState(0);
   const [isVisible, setIsVisible] = useState(true);
   const [isUploadFlow, setIsUploadFlow] = useState(false);
   const [uploadFileIds, setUploadFileIds] = useState<number[]>([]);
@@ -23,7 +22,6 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
     setProposal(null);
     setApplyResult(null);
     setError(null);
-    setOrganizeStep(0);
     setIsVisible(true);
     setIsUploadFlow(false);
     setUploadFileIds([]);
@@ -34,11 +32,8 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
     setProposal(null);
     setApplyResult(null);
     setError(null);
-    setOrganizeStep(1);
     setIsVisible(true);
     setIsUploadFlow(uploadFlow);
-    const step1 = window.setTimeout(() => setOrganizeStep(2), 800);
-    const step2 = window.setTimeout(() => setOrganizeStep(3), 1600);
     try {
       const nextProposal = await request();
       setProposal({ ...nextProposal, idempotencyKey: crypto.randomUUID() });
@@ -46,9 +41,6 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       setStage("failed");
       setError(err instanceof Error ? err.message : "스마트 정리 제안 생성 중 오류가 발생했습니다.");
-    } finally {
-      window.clearTimeout(step1);
-      window.clearTimeout(step2);
     }
   }, []);
 
@@ -113,7 +105,6 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
         proposal,
         applyResult,
         error,
-        organizeStep,
         isVisible,
         isUploadFlow,
         uploadFileIds,

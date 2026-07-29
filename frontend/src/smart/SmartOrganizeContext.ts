@@ -15,7 +15,6 @@ export interface SmartOrganizeContextValue {
   proposal: OrganizeProposal | null;
   applyResult: OrganizeApplyResponse | null;
   error: string | null;
-  organizeStep: number;
   isVisible: boolean;
   isUploadFlow: boolean;
   uploadFileIds: number[];
