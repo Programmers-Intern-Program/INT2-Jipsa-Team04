@@ -1,3 +1,5 @@
+"""Jipsa Local RAG FastAPI 애플리케이션의 생성과 실행 진입점을 제공한다."""
+
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -119,10 +121,14 @@ def create_app() -> FastAPI:
     settings = get_settings()
 
     # FastAPI 애플리케이션과 lifespan 로그가 생성되기 전에
-    # 루트 로거와 JSON Formatter를 먼저 구성한다.
+    # 루트 로거와 Formatter를 먼저 구성한다.
     #
-    # 현재 configure_logging()의 기본 로그 레벨은 INFO이다.
-    # 추후 환경별 로그 레벨 설정이 필요하면 Settings와 연결한다.
+    # configure_logging()은 다음 환경 변수를 내부에서 읽는다.
+    # - JIPSA_RAG_LOG_LEVEL: DEBUG, INFO, WARNING, ERROR, CRITICAL
+    # - JIPSA_RAG_LOG_FORMAT: console, json
+    #
+    # 로그 형식을 명시하지 않으면 local/development에서는 사람이 읽기 쉬운
+    # console을 사용하고 test에서는 구조화된 json을 사용한다.
     configure_logging(
         service_name=settings.app_name,
         environment=settings.app_env,
@@ -143,9 +149,10 @@ def create_app() -> FastAPI:
     # 헤더가 없거나 유효하지 않으면 RAG 서버가 새로운 UUID를 생성한다.
     #
     # 생성하거나 전달받은 Request ID는 다음 위치에서 동일하게 사용한다.
-    # - 요청 시작 로그
+    # - 요청 시작 로그(DEBUG)
     # - 요청 완료 또는 실패 로그
     # - 전역 예외 처리 로그
+    # - 파일 처리 단계별 로그
     # - X-Request-ID 응답 헤더
     application.add_middleware(RequestLoggingMiddleware)
 

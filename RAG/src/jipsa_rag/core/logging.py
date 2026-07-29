@@ -1,12 +1,20 @@
+"""RAG 애플리케이션의 구조화 로그, 콘솔 로그 및 민감 정보 마스킹을 구성한다."""
+
+import json
 import logging
 import re
 import sys
 import time
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any, Final, cast
 
 from pythonjsonlogger.json import JsonFormatter
 
+from jipsa_rag.core.logging_settings import (
+    LogFormat,
+    get_logging_settings,
+)
 from jipsa_rag.core.request_context import get_request_id
 
 DEFAULT_LOG_LEVEL = "INFO"
@@ -23,6 +31,41 @@ _JSON_LOG_FIELDS = [
 _REDACTED_VALUE: Final[str] = "[REDACTED]"
 _REDACTED_PRESIGNED_URL: Final[str] = "[REDACTED_PRESIGNED_URL]"
 _REDACTED_DATABASE_DSN: Final[str] = "[REDACTED_DATABASE_DSN]"
+
+# Console Formatter가 LogRecord의 기본 속성을 구조화 extra로 중복 출력하지 않도록
+# Python logging이 기본적으로 생성하는 필드 집합을 한 번만 계산한다.
+_STANDARD_LOG_RECORD_FIELDS: Final[frozenset[str]] = frozenset(
+    {
+        *logging.makeLogRecord({}).__dict__.keys(),
+        "asctime",
+        "message",
+        "service",
+        "environment",
+    }
+)
+
+# 사람이 콘솔에서 자주 확인하는 진단 필드는 고정 순서로 앞에 배치한다.
+# 나머지 사용자 정의 extra 필드는 이름순으로 이어 붙여 출력 결과를 결정적으로 유지한다.
+_CONSOLE_PREFERRED_EXTRA_FIELDS: Final[tuple[str, ...]] = (
+    "method",
+    "path",
+    "status_code",
+    "users_idx",
+    "user_idx",
+    "file_idx",
+    "folder_idx",
+    "file_type",
+    "size_bytes",
+    "structure_unit_count",
+    "text_unit_count",
+    "chunk_count",
+    "parser_type",
+    "parser_version",
+    "ocr_enabled",
+    "duration_ms",
+    "response_started",
+    "error_code",
+)
 
 # 구조화 로그의 필드명이 아래 값과 일치하면
 # 값의 데이터 타입과 관계없이 필드 전체를 마스킹한다.
@@ -117,7 +160,7 @@ _SENSITIVE_ASSIGNMENT_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"qdrant[_-]api[_-]key|api[_-]key|password|secret"
     r")[\"']?\s*[:=]\s*)"
     r"(?P<value>Bearer\s+[A-Za-z0-9._~+/=-]+|"
-    r"\"[^\"]*\"|'[^']*'|[^\s,;}]+)",
+    r'"[^\"]*"|\'[^\']*\'|[^\s,;}]+)',
     re.IGNORECASE,
 )
 
@@ -202,15 +245,133 @@ class SensitiveDataJsonFormatter(JsonFormatter):
         )
 
 
+class SensitiveDataConsoleFormatter(logging.Formatter):
+    """PowerShell에서 읽기 쉬운 한 줄 로그를 만들고 민감 정보를 제거한다.
+
+    각 로그는 timestamp, level, service, environment, event, request_id,
+    logger를 고정 순서로 출력한다. 이후 메시지와 구조화 extra를 이어 붙이므로
+    JSON 모드와 동일한 추적 정보를 유지하면서도 사람이 빠르게 훑을 수 있다.
+    """
+
+    def __init__(
+        self,
+        *,
+        service_name: str,
+        environment: str,
+    ) -> None:
+        """모든 콘솔 로그에 포함할 서비스명과 실행 환경을 저장한다."""
+
+        super().__init__()
+        self._service_name = _redact_sensitive_text(service_name)
+        self._environment = _redact_sensitive_text(environment)
+
+    def format(self, record: logging.LogRecord) -> str:
+        """로그 레코드를 결정적인 단일 행 콘솔 문자열로 변환한다."""
+
+        timestamp = (
+            datetime.fromtimestamp(
+                record.created,
+                tz=UTC,
+            )
+            .isoformat(
+                timespec="milliseconds",
+            )
+            .replace(
+                "+00:00",
+                "Z",
+            )
+        )
+
+        event = _format_console_value(
+            _sanitize_log_value(
+                getattr(
+                    record,
+                    "event",
+                    "-",
+                ),
+                field_name="event",
+            )
+        )
+        request_id = _format_console_value(
+            _sanitize_log_value(
+                getattr(
+                    record,
+                    "request_id",
+                    None,
+                ),
+                field_name="request_id",
+            )
+        )
+        logger_name = _format_console_value(
+            _sanitize_log_value(
+                record.name,
+                field_name="logger",
+            )
+        )
+        message = _redact_sensitive_text(
+            record.getMessage(),
+        )
+
+        header_parts = [
+            timestamp,
+            f"{record.levelname:<8}",
+            f"service={_format_console_value(self._service_name)}",
+            f"environment={_format_console_value(self._environment)}",
+            f"event={event}",
+            f"request_id={request_id}",
+            f"logger={logger_name}",
+        ]
+
+        formatted_log = " | ".join(
+            [
+                *header_parts,
+                message,
+            ]
+        )
+
+        extra_fields = _extract_console_extra_fields(record)
+
+        if extra_fields:
+            formatted_extra = " ".join(
+                f"{field_name}={_format_console_value(field_value)}"
+                for field_name, field_value in extra_fields
+            )
+            formatted_log = f"{formatted_log} | {formatted_extra}"
+
+        # 예외 Stack Trace는 한 줄 로그 헤더 아래에만 추가한다.
+        # 같은 예외를 미들웨어와 전역 예외 처리기가 중복 기록하지 않는 기존 정책은 유지한다.
+        if record.exc_info is not None:
+            formatted_log = f"{formatted_log}\n{self.formatException(record.exc_info)}"
+
+        if record.stack_info:
+            formatted_log = f"{formatted_log}\n{_redact_sensitive_text(record.stack_info)}"
+
+        return formatted_log
+
+    def formatException(
+        self,
+        ei: Any,
+    ) -> str:
+        """콘솔 Traceback에 포함된 URL, 토큰 및 DB 접속 정보를 마스킹한다."""
+
+        return _redact_sensitive_text(
+            super().formatException(ei),
+        )
+
+
 class RequestContextFilter(logging.Filter):
-    """현재 요청 식별자를 모든 로그 레코드에 추가한다."""
+    """모든 로그 레코드에 요청 식별자와 기본 이벤트명을 추가한다."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """로그에 요청 식별자가 없을 때 현재 컨텍스트 값을 추가한다."""
+        """호출부에서 생략한 공통 추적 필드를 안전한 기본값으로 보완한다."""
 
         record.__dict__.setdefault(
             "request_id",
             get_request_id(),
+        )
+        record.__dict__.setdefault(
+            "event",
+            "log_message",
         )
 
         return True
@@ -218,15 +379,19 @@ class RequestContextFilter(logging.Filter):
 
 def configure_logging(
     *,
-    log_level: str = DEFAULT_LOG_LEVEL,
+    log_level: str | None = None,
+    log_format: str | None = None,
     service_name: str,
     environment: str,
 ) -> None:
-    """애플리케이션 전역 JSON 로깅과 민감 정보 마스킹을 구성한다.
+    """애플리케이션 전역 로깅과 민감 정보 마스킹을 구성한다.
 
     Args:
         log_level:
-            출력할 최소 로그 레벨이다.
+            출력할 최소 로그 레벨이다. ``None``이면 JIPSA_RAG_LOG_LEVEL을 사용한다.
+        log_format:
+            ``console`` 또는 ``json``이다. ``None``이면 JIPSA_RAG_LOG_FORMAT 또는
+            실행 환경별 기본값을 사용한다.
         service_name:
             모든 로그에 포함할 서비스 이름이다.
         environment:
@@ -234,15 +399,52 @@ def configure_logging(
 
     Raises:
         ValueError:
-            지원하지 않는 로그 레벨이 전달된 경우 발생한다.
+            지원하지 않는 로그 레벨 또는 로그 형식이 전달된 경우 발생한다.
     """
 
-    resolved_log_level = _resolve_log_level(log_level)
+    logging_settings = get_logging_settings()
 
-    # 루트 핸들러에 민감 정보 전용 Formatter를 적용한다.
-    #
-    # 애플리케이션 로그뿐 아니라 Uvicorn, SQLAlchemy 및 HTTP 클라이언트처럼
-    # 루트 로거로 전파되는 서드파티 로그도 동일한 마스킹 경계를 통과한다.
+    configured_log_level = log_level or logging_settings.log_level
+    configured_log_format = log_format or logging_settings.resolve_log_format(
+        environment=environment,
+    )
+
+    resolved_log_level = _resolve_log_level(configured_log_level)
+    resolved_log_format = _resolve_log_format(configured_log_format)
+
+    formatter = _create_formatter(
+        log_format=resolved_log_format,
+        service_name=service_name,
+        environment=environment,
+    )
+
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setLevel(resolved_log_level)
+    stream_handler.setFormatter(formatter)
+    stream_handler.addFilter(RequestContextFilter())
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(resolved_log_level)
+    root_logger.addHandler(stream_handler)
+
+    _configure_uvicorn_loggers(resolved_log_level)
+
+
+def _create_formatter(
+    *,
+    log_format: LogFormat,
+    service_name: str,
+    environment: str,
+) -> logging.Formatter:
+    """선택한 출력 형식에 대응하는 민감 정보 보호 Formatter를 생성한다."""
+
+    if log_format == "console":
+        return SensitiveDataConsoleFormatter(
+            service_name=service_name,
+            environment=environment,
+        )
+
     formatter = SensitiveDataJsonFormatter(
         _JSON_LOG_FIELDS,
         rename_fields={
@@ -259,17 +461,88 @@ def configure_logging(
     # 서버 실행 지역과 관계없이 로그 시각을 UTC로 통일한다.
     formatter.converter = time.gmtime
 
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setLevel(resolved_log_level)
-    stream_handler.setFormatter(formatter)
-    stream_handler.addFilter(RequestContextFilter())
+    return formatter
 
-    root_logger = logging.getLogger()
-    root_logger.handlers.clear()
-    root_logger.setLevel(resolved_log_level)
-    root_logger.addHandler(stream_handler)
 
-    _configure_uvicorn_loggers(resolved_log_level)
+def _extract_console_extra_fields(
+    record: logging.LogRecord,
+) -> tuple[tuple[str, object], ...]:
+    """Console Formatter에 표시할 안전한 구조화 extra 필드를 정렬해 반환한다."""
+
+    sanitized_extra: dict[str, object] = {}
+
+    for field_name, field_value in record.__dict__.items():
+        if field_name in _STANDARD_LOG_RECORD_FIELDS or field_name in {
+            "event",
+            "request_id",
+        }:
+            continue
+
+        sanitized_extra[field_name] = _sanitize_log_value(
+            field_value,
+            field_name=field_name,
+        )
+
+    ordered_extra: list[tuple[str, object]] = []
+
+    for field_name in _CONSOLE_PREFERRED_EXTRA_FIELDS:
+        if field_name in sanitized_extra:
+            ordered_extra.append(
+                (
+                    field_name,
+                    sanitized_extra.pop(field_name),
+                )
+            )
+
+    ordered_extra.extend(
+        sorted(
+            sanitized_extra.items(),
+            key=lambda item: item[0],
+        )
+    )
+
+    return tuple(ordered_extra)
+
+
+def _format_console_value(value: object) -> str:
+    """구조화 값을 공백과 구분자가 모호하지 않은 콘솔 문자열로 변환한다."""
+
+    if value is None:
+        return "-"
+
+    if isinstance(value, bool):
+        return str(value).lower()
+
+    if isinstance(value, str):
+        if not value:
+            return '""'
+
+        if any(character.isspace() or character in {"|", "=", '"'} for character in value):
+            return json.dumps(
+                value,
+                ensure_ascii=False,
+            )
+
+        return value
+
+    if isinstance(
+        value,
+        (
+            Mapping,
+            list,
+            tuple,
+        ),
+    ):
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+
+    return _redact_sensitive_text(
+        str(value),
+    )
 
 
 def _normalize_log_field_name(field_name: str) -> str:
@@ -404,6 +677,11 @@ def _resolve_log_level(log_level: str) -> int:
     if not normalized_log_level:
         normalized_log_level = DEFAULT_LOG_LEVEL
 
+    if normalized_log_level == "WARN":
+        normalized_log_level = "WARNING"
+    elif normalized_log_level == "FATAL":
+        normalized_log_level = "CRITICAL"
+
     resolved_log_level = logging.getLevelName(normalized_log_level)
 
     if not isinstance(resolved_log_level, int):
@@ -413,8 +691,23 @@ def _resolve_log_level(log_level: str) -> int:
     return resolved_log_level
 
 
+def _resolve_log_format(log_format: str) -> LogFormat:
+    """로그 형식 문자열을 console 또는 json으로 정규화한다."""
+
+    normalized_log_format = log_format.strip().lower()
+
+    if normalized_log_format == "console":
+        return "console"
+
+    if normalized_log_format == "json":
+        return "json"
+
+    message = f"Unsupported log format: {log_format!r}"
+    raise ValueError(message)
+
+
 def _configure_uvicorn_loggers(log_level: int) -> None:
-    """Uvicorn 로그가 애플리케이션 JSON 포맷을 사용하도록 구성한다."""
+    """Uvicorn 로그가 애플리케이션에서 선택한 공통 포맷을 사용하도록 구성한다."""
 
     for logger_name in (
         "uvicorn",

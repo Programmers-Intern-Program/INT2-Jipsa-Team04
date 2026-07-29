@@ -1,5 +1,8 @@
+"""HTTP 요청 식별자와 저소음 접근 로그를 관리한다."""
+
 import logging
 from time import perf_counter
+from typing import Final
 
 from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
@@ -13,6 +16,14 @@ from jipsa_rag.core.request_context import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Health Check는 프로세스와 외부 의존 서비스의 상태를 반복적으로 확인하므로
+# 정상 응답까지 INFO로 출력하면 실제 파일 처리 로그가 빠르게 묻힐 수 있다.
+# API prefix가 환경별로 달라져도 동작하도록 전체 경로가 아닌 suffix로 비교한다.
+_HEALTH_CHECK_PATH_SUFFIXES: Final[tuple[str, ...]] = (
+    "/health/live",
+    "/health/ready",
+)
 
 
 class RequestLoggingMiddleware:
@@ -51,7 +62,9 @@ class RequestLoggingMiddleware:
         status_code: int | None = None
         response_started = False
 
-        logger.info(
+        # 요청 시작 로그는 DEBUG에서만 출력한다.
+        # INFO 운영에서는 완료 또는 실패 로그 한 줄만 남겨 정상 요청의 로그량을 줄인다.
+        logger.debug(
             "HTTP request started.",
             extra={
                 "event": "http_request_started",
@@ -84,7 +97,7 @@ class RequestLoggingMiddleware:
         except Exception:
             duration_ms = _calculate_duration_ms(started_at)
 
-            # 상세 스택 트레이스는 전역 예외 처리기에서 한 번만 기록한다.
+            # 상세 Stack Trace는 전역 예외 처리기에서 한 번만 기록한다.
             # 미들웨어는 요청 단위 실패 정보만 기록하여 중복 로그를 줄인다.
             logger.error(
                 "HTTP request failed before completion.",
@@ -104,7 +117,10 @@ class RequestLoggingMiddleware:
             duration_ms = _calculate_duration_ms(started_at)
 
             logger.log(
-                _resolve_access_log_level(completed_status_code),
+                _resolve_access_log_level(
+                    status_code=completed_status_code,
+                    path=request.url.path,
+                ),
                 "HTTP request completed.",
                 extra={
                     "event": "http_request_completed",
@@ -128,8 +144,12 @@ def _calculate_duration_ms(started_at: float) -> float:
     return round(duration_seconds * 1000, 3)
 
 
-def _resolve_access_log_level(status_code: int) -> int:
-    """HTTP 상태 코드에 대응하는 접근 로그 레벨을 반환한다."""
+def _resolve_access_log_level(
+    *,
+    status_code: int,
+    path: str,
+) -> int:
+    """HTTP 상태 코드와 요청 경로에 대응하는 접근 로그 레벨을 반환한다."""
 
     if status_code >= 500:
         return logging.ERROR
@@ -137,4 +157,19 @@ def _resolve_access_log_level(status_code: int) -> int:
     if status_code >= 400:
         return logging.WARNING
 
+    # 정상 Health Check는 DEBUG로 낮추되 오류 응답은 위 분기에서
+    # WARNING 또는 ERROR로 유지하여 실제 장애 신호를 숨기지 않는다.
+    if _is_health_check_path(path):
+        return logging.DEBUG
+
     return logging.INFO
+
+
+def _is_health_check_path(path: str) -> bool:
+    """경로가 Liveness 또는 Readiness Health Check인지 확인한다."""
+
+    normalized_path = path.rstrip("/")
+
+    return normalized_path.endswith(
+        _HEALTH_CHECK_PATH_SUFFIXES,
+    )

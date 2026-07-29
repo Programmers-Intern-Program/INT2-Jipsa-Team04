@@ -1,6 +1,8 @@
 """애플리케이션 서버에서 전달한 다중 형식 문서를 처리하고 색인 결과를 반환한다."""
 
+import logging
 from http import HTTPStatus
+from time import perf_counter
 from typing import Annotated, Protocol
 
 from fastapi import APIRouter, Depends, Request
@@ -67,6 +69,8 @@ from jipsa_rag.schemas.file_processing import (
     FileProcessingRequest,
 )
 from jipsa_rag.services.file_indexing import FileIndexingService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/files", tags=["File Processing"])
 
@@ -372,6 +376,15 @@ def _convert_index_storage_error(
     return AppException(error_code, log_context=log_context)
 
 
+def _calculate_duration_ms(started_at: float) -> float:
+    """단계별 처리 시간을 밀리초 단위로 계산한다."""
+
+    return round(
+        (perf_counter() - started_at) * 1000,
+        3,
+    )
+
+
 @router.post(
     "/process",
     status_code=HTTPStatus.OK,
@@ -432,6 +445,10 @@ async def process_file_processing_request(
     읽는다. 이 함수는 FastAPI 엔드포인트뿐 아니라 ``POST /ingest`` 내부에서도
     직접 호출되므로, 추가 위치 인자를 강제하지 않아 기존 내부 호출 계약을
     유지한다.
+
+    INFO 로그는 다운로드, 파싱/OCR, 청킹의 완료 시점에만 한 줄씩 기록한다.
+    청크 원문, 파일명, Presigned URL 및 임베딩 벡터는 기록하지 않고 식별자,
+    개수, 파일 유형과 처리 시간 같은 작은 스칼라 값만 사용하여 로그 비용을 제한한다.
     """
 
     # 색인 버전은 Chunk ID와 Local RAG 문서 정체성에 사용된다. 환경별 dotenv를
@@ -443,16 +460,56 @@ async def process_file_processing_request(
         # 만들지 않는다. Factory는 다섯 형식의 구체 구현 선택을 캡슐화한다.
         document_parser = document_parser_factory.get_parser(request.file_type)
 
+        download_started_at = perf_counter()
+
         async with file_downloader.download_and_validate(
             file_url=request.download_url,
             users_idx=request.user_idx,
             file_idx=request.file_idx,
         ) as downloaded_file:
-            parsed_document = await document_parser.parse(downloaded_file.path)
+            # async context 진입 시점에는 URL 검증, 재시도, 스트리밍 다운로드,
+            # 크기 제한과 SHA-256 계산이 모두 끝난 상태다. 이 지점에서 측정해야
+            # 파싱 시간과 분리된 실제 다운로드 단계 시간을 얻을 수 있다.
             file_size_bytes = downloaded_file.size_bytes
             calculated_file_hash = downloaded_file.sha256
 
+            logger.info(
+                "File download completed.",
+                extra={
+                    "event": "file_download_completed",
+                    "users_idx": request.user_idx,
+                    "file_idx": request.file_idx,
+                    "file_type": str(request.file_type),
+                    "size_bytes": file_size_bytes,
+                    "duration_ms": _calculate_duration_ms(download_started_at),
+                },
+            )
+
+            parsing_started_at = perf_counter()
+            parsed_document = await document_parser.parse(downloaded_file.path)
+
+            # PDF, DOCX, PPTX, XLSX의 이미지 OCR은 각 Parser 내부의 동일 parse 호출에
+            # 포함된다. 따라서 Parser가 반환된 직후의 시간은 텍스트 추출과 활성화된
+            # OCR 보강 작업을 모두 포함하며, 별도 이미지별 INFO 로그를 만들지 않는다.
+            logger.info(
+                "Document parsing and OCR phase completed.",
+                extra={
+                    "event": "document_parsing_ocr_completed",
+                    "users_idx": request.user_idx,
+                    "file_idx": request.file_idx,
+                    "file_type": str(parsed_document.file_type),
+                    "parser_type": document_parser.parser_type,
+                    "parser_version": document_parser.parser_version,
+                    "ocr_enabled": processing_settings.ocr_enabled,
+                    "structure_unit_count": parsed_document.unit_count,
+                    "text_unit_count": parsed_document.text_unit_count,
+                    "duration_ms": _calculate_duration_ms(parsing_started_at),
+                },
+            )
+
         # 임시 파일은 파싱 직후 정리하고, 이후 단계는 불변 메모리 모델만 사용한다.
+        chunking_started_at = perf_counter()
+
         chunked_document = await document_chunker.chunk(
             document=parsed_document,
             context=ChunkingContext(
@@ -463,6 +520,20 @@ async def process_file_processing_request(
                 embedding_model=chunk_embedder.embedding_model,
                 index_version=processing_settings.index_version,
             ),
+        )
+
+        logger.info(
+            "Document chunking completed.",
+            extra={
+                "event": "document_chunking_completed",
+                "users_idx": request.user_idx,
+                "file_idx": request.file_idx,
+                "file_type": str(chunked_document.file_type),
+                "structure_unit_count": chunked_document.source_unit_count,
+                "text_unit_count": chunked_document.text_unit_count,
+                "chunk_count": chunked_document.chunk_count,
+                "duration_ms": _calculate_duration_ms(chunking_started_at),
+            },
         )
 
         embedded_document = await chunk_embedder.embed(document=chunked_document)
