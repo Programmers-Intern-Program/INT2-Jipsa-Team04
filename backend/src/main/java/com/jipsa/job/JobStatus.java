@@ -6,5 +6,6 @@ public enum JobStatus {
     SUCCESS,
     FAILED,
     CANCELLED,
-    RETRY_WAIT
+    RETRY_WAIT,
+    WAITING_CALLBACK
 }
