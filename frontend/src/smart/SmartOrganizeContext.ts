@@ -21,7 +21,7 @@ export interface SmartOrganizeContextValue {
   uploadFileIds: number[];
   completedSignal: number;
   startOrganization: (allowRename: boolean) => void;
-  startSmartUpload: (allowRename: boolean) => Promise<void>;
+  startSmartUpload: (sessionId: string, allowRename: boolean) => Promise<void>;
   apply: () => Promise<void>;
   dismiss: () => void;
   show: () => void;

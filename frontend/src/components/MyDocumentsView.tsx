@@ -46,7 +46,7 @@ import {
 import { deleteFile, downloadFile, getDocumentTypes, getFileDetail, getFileStatus, getStorageUsage, listAllFiles, listAllTrash, moveFiles, permanentDeleteFile, renameFile, restoreFile, toggleStar } from "../api/files";
 import FileDetailPanel from "./FileDetailPanel";
 import { uploadFiles, getUploadStatus } from "../api/uploads";
-import { useUploads } from "../upload/UploadProvider";
+import { DEFAULT_UPLOAD_SESSION_ID, useUploads } from "../upload/UploadProvider";
 import { useSmartOrganize } from "../smart/useSmartOrganize";
 
 interface MyDocumentsViewProps {
@@ -117,6 +117,7 @@ export default function MyDocumentsView({
     apply: applySmartOrganization,
     dismiss: dismissSmartWorkflow,
     show: showSmartWorkflow,
+    reset: resetSmartWorkflow,
     completedSignal: smartCompletedSignal,
   } = useSmartOrganize();
   const isOrganizing = smartStage === "proposing";
@@ -150,29 +151,49 @@ export default function MyDocumentsView({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [newUploaderSmartMode, setNewUploaderSmartMode] = useState(false);
+  const [smartUploadSessionId, setSmartUploadSessionId] = useState<string | null>(null);
   const [autoRename, setAutoRename] = useState(true);
   const [isRenamePromptOpen, setIsRenamePromptOpen] = useState(false);
-  const { items: uploadQueue, isBusy, enqueue, startAll, clearPending, removeItem: removeUploadQueueItem, retryItem, refreshRecent } = useUploads();
-  // 실제로 업로드가 진행 중인지(파일이 대기(QUEUED) 상태인 것과 구분). 시작/삭제 버튼과 파일 추가 잠금에 쓴다.
-  const isQueueUploading = smartStage === "uploading" || uploadQueue.some((i) => i.status === "UPLOADING");
+  const { items: uploadQueue, enqueue, startAll, clearSession, isBusyForSession, clearPending, removeItem: removeUploadQueueItem, retryItem, refreshRecent } = useUploads();
+  const activeUploadSessionId = newUploaderSmartMode ? (smartUploadSessionId ?? "") : DEFAULT_UPLOAD_SESSION_ID;
+  const activeUploadQueue = uploadQueue.filter((item) => item.sessionId === activeUploadSessionId);
+  const isSmartUploadLocked = newUploaderSmartMode && (smartStage === "uploading" || smartStage === "proposing");
+  const isQueueUploading = activeUploadQueue.some((item) => item.status === "UPLOADING")
+    || (newUploaderSmartMode && smartStage === "uploading");
+  const isUploadInputLocked = isQueueUploading || isSmartUploadLocked;
 
   useEffect(() => {
-    if (!isNewUploadOpen) return;
-    if (!isBusy) clearPending();
-    refreshRecent();
+    if (!isNewUploadOpen || newUploaderSmartMode) return;
+    if (!isBusyForSession(DEFAULT_UPLOAD_SESSION_ID)) clearPending(DEFAULT_UPLOAD_SESSION_ID);
+    refreshRecent(DEFAULT_UPLOAD_SESSION_ID);
     const timer = setInterval(refreshRecent, 5000);
     return () => clearInterval(timer);
-  }, [isNewUploadOpen, isBusy, clearPending, refreshRecent]);
+  }, [isNewUploadOpen, newUploaderSmartMode, isBusyForSession, clearPending, refreshRecent]);
 
   const uploadModalEpochRef = useRef(0);
   const uploadModalOpenRef = useRef(isNewUploadOpen);
 
   const closeUploadModal = useCallback(() => {
+    if (isSmartUploadLocked) return;
     uploadModalEpochRef.current += 1;
     uploadModalOpenRef.current = false;
+    if (newUploaderSmartMode && smartUploadSessionId) {
+      clearSession(smartUploadSessionId);
+      setSmartUploadSessionId(null);
+    }
     setIsNewUploadOpen(false);
     setNewUploaderSmartMode(false);
-  }, [setIsNewUploadOpen]);
+  }, [clearSession, isSmartUploadLocked, newUploaderSmartMode, setIsNewUploadOpen, smartUploadSessionId]);
+
+  const openSmartUploadModal = useCallback(() => {
+    if (smartStage === "uploading" || smartStage === "proposing" || smartStage === "applying") return;
+    if (smartUploadSessionId) clearSession(smartUploadSessionId);
+    if (smartStage !== "idle") resetSmartWorkflow();
+    setSmartUploadSessionId(crypto.randomUUID());
+    setNewUploaderSmartMode(true);
+    setAutoRename(true);
+    setIsNewUploadOpen(true);
+  }, [clearSession, resetSmartWorkflow, setIsNewUploadOpen, smartStage, smartUploadSessionId]);
 
   useEffect(() => {
     uploadModalOpenRef.current = isNewUploadOpen;
@@ -181,11 +202,11 @@ export default function MyDocumentsView({
   useEffect(() => {
     if (!isNewUploadOpen) return;
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeUploadModal();
+      if (event.key === "Escape" && !isSmartUploadLocked) closeUploadModal();
     };
     document.addEventListener("keydown", handleEscape);
     return () => document.removeEventListener("keydown", handleEscape);
-  }, [isNewUploadOpen, closeUploadModal]);
+  }, [closeUploadModal, isNewUploadOpen, isSmartUploadLocked]);
   const [newUploaderDragActive, setNewUploaderDragActive] = useState(false);
   const newUploaderInputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -675,28 +696,37 @@ export default function MyDocumentsView({
 
   // 스마트 업로드는 항상 루트에 올린 뒤 AI 제안으로 폴더 배치한다(현재 보고 있는 폴더와 무관).
   // 일반 업로드는 지금 보고 있는 폴더에 추가한다.
-  const addFilesToUploadQueue = (files: File[]) => enqueue(files, newUploaderSmartMode ? null : selectedFolder);
+  const addFilesToUploadQueue = (files: File[]) => {
+    if (!activeUploadSessionId) return;
+    enqueue(files, newUploaderSmartMode ? null : selectedFolder, activeUploadSessionId);
+  };
 
   const handleNewUploaderDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setNewUploaderDragActive(false);
-    if (isQueueUploading) return;
+    if (isUploadInputLocked) return;
     addFilesToUploadQueue(Array.from(e.dataTransfer.files));
   };
 
   const handleNewUploaderPick = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isUploadInputLocked) {
+      e.target.value = "";
+      return;
+    }
     addFilesToUploadQueue(Array.from(e.target.files ?? []));
     e.target.value = "";
   };
 
-  const runNewUploaderUpload = () => startAll();
+  const runNewUploaderUpload = () => startAll(DEFAULT_UPLOAD_SESSION_ID);
 
   // 스마트 경로: 업로드가 모두 끝난 뒤 딱 한 번, 방금 올린 파일 전체를 대상으로 정리 제안을 만들어
   // 기존 스마트 정리 미리보기(organizeResult) 화면으로 넘긴다. 승인해야만 이동/이름변경이 반영된다.
   const runSmartUpload = async () => {
+    const sessionId = smartUploadSessionId;
+    if (!sessionId || isSmartUploadLocked) return;
     const startedModalEpoch = uploadModalEpochRef.current;
-    await startSmartUpload(autoRename);
+    await startSmartUpload(sessionId, autoRename);
     if (uploadModalOpenRef.current && uploadModalEpochRef.current === startedModalEpoch) {
       closeUploadModal();
     }
@@ -1519,9 +1549,7 @@ export default function MyDocumentsView({
                       <button 
                         onClick={() => {
                           setIsSmartMenuOpen(false);
-                          setNewUploaderSmartMode(true);
-                          setAutoRename(true);
-                          setIsNewUploadOpen(true);
+                          openSmartUploadModal();
                         }}
                         className="w-full text-left p-3.5 rounded-xl hover:bg-primary/5 transition-colors flex gap-3.5 cursor-pointer group"
                       >
@@ -3126,7 +3154,10 @@ export default function MyDocumentsView({
       {createPortal(
         <AnimatePresence>
           {isNewUploadOpen && (
-            <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={closeUploadModal}>
+            <div
+              className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+              onClick={() => { if (!isSmartUploadLocked) closeUploadModal(); }}
+            >
               <motion.div
                   initial={{ scale: 0.95, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
@@ -3143,20 +3174,21 @@ export default function MyDocumentsView({
                   </div>
                   <button
                       onClick={closeUploadModal}
-                      className="p-1 hover:bg-surface-container rounded-full text-outline hover:text-on-surface cursor-pointer"
+                      disabled={isSmartUploadLocked}
+                      className="p-1 hover:bg-surface-container rounded-full text-outline hover:text-on-surface cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     <X className="w-4 h-4" />
                   </button>
                 </div>
 
                 <div
-                    onDragEnter={(e) => { e.preventDefault(); if (!isQueueUploading) setNewUploaderDragActive(true); }}
-                    onDragOver={(e) => { e.preventDefault(); if (!isQueueUploading) setNewUploaderDragActive(true); }}
+                    onDragEnter={(e) => { e.preventDefault(); if (!isUploadInputLocked) setNewUploaderDragActive(true); }}
+                    onDragOver={(e) => { e.preventDefault(); if (!isUploadInputLocked) setNewUploaderDragActive(true); }}
                     onDragLeave={(e) => { e.preventDefault(); setNewUploaderDragActive(false); }}
                     onDrop={handleNewUploaderDrop}
-                    onClick={() => { if (!isQueueUploading) newUploaderInputRef.current?.click(); }}
+                    onClick={() => { if (!isUploadInputLocked) newUploaderInputRef.current?.click(); }}
                     className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all flex flex-col items-center justify-center ${
-                        isQueueUploading ? "opacity-50 cursor-not-allowed border-outline-variant" : `cursor-pointer ${newUploaderDragActive ? "border-primary bg-primary/5" : "border-outline-variant hover:border-primary/55"}`
+                        isUploadInputLocked ? "opacity-50 cursor-not-allowed border-outline-variant" : `cursor-pointer ${newUploaderDragActive ? "border-primary bg-primary/5" : "border-outline-variant hover:border-primary/55"}`
                     }`}
                 >
                   <Upload className="w-9 h-9 mb-2 text-primary" />
@@ -3167,15 +3199,15 @@ export default function MyDocumentsView({
                       type="file"
                       multiple
                       accept=".pdf,.txt,.docx,.pptx,.xlsx"
-                      disabled={isQueueUploading}
+                      disabled={isUploadInputLocked}
                       onChange={handleNewUploaderPick}
                       className="hidden"
                   />
                 </div>
 
-                {uploadQueue.length > 0 && (
+                {activeUploadQueue.length > 0 && (
                     <div className="flex-1 overflow-y-auto border border-outline-variant/60 rounded-xl divide-y divide-outline-variant/40 bg-surface-container-low">
-                      {uploadQueue.map((item) => (
+                      {activeUploadQueue.map((item) => (
                           <div key={item.id} className="p-2.5 flex items-center gap-3 text-xs">
                             <FileText className="w-4 h-4 text-outline shrink-0" />
                             <div className="min-w-0 flex-1">
@@ -3203,7 +3235,7 @@ export default function MyDocumentsView({
                             ) : (
                                 <span className="text-outline font-bold shrink-0">대기</span>
                             )}
-                            {!isQueueUploading && (item.status === "QUEUED" || item.status === "INVALID" || item.status === "FAILED") && (
+                            {!isUploadInputLocked && (item.status === "QUEUED" || item.status === "INVALID" || item.status === "FAILED") && (
                                 <button type="button" onClick={() => removeUploadQueueItem(item.id)} className="p-1 text-outline hover:text-rose-500 shrink-0 cursor-pointer">
                                   <X className="w-3.5 h-3.5" />
                                 </button>
@@ -3224,7 +3256,7 @@ export default function MyDocumentsView({
                           type="checkbox"
                           checked={autoRename}
                           onChange={(e) => setAutoRename(e.target.checked)}
-                          disabled={isQueueUploading}
+                          disabled={isUploadInputLocked}
                           className="mt-0.5 accent-primary cursor-pointer"
                       />
                       <span>폴더 이동과 함께 AI가 파일 이름도 제안합니다 (미리보기에서 확인 후 반영).</span>
@@ -3233,12 +3265,13 @@ export default function MyDocumentsView({
 
                 <div className="pt-3 border-t border-outline-variant/30 flex items-center justify-between gap-2.5">
                   <p className="text-[11px] text-outline font-semibold">
-                    {uploadQueue.filter((i) => i.status === "UPLOADED" || i.status === "READY").length} / {uploadQueue.filter((i) => i.status !== "INVALID").length} 완료
+                    {activeUploadQueue.filter((i) => i.status === "UPLOADED" || i.status === "READY").length} / {activeUploadQueue.filter((i) => i.status !== "INVALID").length} 완료
                   </p>
                   <div className="flex gap-2.5">
                     <button
                         type="button"
                         onClick={closeUploadModal}
+                        disabled={isSmartUploadLocked}
                         className="px-4 py-2 bg-surface-container hover:bg-surface-container-high rounded-xl text-xs font-bold text-on-surface cursor-pointer"
                     >
                       닫기
@@ -3246,7 +3279,7 @@ export default function MyDocumentsView({
                     <button
                         type="button"
                         onClick={newUploaderSmartMode ? runSmartUpload : runNewUploaderUpload}
-                        disabled={isQueueUploading || uploadQueue.every((i) => i.status !== "QUEUED")}
+                        disabled={isUploadInputLocked || activeUploadQueue.every((i) => i.status !== "QUEUED")}
                         className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-opacity-95 shadow-md shadow-primary/10 cursor-pointer flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       {isQueueUploading ? "업로드 중..." : newUploaderSmartMode ? "업로드 및 정리 시작" : "업로드 시작"}
