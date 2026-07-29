@@ -35,7 +35,7 @@ public class IngestCallbackService {
 
     @Transactional
     public void complete(Long fileIdx, IngestCompleteRequest request) {
-        File file = fileRepository.findForUpdate(fileIdx)
+        fileRepository.findForUpdate(fileIdx)
                 .orElseThrow(() -> new FileNotFoundException("파일을 찾을 수 없습니다: " + fileIdx));
         if (!request.success()) {
             log.info("RAG 실패 콜백 무시 (file {}): {} - 타임아웃 복구에 위임", fileIdx, request.errorMessage());
@@ -51,9 +51,11 @@ public class IngestCallbackService {
         if (outcome != ChunkSyncService.SyncOutcome.STORED) {
             return;
         }
-        file.setStatus(FileStatus.READY);
-        file.setErrorMessage(null);
-        file.setProcessingStage(null);
+        File managedFile = fileRepository.findForUpdate(fileIdx)
+                .orElseThrow(() -> new FileNotFoundException("파일을 찾을 수 없습니다: " + fileIdx));
+        managedFile.setStatus(FileStatus.READY);
+        managedFile.setErrorMessage(null);
+        managedFile.setProcessingStage(null);
         finalizeIngestJobAsSuccess(fileIdx);
     }
 

@@ -18,6 +18,8 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -64,6 +66,7 @@ class IngestCallbackServiceTest {
 
         ingestCallbackService.complete(7L, new IngestCompleteRequest(true, null, 2, null, List.of(chunk())));
 
+        verify(fileRepository, times(2)).findForUpdate(7L);
         assertThat(file.getStatus()).isEqualTo(FileStatus.READY);
         assertThat(file.getProcessingStage()).isNull();
     }
