@@ -1,17 +1,20 @@
-"""RAG 애플리케이션의 구조화 로그, 콘솔 로그 및 민감 정보 마스킹을 구성한다."""
+"""RAG 애플리케이션의 구조화 로그, 콘솔 로그 및 민감 정보 보호를 구성한다."""
 
 import json
 import logging
+import os
 import re
 import sys
 import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
-from typing import Any, Final, cast
+from typing import Any, Final, TextIO, cast
 
 from pythonjsonlogger.json import JsonFormatter
 
 from jipsa_rag.core.logging_settings import (
+    ConsoleColorMode,
+    ConsoleTimezone,
     LogFormat,
     get_logging_settings,
 )
@@ -31,9 +34,27 @@ _JSON_LOG_FIELDS = [
 _REDACTED_VALUE: Final[str] = "[REDACTED]"
 _REDACTED_PRESIGNED_URL: Final[str] = "[REDACTED_PRESIGNED_URL]"
 _REDACTED_DATABASE_DSN: Final[str] = "[REDACTED_DATABASE_DSN]"
-_OMITTED_VALUE: Final[str] = "[OMITTED]"
+_DROP_LOG_FIELD: Final[object] = object()
 
-# Console Formatter가 LogRecord의 기본 속성을 구조화 extra로 중복 출력하지 않도록
+# Console 출력은 사람이 빠르게 훑는 용도이므로 메시지와 개별 값을 합리적인 길이로
+# 제한한다. JSON 로그는 수집기에서 후처리하므로 마스킹 외의 임의 절단을 수행하지 않는다.
+_CONSOLE_MESSAGE_MAX_LENGTH: Final[int] = 1024
+_CONSOLE_VALUE_MAX_LENGTH: Final[int] = 256
+_CONSOLE_COMPONENT_MAX_LENGTH: Final[int] = 24
+_CONSOLE_SERVICE_MAX_LENGTH: Final[int] = 24
+
+# ANSI SGR, OSC 및 일반 CSI 제어 시퀀스를 제거한다. Uvicorn의 color_message나
+# 외부 라이브러리 메시지가 리다이렉션된 로그 파일에 Escape 문자열을 남기지 않게 한다.
+_ANSI_ESCAPE_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"(?:\x1B\][^\x07]*(?:\x07|\x1B\\))|"
+    r"(?:\x1B\[[0-?]*[ -/]*[@-~])"
+)
+
+# Console 한 줄 형식을 깨뜨릴 수 있는 제어 문자는 사람이 확인 가능한 이스케이프
+# 문자열로 변환한다. 예외 Traceback은 별도 줄로 출력하므로 이 변환에서 제외한다.
+_CONTROL_CHARACTER_PATTERN: Final[re.Pattern[str]] = re.compile(r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]")
+
+# Console Formatter가 LogRecord 기본 속성을 구조화 extra로 중복 출력하지 않도록
 # Python logging이 기본적으로 생성하는 필드 집합을 한 번만 계산한다.
 _STANDARD_LOG_RECORD_FIELDS: Final[frozenset[str]] = frozenset(
     {
@@ -42,17 +63,16 @@ _STANDARD_LOG_RECORD_FIELDS: Final[frozenset[str]] = frozenset(
         "message",
         "service",
         "environment",
+        "log_schema_version",
     }
 )
 
-# 사람이 콘솔에서 자주 확인하는 진단 필드는 고정 순서로 앞에 배치한다.
-# 나머지 사용자 정의 extra 필드는 이름순으로 이어 붙여 출력 결과를 결정적으로 유지한다.
+# 사람이 가장 자주 확인하는 진단 필드를 의미 순서대로 배치한다. 나머지 사용자 정의
+# 필드는 이름순으로 이어 붙여 동일 입력이 항상 동일한 출력 순서를 갖게 한다.
 _CONSOLE_PREFERRED_EXTRA_FIELDS: Final[tuple[str, ...]] = (
     "method",
     "path",
     "status_code",
-    "stage",
-    "callback_type",
     "success",
     "users_idx",
     "user_idx",
@@ -71,17 +91,105 @@ _CONSOLE_PREFERRED_EXTRA_FIELDS: Final[tuple[str, ...]] = (
     "parser_type",
     "parser_version",
     "ocr_enabled",
+    "ocr_max_concurrency",
+    "database_check_on_startup",
+    "callback_type",
     "duration_ms",
     "total_duration_ms",
     "slow_stage_threshold_ms",
-    "is_slow_stage",
     "response_started",
     "error_code",
 )
 
+# Console에서는 이벤트명으로 이미 식별 가능한 내부 필드와 서드파티 Formatter 전용
+# 필드를 제외한다. JSON 로그에는 stage가 유지되지만 color_message는 완전히 제거한다.
+_CONSOLE_IGNORED_EXTRA_FIELDS: Final[frozenset[str]] = frozenset(
+    {
+        "color_message",
+        "taskName",
+        "stage",
+        "is_slow_stage",
+    }
+)
+
+# Console에서 길이가 긴 내부 필드명을 짧고 명확한 진단 키로 바꾼다. JSON 출력은
+# 외부 수집 계약을 보존하기 위해 원래 필드명을 그대로 유지한다.
+_CONSOLE_FIELD_ALIASES: Final[Mapping[str, str]] = {
+    "status_code": "status",
+    "users_idx": "user",
+    "user_idx": "user",
+    "file_idx": "file",
+    "folder_idx": "folder",
+    "file_type": "type",
+    "size_bytes": "size",
+    "structure_unit_count": "units",
+    "text_unit_count": "text_units",
+    "chunk_count": "chunks",
+    "batch_count": "batches",
+    "embedding_dim": "dim",
+    "rag_document_idx": "document",
+    "rag_index_run_idx": "run",
+    "index_version": "index_ver",
+    "parser_type": "parser",
+    "parser_version": "parser_ver",
+    "ocr_enabled": "ocr",
+    "ocr_max_concurrency": "ocr_workers",
+    "database_check_on_startup": "db_check",
+    "callback_type": "callback",
+    "duration_ms": "duration",
+    "total_duration_ms": "total",
+    "slow_stage_threshold_ms": "slow_threshold",
+    "response_started": "response_started",
+    "error_code": "error",
+}
+
+# 긴 Python logger 경로를 로컬 운영자가 즉시 이해할 수 있는 컴포넌트로 축약한다.
+# 가장 구체적인 prefix를 먼저 배치하여 하위 모듈이 상위 규칙에 먼저 매칭되지 않게 한다.
+_COMPONENT_PREFIXES: Final[tuple[tuple[str, str], ...]] = (
+    ("jipsa_rag.api.v1.endpoints.file_processing", "file-processing"),
+    ("jipsa_rag.api.ingest", "ingest"),
+    ("jipsa_rag.core.middleware", "http"),
+    ("jipsa_rag.infrastructure.ocr", "ocr"),
+    ("jipsa_rag.infrastructure.embedding", "embedding"),
+    ("jipsa_rag.infrastructure.indexing", "indexing"),
+    ("jipsa_rag.infrastructure.database", "database"),
+    ("jipsa_rag.services", "services"),
+    ("jipsa_rag.main", "app"),
+    ("uvicorn", "uvicorn"),
+    ("httpx2", "http-client"),
+    ("httpcore2", "http-client"),
+    ("httpx", "http-client"),
+    ("httpcore", "http-client"),
+    ("qdrant_client", "qdrant"),
+    ("py.warnings", "python"),
+)
+
+# 호출부가 event를 제공하지 않는 서드파티 로그에도 의미 있는 안정적 이벤트명을
+# 부여한다. 애플리케이션 로그는 호출부가 지정한 구체 이벤트를 우선 사용한다.
+_DEFAULT_EVENT_BY_COMPONENT: Final[Mapping[str, str]] = {
+    "uvicorn": "server.lifecycle",
+    "http-client": "http.client",
+    "qdrant": "vector.client",
+    "python": "python.warning",
+}
+
+# 외부 HTTP 라이브러리의 정상 요청 INFO 로그는 단계별 애플리케이션 로그와 중복된다.
+# 기본 WARNING 정책을 적용하되 환경 변수로 필요 시 상세 로그를 다시 활성화할 수 있다.
+_THIRD_PARTY_LOGGERS: Final[tuple[str, ...]] = (
+    "httpx",
+    "httpcore",
+    "httpx2",
+    "httpcore2",
+    "qdrant_client",
+    "urllib3",
+    "asyncio",
+    "watchfiles",
+    "multipart",
+    "python_multipart",
+)
+
 # 로그에 기록할 필요가 없고 크기·개인정보·모델 정보 노출 위험이 큰 원문 필드다.
-# 호출부에서 실수로 extra에 전달하더라도 Formatter 경계에서 값 전체를 제거한다.
-# content_hash, token_count, chunk_count처럼 진단에 필요한 요약 필드는 포함하지 않는다.
+# 호출부에서 실수로 extra에 전달해도 Formatter 경계에서 필드 자체를 제거한다.
 _PROHIBITED_LOG_FIELD_NAMES: Final[frozenset[str]] = frozenset(
     {
         "content",
@@ -109,12 +217,8 @@ _PROHIBITED_LOG_FIELD_NAMES: Final[frozenset[str]] = frozenset(
     }
 )
 
-# 구조화 로그의 필드명이 아래 값과 일치하면
-# 값의 데이터 타입과 관계없이 필드 전체를 마스킹한다.
-#
-# DB 접속 정보는 비밀번호뿐 아니라 내부 호스트, 포트,
-# 데이터베이스명과 계정명도 운영 인프라 정보를 노출할 수 있으므로
-# 모두 민감 정보로 분류한다.
+# 구조화 로그의 필드명이 아래 값과 일치하면 데이터 타입과 관계없이 값을 마스킹한다.
+# DB 접속 정보는 비밀번호뿐 아니라 내부 주소와 계정명도 운영 인프라 정보이므로 보호한다.
 _SENSITIVE_LOG_FIELD_NAMES: Final[frozenset[str]] = frozenset(
     {
         "authorization",
@@ -143,12 +247,8 @@ _SENSITIVE_LOG_FIELD_NAMES: Final[frozenset[str]] = frozenset(
     }
 )
 
-# 프로젝트에 새로운 인증 관련 로그 필드가 추가되더라도
-# 일반적인 민감 정보 접미사를 사용하면 별도 코드 수정 없이
-# 자동으로 마스킹할 수 있도록 한다.
-#
-# token_count처럼 단순히 "token" 문자열이 포함된 비민감 필드는
-# 아래 접미사와 정확히 일치하지 않으므로 마스킹하지 않는다.
+# 새로운 인증 관련 필드가 추가되어도 일반적인 접미사를 사용하면 자동으로 마스킹한다.
+# token_count처럼 단순히 token 문자열이 포함된 비민감 필드는 일치하지 않는다.
 _SENSITIVE_LOG_FIELD_SUFFIXES: Final[tuple[str, ...]] = (
     "_token",
     "_password",
@@ -157,11 +257,14 @@ _SENSITIVE_LOG_FIELD_SUFFIXES: Final[tuple[str, ...]] = (
     "_api_key",
 )
 
-# AWS Presigned URL은 쿼리 문자열에 서명, 자격 증명,
-# 만료 시간과 같은 민감 정보가 포함된다.
-#
-# URL 일부만 남기는 경우 S3 객체 경로와 서명 파라미터가
-# 함께 노출될 수 있으므로 URL 전체를 고정된 마스킹 문자열로 교체한다.
+# Formatter 전용 중복 필드는 JSON에서도 제거한다. color_message는 Uvicorn의 실제
+# message와 같은 내용을 ANSI 코드가 포함된 템플릿으로 반복하므로 저장 가치가 없다.
+_NOISY_LOG_FIELD_NAMES: Final[frozenset[str]] = frozenset(
+    {
+        "color_message",
+    }
+)
+
 _PRESIGNED_URL_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"https?://[^\s\"'<>]*[?&](?:"
     r"x-amz-[a-z0-9-]+|awsaccesskeyid|signature"
@@ -169,11 +272,6 @@ _PRESIGNED_URL_PATTERN: Final[re.Pattern[str]] = re.compile(
     re.IGNORECASE,
 )
 
-# SQLAlchemy의 비동기 드라이버가 포함된 URL도 처리할 수 있도록
-# mysql+asyncmy:// 등의 스킴 변형을 허용한다.
-#
-# MySQL뿐 아니라 일반적으로 사용될 수 있는 MariaDB,
-# PostgreSQL, Redis 및 MongoDB 접속 문자열도 함께 차단한다.
 _DATABASE_DSN_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"\b(?:mysql(?:\+[a-z0-9_]+)?|mariadb(?:\+[a-z0-9_]+)?|"
     r"postgres(?:ql)?(?:\+[a-z0-9_]+)?|redis(?:\+ssl)?|"
@@ -181,18 +279,11 @@ _DATABASE_DSN_PATTERN: Final[re.Pattern[str]] = re.compile(
     re.IGNORECASE,
 )
 
-# HTTP Authorization 헤더나 일반 문자열 로그에 포함된
-# Bearer 인증 토큰 전체를 마스킹한다.
 _BEARER_TOKEN_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"\bBearer\s+[A-Za-z0-9._~+/=-]+",
     re.IGNORECASE,
 )
 
-# 일반 문자열 로그에서 key=value, key: value 또는 JSON 형태로
-# 기록된 민감값을 찾아 키와 구분자는 유지하고 값만 마스킹한다.
-#
-# 구조화 extra 필드뿐 아니라 예외 메시지나 서드파티 로그에서
-# 문자열로 전달된 민감 정보도 처리하기 위한 방어 계층이다.
 _SENSITIVE_ASSIGNMENT_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(?P<prefix>[\"']?(?:"
     r"x-internal-token|internal[_-]token|rag[_-]ingest[_-]token|"
@@ -206,15 +297,29 @@ _SENSITIVE_ASSIGNMENT_PATTERN: Final[re.Pattern[str]] = re.compile(
     re.IGNORECASE,
 )
 
-# Presigned URL 전체 패턴을 찾지 못한 비정형 문자열에서도
-# 대표적인 AWS 서명 및 인증 쿼리 파라미터 값이 남지 않도록
-# 각 쿼리 파라미터 값을 추가로 마스킹한다.
 _SENSITIVE_QUERY_PARAMETER_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(?P<prefix>(?:[?&])(?:"
     r"x-amz-[a-z0-9-]+|awsaccesskeyid|signature|token|api_key|password"
     r")=)(?P<value>[^&#\s\"'<>]+)",
     re.IGNORECASE,
 )
+
+_ANSI_RESET: Final[str] = "\x1b[0m"
+_ANSI_DIM: Final[str] = "\x1b[2m"
+_ANSI_CYAN: Final[str] = "\x1b[36m"
+_ANSI_BLUE: Final[str] = "\x1b[34m"
+_ANSI_GREEN: Final[str] = "\x1b[32m"
+_ANSI_YELLOW: Final[str] = "\x1b[33m"
+_ANSI_RED: Final[str] = "\x1b[31m"
+_ANSI_BOLD_RED: Final[str] = "\x1b[1;31m"
+
+_LEVEL_COLOR: Final[Mapping[int, str]] = {
+    logging.DEBUG: _ANSI_CYAN,
+    logging.INFO: _ANSI_GREEN,
+    logging.WARNING: _ANSI_YELLOW,
+    logging.ERROR: _ANSI_RED,
+    logging.CRITICAL: _ANSI_BOLD_RED,
+}
 
 
 class SensitiveDataJsonFormatter(JsonFormatter):
@@ -224,22 +329,10 @@ class SensitiveDataJsonFormatter(JsonFormatter):
         self,
         log_data: dict[str, Any],
     ) -> dict[str, Any]:
-        """구조화 로그의 모든 중첩 필드와 문자열을 재귀적으로 마스킹한다.
-
-        python-json-logger가 구성한 로그 데이터에는 message뿐 아니라
-        extra로 전달한 중첩 dict, list 및 tuple 값도 포함될 수 있다.
-
-        따라서 최상위 필드만 검사하지 않고 전체 자료 구조를 재귀적으로
-        순회하여 민감한 필드명과 문자열 값을 안전한 값으로 교체한다.
-        """
+        """구조화 로그의 모든 중첩 필드와 문자열을 재귀적으로 정제한다."""
 
         sanitized_log_data = _sanitize_log_value(log_data)
 
-        # 최상위 입력은 JsonFormatter가 생성한 dict이므로 정상적으로는
-        # 항상 dict가 반환된다.
-        #
-        # 방어적으로 반환 타입을 확인하여 향후 마스킹 함수 수정으로
-        # 최상위 JSON 로그 구조가 손상되는 회귀를 차단한다.
         if not isinstance(sanitized_log_data, dict):
             raise TypeError("Sanitized log data must remain a dictionary.")
 
@@ -248,51 +341,46 @@ class SensitiveDataJsonFormatter(JsonFormatter):
             sanitized_log_data,
         )
 
+    def formatTime(
+        self,
+        record: logging.LogRecord,
+        datefmt: str | None = None,
+    ) -> str:
+        """JSON 로그 시각을 밀리초 정밀도의 UTC RFC 3339로 출력한다."""
+
+        del datefmt
+
+        return (
+            datetime.fromtimestamp(
+                record.created,
+                tz=UTC,
+            )
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z")
+        )
+
     def formatException(
         self,
         ei: Any,
     ) -> str:
-        """Traceback과 예외 메시지를 출력하기 전에 민감 정보를 제거한다.
-
-        표준 logging.Formatter.formatException()의 반환 계약은 str이다.
-
-        그러나 python-json-logger의 JsonFormatter 타입 선언에서는
-        구성에 따라 str 또는 list[str]을 반환할 수 있는 것으로
-        정의되어 있다.
-
-        따라서 상위 Formatter가 list[str]을 반환하면 각 문자열을
-        줄바꿈으로 연결하여 하나의 Traceback 문자열로 정규화한다.
-
-        최종적으로 항상 str을 반환하므로 logging.Formatter의
-        메서드 반환 계약과 호환되며, _redact_sensitive_text()에도
-        올바른 타입만 전달된다.
-        """
+        """Traceback과 예외 메시지를 출력하기 전에 민감 정보를 제거한다."""
 
         formatted_exception = super().formatException(ei)
 
-        # python-json-logger가 Traceback을 줄 단위 문자열 목록으로
-        # 반환하는 경우에도 최종 JSON 로그의 exc_info는 일관되게
-        # 단일 문자열이 되도록 줄바꿈으로 연결한다.
         if isinstance(formatted_exception, list):
-            formatted_exception_text = "\n".join(
-                formatted_exception,
-            )
+            formatted_exception_text = "\n".join(formatted_exception)
         else:
             formatted_exception_text = formatted_exception
 
-        # 반환값을 str로 정규화한 후 Traceback 전체에 포함될 수 있는
-        # Presigned URL, 내부 인증 토큰 및 DB 접속 정보를 제거한다.
-        return _redact_sensitive_text(
-            formatted_exception_text,
-        )
+        return _redact_sensitive_text(formatted_exception_text)
 
 
 class SensitiveDataConsoleFormatter(logging.Formatter):
-    """PowerShell에서 읽기 쉬운 한 줄 로그를 만들고 민감 정보를 제거한다.
+    """PowerShell에서 빠르게 훑을 수 있는 저소음 단일 행 로그를 만든다.
 
-    각 로그는 timestamp, level, service, environment, event, request_id,
-    logger를 고정 순서로 출력한다. 이후 메시지와 구조화 extra를 이어 붙이므로
-    JSON 모드와 동일한 추적 정보를 유지하면서도 사람이 빠르게 훑을 수 있다.
+    고정 헤더는 로컬 시각, 레벨, 서비스/환경, 컴포넌트, 이벤트와 Request ID를
+    표시한다. 뒤에는 메시지와 핵심 진단 지표만 붙인다. JSON과 같은 추적 의미를
+    유지하면서 긴 logger 경로, 중복 필드와 서드파티 color_message는 제거한다.
     """
 
     def __init__(
@@ -300,88 +388,78 @@ class SensitiveDataConsoleFormatter(logging.Formatter):
         *,
         service_name: str,
         environment: str,
+        timezone: ConsoleTimezone = "local",
+        request_id_length: int = 8,
+        use_color: bool = False,
     ) -> None:
-        """모든 콘솔 로그에 포함할 서비스명과 실행 환경을 저장한다."""
+        """Console 출력에 필요한 안정적인 표시 정책을 저장한다."""
 
         super().__init__()
-        self._service_name = _redact_sensitive_text(service_name)
-        self._environment = _redact_sensitive_text(environment)
+        self._service_label = _build_service_label(service_name)
+        self._environment = _truncate_text(
+            _single_line_text(_redact_sensitive_text(environment.strip().lower())),
+            _CONSOLE_SERVICE_MAX_LENGTH,
+        )
+        self._timezone = timezone
+        self._request_id_length = request_id_length
+        self._use_color = use_color
 
     def format(self, record: logging.LogRecord) -> str:
-        """로그 레코드를 결정적인 단일 행 콘솔 문자열로 변환한다."""
+        """로그 레코드를 결정적인 단일 행 Console 문자열로 변환한다."""
 
-        timestamp = (
-            datetime.fromtimestamp(
-                record.created,
-                tz=UTC,
-            )
-            .isoformat(
-                timespec="milliseconds",
-            )
-            .replace(
-                "+00:00",
-                "Z",
-            )
+        timestamp = _format_console_timestamp(
+            record.created,
+            timezone=self._timezone,
         )
-
-        event = _format_console_value(
-            _sanitize_log_value(
-                getattr(
-                    record,
-                    "event",
-                    "-",
-                ),
-                field_name="event",
-            )
+        component = _resolve_component_name(record.name)
+        event_value = record.__dict__.get(
+            "event",
+            _resolve_default_event(record.name),
         )
-        request_id = _format_console_value(
-            _sanitize_log_value(
-                getattr(
-                    record,
-                    "request_id",
-                    None,
-                ),
-                field_name="request_id",
-            )
+        event = _format_console_value(event_value)
+        request_id = _format_request_id(
+            record.__dict__.get("request_id"),
+            length=self._request_id_length,
         )
-        logger_name = _format_console_value(
-            _sanitize_log_value(
-                record.name,
-                field_name="logger",
-            )
-        )
-        message = _redact_sensitive_text(
-            record.getMessage(),
+        message = _truncate_text(
+            _single_line_text(_redact_sensitive_text(record.getMessage())),
+            _CONSOLE_MESSAGE_MAX_LENGTH,
         )
 
-        header_parts = [
-            timestamp,
+        timestamp_token = self._colorize(timestamp, _ANSI_DIM)
+        level_token = self._colorize(
             f"{record.levelname:<8}",
-            f"service={_format_console_value(self._service_name)}",
-            f"environment={_format_console_value(self._environment)}",
-            f"event={event}",
-            f"request_id={request_id}",
-            f"logger={logger_name}",
-        ]
+            _LEVEL_COLOR.get(record.levelno, ""),
+        )
+        scope_token = self._colorize(
+            f"[{self._service_label}/{self._environment}]",
+            _ANSI_DIM,
+        )
+        component_token = self._colorize(
+            f"[{component}]",
+            _ANSI_BLUE,
+        )
+        request_token = self._colorize(
+            f"req={request_id}",
+            _ANSI_CYAN,
+        )
 
-        formatted_log = " | ".join(
-            [
-                *header_parts,
-                message,
-            ]
+        formatted_log = (
+            f"{timestamp_token} {level_token} {scope_token} {component_token} "
+            f"{event} {request_token} | {message}"
         )
 
         extra_fields = _extract_console_extra_fields(record)
 
         if extra_fields:
             formatted_extra = " ".join(
-                f"{field_name}={_format_console_value(field_value)}"
+                _format_console_extra_field(field_name, field_value)
                 for field_name, field_value in extra_fields
             )
             formatted_log = f"{formatted_log} | {formatted_extra}"
 
-        # 예외 Stack Trace는 한 줄 로그 헤더 아래에만 추가한다.
-        # 같은 예외를 미들웨어와 전역 예외 처리기가 중복 기록하지 않는 기존 정책은 유지한다.
+        # Traceback과 stack_info는 가독성을 위해 헤더 아래에 여러 줄로 유지한다.
+        # 민감 정보와 ANSI 코드는 제거하지만 Python의 원래 예외 구조는 보존한다.
         if record.exc_info is not None:
             formatted_log = f"{formatted_log}\n{self.formatException(record.exc_info)}"
 
@@ -394,18 +472,28 @@ class SensitiveDataConsoleFormatter(logging.Formatter):
         self,
         ei: Any,
     ) -> str:
-        """콘솔 Traceback에 포함된 URL, 토큰 및 DB 접속 정보를 마스킹한다."""
+        """콘솔 Traceback에 포함된 URL, 토큰, DSN 및 ANSI 코드를 제거한다."""
 
-        return _redact_sensitive_text(
-            super().formatException(ei),
-        )
+        return _redact_sensitive_text(super().formatException(ei))
+
+    def _colorize(
+        self,
+        value: str,
+        color_code: str,
+    ) -> str:
+        """색상 사용이 활성화된 경우에만 최소 범위에 ANSI 코드를 적용한다."""
+
+        if not self._use_color or not color_code:
+            return value
+
+        return f"{color_code}{value}{_ANSI_RESET}"
 
 
 class RequestContextFilter(logging.Filter):
-    """모든 로그 레코드에 요청 식별자와 기본 이벤트명을 추가한다."""
+    """모든 로그 레코드에 요청 식별자와 안정적인 기본 이벤트명을 추가한다."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """호출부에서 생략한 공통 추적 필드를 안전한 기본값으로 보완한다."""
+        """호출부에서 생략한 공통 필드를 보완하고 중복 color_message를 제거한다."""
 
         record.__dict__.setdefault(
             "request_id",
@@ -413,8 +501,12 @@ class RequestContextFilter(logging.Filter):
         )
         record.__dict__.setdefault(
             "event",
-            "log_message",
+            _resolve_default_event(record.name),
         )
+
+        # Uvicorn은 사람이 읽는 message와 ANSI 템플릿 color_message를 함께 넣는다.
+        # 실제 메시지만 보존하여 Console과 JSON 양쪽에서 중복 및 Escape 노출을 막는다.
+        record.__dict__.pop("color_message", None)
 
         return True
 
@@ -426,23 +518,7 @@ def configure_logging(
     service_name: str,
     environment: str,
 ) -> None:
-    """애플리케이션 전역 로깅과 민감 정보 마스킹을 구성한다.
-
-    Args:
-        log_level:
-            출력할 최소 로그 레벨이다. ``None``이면 JIPSA_RAG_LOG_LEVEL을 사용한다.
-        log_format:
-            ``console`` 또는 ``json``이다. ``None``이면 JIPSA_RAG_LOG_FORMAT 또는
-            실행 환경별 기본값을 사용한다.
-        service_name:
-            모든 로그에 포함할 서비스 이름이다.
-        environment:
-            모든 로그에 포함할 실행 환경 이름이다.
-
-    Raises:
-        ValueError:
-            지원하지 않는 로그 레벨 또는 로그 형식이 전달된 경우 발생한다.
-    """
+    """애플리케이션 전역 로깅, 노이즈 제어와 민감 정보 보호를 구성한다."""
 
     logging_settings = get_logging_settings()
 
@@ -453,11 +529,21 @@ def configure_logging(
 
     resolved_log_level = _resolve_log_level(configured_log_level)
     resolved_log_format = _resolve_log_format(configured_log_format)
+    third_party_log_level = _resolve_log_level(
+        logging_settings.log_third_party_level,
+    )
 
+    use_color = _resolve_console_color_enabled(
+        mode=logging_settings.log_color,
+        stream=sys.stdout,
+    )
     formatter = _create_formatter(
         log_format=resolved_log_format,
         service_name=service_name,
         environment=environment,
+        console_timezone=logging_settings.log_console_timezone,
+        request_id_length=logging_settings.log_request_id_length,
+        use_color=use_color,
     )
 
     stream_handler = logging.StreamHandler(sys.stdout)
@@ -470,7 +556,11 @@ def configure_logging(
     root_logger.setLevel(resolved_log_level)
     root_logger.addHandler(stream_handler)
 
+    # Python warnings도 동일한 서비스·환경·Request ID 형식으로 수집한다.
+    logging.captureWarnings(True)
+
     _configure_uvicorn_loggers(resolved_log_level)
+    _configure_third_party_loggers(third_party_log_level)
 
 
 def _create_formatter(
@@ -478,16 +568,22 @@ def _create_formatter(
     log_format: LogFormat,
     service_name: str,
     environment: str,
+    console_timezone: ConsoleTimezone = "local",
+    request_id_length: int = 8,
+    use_color: bool = False,
 ) -> logging.Formatter:
-    """선택한 출력 형식에 대응하는 민감 정보 보호 Formatter를 생성한다."""
+    """선택한 형식에 대응하는 민감 정보 보호 Formatter를 생성한다."""
 
     if log_format == "console":
         return SensitiveDataConsoleFormatter(
             service_name=service_name,
             environment=environment,
+            timezone=console_timezone,
+            request_id_length=request_id_length,
+            use_color=use_color,
         )
 
-    formatter = SensitiveDataJsonFormatter(
+    return SensitiveDataJsonFormatter(
         _JSON_LOG_FIELDS,
         rename_fields={
             "asctime": "timestamp",
@@ -495,23 +591,20 @@ def _create_formatter(
             "name": "logger",
         },
         static_fields={
+            "log_schema_version": 1,
             "service": service_name,
             "environment": environment,
         },
     )
 
-    # 서버 실행 지역과 관계없이 로그 시각을 UTC로 통일한다.
-    formatter.converter = time.gmtime
-
-    return formatter
-
 
 def _extract_console_extra_fields(
     record: logging.LogRecord,
 ) -> tuple[tuple[str, object], ...]:
-    """Console Formatter에 표시할 안전한 구조화 extra 필드를 정렬해 반환한다."""
+    """Console에 표시할 안전하고 의미 있는 extra 필드를 정렬해 반환한다."""
 
     sanitized_extra: dict[str, object] = {}
+    is_slow_stage = record.__dict__.get("is_slow_stage") is True
 
     for field_name, field_value in record.__dict__.items():
         if field_name in _STANDARD_LOG_RECORD_FIELDS or field_name in {
@@ -520,10 +613,22 @@ def _extract_console_extra_fields(
         }:
             continue
 
-        sanitized_extra[field_name] = _sanitize_log_value(
+        if field_name in _CONSOLE_IGNORED_EXTRA_FIELDS:
+            continue
+
+        # 임계값은 실제 느린 단계에서만 유용하다. 정상 단계마다 같은 값을 반복하지 않는다.
+        if field_name == "slow_stage_threshold_ms" and not is_slow_stage:
+            continue
+
+        sanitized_value = _sanitize_log_value(
             field_value,
             field_name=field_name,
         )
+
+        if sanitized_value is _DROP_LOG_FIELD:
+            continue
+
+        sanitized_extra[field_name] = sanitized_value
 
     ordered_extra: list[tuple[str, object]] = []
 
@@ -546,8 +651,30 @@ def _extract_console_extra_fields(
     return tuple(ordered_extra)
 
 
+def _format_console_extra_field(
+    field_name: str,
+    field_value: object,
+) -> str:
+    """Console extra 필드명을 축약하고 단위를 사람이 읽기 쉽게 변환한다."""
+
+    display_name = _CONSOLE_FIELD_ALIASES.get(field_name, field_name)
+
+    if field_name in {
+        "duration_ms",
+        "total_duration_ms",
+        "slow_stage_threshold_ms",
+    } and isinstance(field_value, int | float):
+        display_value = _format_duration_ms(float(field_value))
+    elif field_name == "size_bytes" and isinstance(field_value, int):
+        display_value = _format_byte_size(field_value)
+    else:
+        display_value = _format_console_value(field_value)
+
+    return f"{display_name}={display_value}"
+
+
 def _format_console_value(value: object) -> str:
-    """구조화 값을 공백과 구분자가 모호하지 않은 콘솔 문자열로 변환한다."""
+    """구조화 값을 공백과 구분자가 모호하지 않은 안전한 문자열로 변환한다."""
 
     if value is None:
         return "-"
@@ -556,35 +683,167 @@ def _format_console_value(value: object) -> str:
         return str(value).lower()
 
     if isinstance(value, str):
-        if not value:
+        normalized_value = _truncate_text(
+            _single_line_text(_redact_sensitive_text(value)),
+            _CONSOLE_VALUE_MAX_LENGTH,
+        )
+
+        if not normalized_value:
             return '""'
 
-        if any(character.isspace() or character in {"|", "=", '"'} for character in value):
+        if any(
+            character.isspace() or character in {"|", "=", '"'} for character in normalized_value
+        ):
             return json.dumps(
-                value,
+                normalized_value,
                 ensure_ascii=False,
             )
 
-        return value
+        return normalized_value
 
-    if isinstance(
-        value,
-        (
-            Mapping,
-            list,
-            tuple,
-        ),
-    ):
-        return json.dumps(
+    if isinstance(value, Mapping | list | tuple):
+        serialized_value = json.dumps(
             value,
             ensure_ascii=False,
             sort_keys=True,
             default=str,
+            separators=(",", ":"),
+        )
+        return _truncate_text(
+            _single_line_text(_redact_sensitive_text(serialized_value)),
+            _CONSOLE_VALUE_MAX_LENGTH,
         )
 
-    return _redact_sensitive_text(
-        str(value),
+    return _truncate_text(
+        _single_line_text(_redact_sensitive_text(str(value))),
+        _CONSOLE_VALUE_MAX_LENGTH,
     )
+
+
+def _format_console_timestamp(
+    created: float,
+    *,
+    timezone: ConsoleTimezone,
+) -> str:
+    """Console 시각을 밀리초와 명시적 UTC Offset이 포함된 형태로 반환한다."""
+
+    if timezone == "utc":
+        timestamp = datetime.fromtimestamp(created, tz=UTC)
+    else:
+        timestamp = datetime.fromtimestamp(created, tz=UTC).astimezone()
+
+    return timestamp.isoformat(
+        sep=" ",
+        timespec="milliseconds",
+    )
+
+
+def _format_request_id(
+    value: object,
+    *,
+    length: int,
+) -> str:
+    """Console Request ID를 추적 가능한 고정 길이 prefix로 축약한다."""
+
+    if value is None:
+        return "-"
+
+    normalized_value = _single_line_text(
+        _redact_sensitive_text(str(value).strip()),
+    )
+
+    if not normalized_value:
+        return "-"
+
+    return normalized_value[:length]
+
+
+def _format_duration_ms(duration_ms: float) -> str:
+    """밀리초 값을 크기에 따라 us, ms 또는 s 단위로 읽기 쉽게 표시한다."""
+
+    if duration_ms < 1:
+        return f"{duration_ms * 1000:.0f}us"
+
+    if duration_ms < 1000:
+        return f"{duration_ms:.3f}".rstrip("0").rstrip(".") + "ms"
+
+    return f"{duration_ms / 1000:.3f}".rstrip("0").rstrip(".") + "s"
+
+
+def _format_byte_size(size_bytes: int) -> str:
+    """바이트 크기를 IEC 단위로 표시하되 정수 바이트 값의 의미를 보존한다."""
+
+    if size_bytes < 1024:
+        return f"{size_bytes}B"
+
+    units = (
+        "KiB",
+        "MiB",
+        "GiB",
+        "TiB",
+    )
+    size = float(size_bytes)
+
+    for unit in units:
+        size /= 1024
+        if size < 1024 or unit == units[-1]:
+            return f"{size:.2f}".rstrip("0").rstrip(".") + unit
+
+    return f"{size_bytes}B"
+
+
+def _build_service_label(service_name: str) -> str:
+    """사람용 서비스명을 Console에서 반복 가능한 짧은 slug로 변환한다."""
+
+    normalized_name = _redact_sensitive_text(service_name).strip().lower()
+    normalized_name = re.sub(r"\bservice\b", "", normalized_name)
+    normalized_name = re.sub(r"[^a-z0-9가-힣]+", "-", normalized_name)
+    normalized_name = normalized_name.strip("-") or "service"
+
+    return _truncate_text(
+        normalized_name,
+        _CONSOLE_SERVICE_MAX_LENGTH,
+    )
+
+
+def _resolve_component_name(logger_name: str) -> str:
+    """긴 logger 이름을 안정적인 로컬 진단 컴포넌트명으로 변환한다."""
+
+    for prefix, component in _COMPONENT_PREFIXES:
+        if logger_name == prefix or logger_name.startswith(f"{prefix}."):
+            return component
+
+    fallback_component = logger_name.rsplit(".", maxsplit=1)[-1]
+    return _truncate_text(
+        _single_line_text(_redact_sensitive_text(fallback_component)),
+        _CONSOLE_COMPONENT_MAX_LENGTH,
+    )
+
+
+def _resolve_default_event(logger_name: str) -> str:
+    """명시 이벤트가 없는 로그에 logger 컴포넌트 기반 기본 이벤트를 부여한다."""
+
+    component = _resolve_component_name(logger_name)
+    return _DEFAULT_EVENT_BY_COMPONENT.get(component, "log")
+
+
+def _resolve_console_color_enabled(
+    *,
+    mode: ConsoleColorMode,
+    stream: TextIO,
+) -> bool:
+    """NO_COLOR, 명시 설정과 TTY 여부를 적용하여 ANSI 색상 사용을 결정한다."""
+
+    if os.getenv("NO_COLOR") is not None:
+        return False
+
+    if mode == "always":
+        return True
+
+    if mode == "never":
+        return False
+
+    return stream.isatty()
 
 
 def _normalize_log_field_name(field_name: str) -> str:
@@ -599,9 +858,7 @@ def _is_sensitive_log_field(field_name: str) -> bool:
     normalized_field_name = _normalize_log_field_name(field_name)
 
     return normalized_field_name in _SENSITIVE_LOG_FIELD_NAMES or (
-        normalized_field_name.endswith(
-            _SENSITIVE_LOG_FIELD_SUFFIXES,
-        )
+        normalized_field_name.endswith(_SENSITIVE_LOG_FIELD_SUFFIXES)
     )
 
 
@@ -611,18 +868,17 @@ def _is_prohibited_log_field(field_name: str) -> bool:
     return _normalize_log_field_name(field_name) in _PROHIBITED_LOG_FIELD_NAMES
 
 
-def _replace_sensitive_assignment(
-    match: re.Match[str],
-) -> str:
+def _is_noisy_log_field(field_name: str) -> bool:
+    """실제 메시지와 중복되는 Formatter 전용 필드인지 확인한다."""
+
+    return _normalize_log_field_name(field_name) in _NOISY_LOG_FIELD_NAMES
+
+
+def _replace_sensitive_assignment(match: re.Match[str]) -> str:
     """민감한 key-value 문자열에서 키와 구분자는 보존하고 값만 교체한다."""
 
     original_value = match.group("value")
 
-    # JSON 또는 일반 문자열에서 따옴표로 감싼 값은
-    # 기존 따옴표를 유지한 상태로 내부 값만 교체한다.
-    #
-    # 이를 통해 문자열 로그가 JSON 조각을 포함하고 있더라도
-    # 마스킹 이후 원래의 표현 구조를 최대한 보존한다.
     if (
         len(original_value) >= 2
         and original_value[0] == original_value[-1]
@@ -636,20 +892,12 @@ def _replace_sensitive_assignment(
 
 
 def _redact_sensitive_text(value: str) -> str:
-    """자유 형식 문자열에서 Presigned URL, 토큰 및 DB DSN을 제거한다.
+    """자유 형식 문자열에서 ANSI, Presigned URL, 토큰 및 DB DSN을 제거한다."""
 
-    마스킹 순서는 넓은 범위의 값부터 세부적인 값 순서로 적용한다.
-
-    먼저 Presigned URL과 DB DSN 전체를 제거한 뒤,
-    key-value 형식의 민감값, Bearer 토큰 및 개별 쿼리 파라미터를 처리한다.
-
-    이 순서를 사용하면 URL 또는 DSN 일부만 마스킹되어
-    나머지 자격 증명이나 내부 주소가 남는 상황을 줄일 수 있다.
-    """
-
+    redacted_value = _ANSI_ESCAPE_PATTERN.sub("", value)
     redacted_value = _PRESIGNED_URL_PATTERN.sub(
         _REDACTED_PRESIGNED_URL,
-        value,
+        redacted_value,
     )
     redacted_value = _DATABASE_DSN_PATTERN.sub(
         _REDACTED_DATABASE_DSN,
@@ -671,56 +919,77 @@ def _redact_sensitive_text(value: str) -> str:
     return redacted_value
 
 
+def _single_line_text(value: str) -> str:
+    """로그 주입을 방지하도록 줄바꿈과 제어 문자를 가시적 문자열로 변환한다."""
+
+    normalized_value = value.replace("\r", "\\r").replace("\n", "\\n")
+    normalized_value = normalized_value.replace("\t", "\\t")
+
+    return _CONTROL_CHARACTER_PATTERN.sub(
+        lambda match: f"\\u{ord(match.group(0)):04x}",
+        normalized_value,
+    )
+
+
+def _truncate_text(value: str, max_length: int) -> str:
+    """과도한 로그 필드를 명확한 표식과 함께 결정적으로 절단한다."""
+
+    if len(value) <= max_length:
+        return value
+
+    suffix = "...<truncated>"
+    prefix_length = max(max_length - len(suffix), 0)
+    return f"{value[:prefix_length]}{suffix}"
+
+
 def _sanitize_log_value(
     value: object,
     *,
     field_name: str | None = None,
 ) -> object:
-    """중첩 로그 값을 순회하여 민감 필드와 문자열을 안전한 값으로 바꾼다."""
+    """중첩 로그 값을 순회하여 금지 필드를 제거하고 민감값을 마스킹한다."""
 
-    # 청크 원문, 사용자 질문, 임베딩 벡터, 요청·응답 본문처럼
-    # 로그에 저장할 필요가 없는 데이터는 민감도 판정과 관계없이 값 전체를 제거한다.
-    # 이 방어 계층은 호출부의 실수로 큰 payload가 전달된 경우에도 직렬화 비용과
-    # 정보 노출 위험을 제한한다.
-    if field_name is not None and _is_prohibited_log_field(field_name):
-        return _OMITTED_VALUE
+    if field_name is not None and (
+        _is_prohibited_log_field(field_name) or _is_noisy_log_field(field_name)
+    ):
+        return _DROP_LOG_FIELD
 
-    # 필드명이 민감 정보로 분류되면 값의 데이터 타입을 확인하지 않고
-    # 전체 값을 고정된 마스킹 문자열로 교체한다.
-    #
-    # 이를 통해 DB 포트처럼 정수로 기록되는 접속 정보도 노출하지 않는다.
     if field_name is not None and _is_sensitive_log_field(field_name):
         return _REDACTED_VALUE
 
-    # 일반 문자열 필드는 필드명이 비민감하더라도
-    # 값 안에 URL, 토큰 또는 DSN이 포함될 수 있으므로
-    # 자유 형식 문자열 마스킹을 추가로 수행한다.
     if isinstance(value, str):
         return _redact_sensitive_text(value)
 
-    # 구조화 extra에 중첩된 Mapping이 포함될 수 있으므로
-    # 모든 키와 값을 재귀적으로 순회한다.
     if isinstance(value, Mapping):
-        return {
-            key: _sanitize_log_value(
+        sanitized_mapping: dict[object, object] = {}
+
+        for key, nested_value in value.items():
+            sanitized_nested_value = _sanitize_log_value(
                 nested_value,
                 field_name=key if isinstance(key, str) else None,
             )
-            for key, nested_value in value.items()
-        }
 
-    # tuple은 원본 불변 자료 구조를 유지한 상태로
-    # 각 항목에 동일한 마스킹 규칙을 적용한다.
+            if sanitized_nested_value is _DROP_LOG_FIELD:
+                continue
+
+            sanitized_mapping[key] = sanitized_nested_value
+
+        return sanitized_mapping
+
     if isinstance(value, tuple):
-        return tuple(_sanitize_log_value(item) for item in value)
+        # tuple과 list 분기에서 서로 다른 지역 변수명을 사용한다.
+        # Mypy는 동일 함수 범위에서 처음 할당된 변수의 구체 타입을 유지하므로,
+        # 같은 변수명에 tuple과 list를 차례로 할당하면 호환되지 않는 재할당으로
+        # 판단한다. 컨테이너별 변수명을 분리해 원래 자료형 보존 계약을 명확히 한다.
+        sanitized_tuple_items = tuple(_sanitize_log_value(item) for item in value)
+        return tuple(item for item in sanitized_tuple_items if item is not _DROP_LOG_FIELD)
 
-    # list도 항목 순서를 유지한 상태로
-    # 각 항목에 동일한 마스킹 규칙을 적용한다.
     if isinstance(value, list):
-        return [_sanitize_log_value(item) for item in value]
+        # 입력이 list이면 결과도 list로 유지한다. 중첩 값은 재귀적으로
+        # 정제하며, 출력 금지 대상으로 판정된 항목만 결과에서 제외한다.
+        sanitized_list_items = [_sanitize_log_value(item) for item in value]
+        return [item for item in sanitized_list_items if item is not _DROP_LOG_FIELD]
 
-    # 정수, 실수, bool, None 등 비문자 스칼라 값은
-    # 민감 필드명에 속하지 않는 경우 원본 값을 유지한다.
     return value
 
 
@@ -756,12 +1025,7 @@ def log_stage_completed(
     slow_stage_threshold_ms: float | None = None,
     total_duration_field: bool = False,
 ) -> float:
-    """단계 완료 시간과 느린 단계 여부를 한 번의 구조화 로그로 기록한다.
-
-    INFO에서는 단계별 완료 요약 한 줄만 생성한다. 임계값을 넘은 정상 완료는
-    WARNING으로 승격하되 동일 이벤트를 중복 기록하지 않는다. 호출부는 원문,
-    벡터, 요청·응답 본문이 아닌 작은 스칼라 진단값만 ``extra``로 전달해야 한다.
-    """
+    """단계 완료 시간과 느린 단계 여부를 한 번의 구조화 로그로 기록한다."""
 
     duration_ms = calculate_duration_ms(started_at)
     threshold_ms = (
@@ -769,10 +1033,18 @@ def log_stage_completed(
         if slow_stage_threshold_ms is not None
         else get_logging_settings().slow_stage_threshold_ms
     )
+    log_level = resolve_stage_log_level(
+        duration_ms=duration_ms,
+        slow_stage_threshold_ms=threshold_ms,
+    )
+
+    # 현재 레벨에서 출력되지 않는 정상 단계는 extra dict를 만들지 않는다.
+    # WARNING 승격이 필요한 느린 단계는 애플리케이션 레벨이 WARNING이어도 보존된다.
+    if not logger.isEnabledFor(log_level):
+        return duration_ms
+
     is_slow_stage = duration_ms >= threshold_ms
     duration_field_name = "total_duration_ms" if total_duration_field else "duration_ms"
-
-    # 호출부가 event나 시간 필드를 덮어쓰지 못하도록 공통 필드는 마지막에 병합한다.
     log_extra = {
         **dict(extra),
         "event": event,
@@ -782,10 +1054,7 @@ def log_stage_completed(
     }
 
     logger.log(
-        resolve_stage_log_level(
-            duration_ms=duration_ms,
-            slow_stage_threshold_ms=threshold_ms,
-        ),
+        log_level,
         message,
         extra=log_extra,
     )
@@ -830,8 +1099,7 @@ def _resolve_log_level(log_level: str) -> int:
     resolved_log_level = logging.getLevelName(normalized_log_level)
 
     if not isinstance(resolved_log_level, int):
-        message = f"Unsupported log level: {log_level!r}"
-        raise ValueError(message)
+        raise ValueError(f"Unsupported log level: {log_level!r}")
 
     return resolved_log_level
 
@@ -847,12 +1115,11 @@ def _resolve_log_format(log_format: str) -> LogFormat:
     if normalized_log_format == "json":
         return "json"
 
-    message = f"Unsupported log format: {log_format!r}"
-    raise ValueError(message)
+    raise ValueError(f"Unsupported log format: {log_format!r}")
 
 
 def _configure_uvicorn_loggers(log_level: int) -> None:
-    """Uvicorn 로그가 애플리케이션에서 선택한 공통 포맷을 사용하도록 구성한다."""
+    """Uvicorn 로그가 애플리케이션 공통 포맷을 사용하도록 구성한다."""
 
     for logger_name in (
         "uvicorn",
@@ -863,9 +1130,19 @@ def _configure_uvicorn_loggers(log_level: int) -> None:
         uvicorn_logger.setLevel(log_level)
         uvicorn_logger.propagate = True
 
-    # HTTP 요청 로그는 RequestLoggingMiddleware에서 기록하므로
-    # Uvicorn access log를 비활성화하여 같은 요청이 중복 기록되지 않게 한다.
+    # HTTP 접근 로그는 RequestLoggingMiddleware에서 완료 중심으로 기록한다.
+    # Uvicorn access log를 비활성화하여 같은 요청이 두 번 출력되지 않게 한다.
     uvicorn_access_logger = logging.getLogger("uvicorn.access")
     uvicorn_access_logger.handlers.clear()
     uvicorn_access_logger.propagate = False
     uvicorn_access_logger.disabled = True
+
+
+def _configure_third_party_loggers(log_level: int) -> None:
+    """외부 라이브러리 정상 요청 노이즈를 별도 레벨로 제한한다."""
+
+    for logger_name in _THIRD_PARTY_LOGGERS:
+        third_party_logger = logging.getLogger(logger_name)
+        third_party_logger.handlers.clear()
+        third_party_logger.setLevel(log_level)
+        third_party_logger.propagate = True

@@ -234,16 +234,18 @@ def test_formatter_omits_content_question_vectors_and_http_bodies() -> None:
         assert prohibited_value not in raw_log
 
     payload = _read_single_json_log(stream)
-    assert payload["content"] == "[OMITTED]"
-    assert payload["question"] == "[OMITTED]"
-    assert payload["embedding_vector"] == "[OMITTED]"
-    assert payload["request_body"] == "[OMITTED]"
-    assert payload["response_body"] == "[OMITTED]"
+
+    # 금지 필드는 마스킹 문자열조차 남기지 않고 구조화 로그에서 완전히 제거한다.
+    assert "content" not in payload
+    assert "question" not in payload
+    assert "embedding_vector" not in payload
+    assert "request_body" not in payload
+    assert "response_body" not in payload
 
     context = payload["context"]
     assert isinstance(context, dict)
-    assert context["chunks"] == "[OMITTED]"
-    assert context["vectors"] == "[OMITTED]"
+    assert "chunks" not in context
+    assert "vectors" not in context
 
     # 요약 진단값은 제거하지 않아 장애 분석에 필요한 최소 관측성을 유지한다.
     assert payload["file_idx"] == 152
