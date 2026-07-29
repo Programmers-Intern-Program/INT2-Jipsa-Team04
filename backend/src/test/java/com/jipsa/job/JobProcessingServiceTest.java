@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 import java.util.Optional;
 
@@ -33,13 +35,16 @@ class JobProcessingServiceTest {
     private IngestManifestService ingestManifestService;
     @Mock
     private RagIngestClient ragIngestClient;
+    @Mock
+    private PlatformTransactionManager transactionManager;
 
     private JobProcessingService service;
 
     @BeforeEach
     void setUp() {
+        lenient().when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
         service = new JobProcessingService(jobRepository, fileRepository, fileMetadataRepository,
-                ingestManifestService, ragIngestClient, 1000L);
+                ingestManifestService, ragIngestClient, transactionManager, 1000L);
     }
 
     private Job runningJob(int attempts) {
