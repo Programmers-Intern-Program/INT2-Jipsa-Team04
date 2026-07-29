@@ -7,6 +7,9 @@ import com.jipsa.file.FileRepository;
 import com.jipsa.file.FileStatus;
 import com.jipsa.job.JobRepository;
 import com.jipsa.job.JobStatus;
+import com.jipsa.job.JobType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,6 +18,8 @@ import java.util.List;
 
 @Service
 public class IngestCallbackService {
+
+    private static final Logger log = LoggerFactory.getLogger(IngestCallbackService.class);
 
     private final FileRepository fileRepository;
     private final ChunkSyncService chunkSyncService;
@@ -30,39 +35,34 @@ public class IngestCallbackService {
 
     @Transactional
     public void complete(Long fileIdx, IngestCompleteRequest request) {
-        File file = fileRepository.findByIdAndDeletedAtIsNull(fileIdx)
+        File file = fileRepository.findForUpdate(fileIdx)
                 .orElseThrow(() -> new FileNotFoundException("파일을 찾을 수 없습니다: " + fileIdx));
-        if (request.success()) {
-            String inconsistency = validateSuccessPayload(request);
-            if (inconsistency != null) {
-                file.setStatus(FileStatus.FAILED);
-                file.setErrorMessage(inconsistency);
-                file.setProcessingStage(null);
-                finalizeJob(fileIdx, JobStatus.FAILED);
-                return;
-            }
-            ChunkSyncService.SyncOutcome outcome =
-                    chunkSyncService.sync(fileIdx, request.indexVersion(), request.chunks());
-            if (outcome != ChunkSyncService.SyncOutcome.STORED) {
-                return;
-            }
-            file.setStatus(FileStatus.READY);
-            file.setErrorMessage(null);
-            file.setProcessingStage(null);
-            finalizeJob(fileIdx, JobStatus.SUCCESS);
-        } else {
-            file.setStatus(FileStatus.FAILED);
-            file.setErrorMessage(request.errorMessage());
-            file.setProcessingStage(null);
-            finalizeJob(fileIdx, JobStatus.FAILED);
+        if (!request.success()) {
+            log.info("RAG 실패 콜백 무시 (file {}): {} - 타임아웃 복구에 위임", fileIdx, request.errorMessage());
+            return;
         }
+        String inconsistency = validateSuccessPayload(request);
+        if (inconsistency != null) {
+            log.warn("RAG 성공 콜백 페이로드 이상으로 무시 (file {}): {}", fileIdx, inconsistency);
+            return;
+        }
+        ChunkSyncService.SyncOutcome outcome =
+                chunkSyncService.sync(fileIdx, request.indexVersion(), request.chunks());
+        if (outcome != ChunkSyncService.SyncOutcome.STORED) {
+            return;
+        }
+        file.setStatus(FileStatus.READY);
+        file.setErrorMessage(null);
+        file.setProcessingStage(null);
+        finalizeIngestJobAsSuccess(fileIdx);
     }
 
-    private void finalizeJob(Long fileIdx, JobStatus terminal) {
-        jobRepository.findTopByFileIdAndJobStatusInOrderByCreatedAtDesc(
-                        fileIdx, List.of(JobStatus.RUNNING, JobStatus.WAITING_CALLBACK))
+    private void finalizeIngestJobAsSuccess(Long fileIdx) {
+        jobRepository.findTopByFileIdAndJobTypeOrderByCreatedAtDesc(fileIdx, JobType.INGEST)
+                .filter(job -> job.getJobStatus() != JobStatus.CANCELLED)
                 .ifPresent(job -> {
-                    job.setJobStatus(terminal);
+                    job.setJobStatus(JobStatus.SUCCESS);
+                    job.setErrorMessage(null);
                     job.setFinishedAt(LocalDateTime.now());
                 });
     }

@@ -155,7 +155,7 @@ class JobProcessingServiceTest {
         file.setStatus(FileStatus.PROCESSING);
         when(jobRepository.findTimedOutWaitingCallbackIds(any())).thenReturn(java.util.List.of(1L));
         when(jobRepository.findById(1L)).thenReturn(Optional.of(job));
-        when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(file));
+        when(fileRepository.findForUpdate(10L)).thenReturn(Optional.of(file));
 
         service.reconcileTimedOutCallbacks();
 
@@ -172,7 +172,7 @@ class JobProcessingServiceTest {
         file.setStatus(FileStatus.READY);
         when(jobRepository.findTimedOutWaitingCallbackIds(any())).thenReturn(java.util.List.of(1L));
         when(jobRepository.findById(1L)).thenReturn(Optional.of(job));
-        when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(file));
+        when(fileRepository.findForUpdate(10L)).thenReturn(Optional.of(file));
 
         service.reconcileTimedOutCallbacks();
 

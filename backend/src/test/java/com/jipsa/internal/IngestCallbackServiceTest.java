@@ -47,7 +47,7 @@ class IngestCallbackServiceTest {
     @Test
     void staleCallbackDoesNotMarkFileReady() {
         File file = processingFile();
-        when(fileRepository.findByIdAndDeletedAtIsNull(7L)).thenReturn(Optional.of(file));
+        when(fileRepository.findForUpdate(7L)).thenReturn(Optional.of(file));
         when(chunkSyncService.sync(anyLong(), any(), any())).thenReturn(ChunkSyncService.SyncOutcome.STALE);
 
         ingestCallbackService.complete(7L, new IngestCompleteRequest(true, null, 1, null, List.of(chunk())));
@@ -59,7 +59,7 @@ class IngestCallbackServiceTest {
     @Test
     void storedCallbackMarksFileReady() {
         File file = processingFile();
-        when(fileRepository.findByIdAndDeletedAtIsNull(7L)).thenReturn(Optional.of(file));
+        when(fileRepository.findForUpdate(7L)).thenReturn(Optional.of(file));
         when(chunkSyncService.sync(anyLong(), any(), any())).thenReturn(ChunkSyncService.SyncOutcome.STORED);
 
         ingestCallbackService.complete(7L, new IngestCompleteRequest(true, null, 2, null, List.of(chunk())));
@@ -69,12 +69,12 @@ class IngestCallbackServiceTest {
     }
 
     @Test
-    void successWithoutChunksFails() {
+    void successWithoutChunksIsIgnored() {
         File file = processingFile();
-        when(fileRepository.findByIdAndDeletedAtIsNull(7L)).thenReturn(Optional.of(file));
+        when(fileRepository.findForUpdate(7L)).thenReturn(Optional.of(file));
 
         ingestCallbackService.complete(7L, new IngestCompleteRequest(true, null, 2, null, List.of()));
 
-        assertThat(file.getStatus()).isEqualTo(FileStatus.FAILED);
+        assertThat(file.getStatus()).isEqualTo(FileStatus.PROCESSING);
     }
 }

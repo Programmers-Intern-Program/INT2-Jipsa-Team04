@@ -17,6 +17,8 @@ public interface JobRepository extends JpaRepository<Job, Long> {
 
     Optional<Job> findTopByFileIdAndJobStatusInOrderByCreatedAtDesc(Long fileId, Collection<JobStatus> statuses);
 
+    Optional<Job> findTopByFileIdAndJobTypeOrderByCreatedAtDesc(Long fileId, JobType jobType);
+
     @Query("""
             select j.id from Job j
             where j.jobStatus = com.jipsa.job.JobStatus.PENDING

@@ -146,7 +146,7 @@ public class JobProcessingService {
         }
         File file = job.getFileId() == null
                 ? null
-                : fileRepository.findByIdAndDeletedAtIsNull(job.getFileId()).orElse(null);
+                : fileRepository.findForUpdate(job.getFileId()).orElse(null);
         if (file != null && file.getStatus() == FileStatus.READY) {
             job.setJobStatus(JobStatus.SUCCESS);
             job.setErrorMessage(null);
