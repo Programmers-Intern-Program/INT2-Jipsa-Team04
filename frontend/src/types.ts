@@ -88,6 +88,10 @@ export interface Document {
   };
 }
 
+export type DocumentNavigationTarget =
+  | { tab: "mydrive"; folderId: number | null }
+  | { tab: "starred" };
+
 export interface AISettings {
   sensitivity: number;
   voiceModel: string;

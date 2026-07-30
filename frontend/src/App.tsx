@@ -25,7 +25,7 @@ import AdminView from "./components/AdminView";
 import SemanticSearchView from "./components/SemanticSearchView";
 
 // Import types
-import type { Document, AISettings, ChatMessage, ChatSession, SessionUser, MeResponse } from "./types";
+import type { Document, AISettings, ChatMessage, ChatSession, DocumentNavigationTarget, SessionUser, MeResponse } from "./types";
 
 import { getUserSettings, updateUserSettings } from "./api/userSettings";
 import { loginWithGoogle, logout as logoutApi } from "./api/auth";
@@ -153,6 +153,10 @@ export default function App() {
     if (main) main.scrollTop = 0;
   }, [activeTab]);
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [documentNavigation, setDocumentNavigation] = useState<{ target: DocumentNavigationTarget; requestId: number }>({
+    target: { tab: "mydrive", folderId: null },
+    requestId: 0,
+  });
   const { uploadedSignal } = useUploads();
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string>("");
@@ -517,6 +521,11 @@ export default function App() {
     navigateToTab("chat");
   };
 
+  const handleNavigateToDocuments = (target: DocumentNavigationTarget) => {
+    setDocumentNavigation((current) => ({ target, requestId: current.requestId + 1 }));
+    navigateToTab("documents");
+  };
+
   // 채팅 탭 관리
   const handleNewChatTab = () => {
     const newSession = createChatSession([], chatSessions.length === 0 ? "대화 1" : undefined);
@@ -776,7 +785,12 @@ export default function App() {
                 <DashboardView
                   documents={documents}
                   onNavigateToChat={handleNavigateToChat}
-                  onNavigateToTab={navigateToTab}
+                  onNavigateToDocuments={handleNavigateToDocuments}
+                  onUpdateDocument={(id, changes) =>
+                    setDocuments((current) => current.map((document) =>
+                      document.id === String(id) ? { ...document, ...changes } : document
+                    ))
+                  }
                 />
               </motion.div>
             )}
@@ -862,6 +876,7 @@ export default function App() {
             className={activeTab === "documents" && documentsVisible ? "block" : "hidden"}
           >
             <MyDocumentsView
+              key={documentNavigation.requestId}
               documents={documents}
               onNavigateToChat={handleNavigateToChat}
               isUploadOpen={isUploadOpen}
@@ -870,6 +885,7 @@ export default function App() {
               setIsNewUploadOpen={setIsNewUploadOpen}
               onUpdateDocuments={setDocuments}
               sensitivity={committedSettings?.sensitivity ?? 0.85}
+              navigationTarget={documentNavigation.target}
             />
           </motion.div>
         </main>

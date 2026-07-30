@@ -28,7 +28,7 @@ import {
   Pencil,
   Info
 } from "lucide-react";
-import type { Document, FileMapping, Folder as FolderType, OrganizeProposal, ProposedFolder } from "../types";
+import type { Document, DocumentNavigationTarget, FileMapping, Folder as FolderType, OrganizeProposal, ProposedFolder } from "../types";
 import { formatBytes } from "../utils/formatBytes";
 import { formatDateTime } from "../utils/formatDateTime";
 import { fetchWithRetry } from "../utils/retry";
@@ -57,6 +57,7 @@ interface MyDocumentsViewProps {
   isNewUploadOpen: boolean;
   setIsNewUploadOpen: (open: boolean) => void;
   onUpdateDocuments: React.Dispatch<React.SetStateAction<Document[]>>;
+  navigationTarget: DocumentNavigationTarget;
   /** 스마트 정리 미리보기에서 confidence 미달 매핑/폴더를 미리 가려서 보여주는 데 쓰는 사용자의
    * 자동 분류 민감도(0~1). 실제 필터링은 서버(OrganizeService)가 하고, 여기선 그 결과를 미리
    * 추측해 보여주는 용도라 서버 판단과 100% 같다는 보장은 없다(둘 다 같은 규칙을 쓰긴 함). */
@@ -83,11 +84,14 @@ export default function MyDocumentsView({
   isNewUploadOpen,
   setIsNewUploadOpen,
   onUpdateDocuments,
-  sensitivity
+  sensitivity,
+  navigationTarget
 }: MyDocumentsViewProps) {
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedFolder, setSelectedFolder] = useState<number | null>(null);
+  const [selectedFolder, setSelectedFolder] = useState<number | null>(
+    navigationTarget.tab === "mydrive" ? navigationTarget.folderId : null
+  );
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [selectedDocumentType, setSelectedDocumentType] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState("");
@@ -281,7 +285,7 @@ export default function MyDocumentsView({
   const [expandedFolders, setExpandedFolders] = useState<Record<number, boolean>>({});
 
   // Google Drive Mimicry States
-  const [currentTab, setCurrentTab] = useState<"mydrive" | "starred" | "recent" | "trash">("mydrive");
+  const [currentTab, setCurrentTab] = useState<"mydrive" | "starred" | "recent" | "trash">(navigationTarget.tab);
   const [isMyDriveExpanded, setIsMyDriveExpanded] = useState(true);
 
   // Document checkbox selection state for batch actions
