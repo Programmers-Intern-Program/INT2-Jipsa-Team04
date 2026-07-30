@@ -46,10 +46,7 @@ interface PreviewSource {
   contextText?: string;
 }
 
-function extractCitationContext(text: string, sourceId: string): string {
-  const marker = `[${sourceId}]`;
-  const markerIndex = text.indexOf(marker);
-  if (markerIndex < 0) return "";
+function extractCitationContext(text: string, markerIndex: number): string {
   const precedingText = text
       .slice(0, markerIndex)
       .replace(/\[SOURCE-\d+\]/g, "")
@@ -90,13 +87,16 @@ export default function AIChatView({
   const [previewSource, setPreviewSource] = useState<PreviewSource | null>(null);
   const renderMessageText = (message: ChatMessage) => {
     if (message.sender !== "ai" || message.citations.length === 0) return message.text;
+    let sourceOffset = 0;
     return message.text.split(/(\[SOURCE-\d+\])/g).map((part, index) => {
+      const partOffset = sourceOffset;
+      sourceOffset += part.length;
       const match = part.match(/^\[SOURCE-(\d+)\]$/);
       if (!match) return part;
       const sourceId = `SOURCE-${match[1]}`;
       const citation = message.citations.find((c) => c.sourceId === sourceId);
       if (!citation) return part;
-      const contextText = extractCitationContext(message.text, sourceId);
+      const contextText = extractCitationContext(message.text, partOffset);
       return (
           <button
               key={index}

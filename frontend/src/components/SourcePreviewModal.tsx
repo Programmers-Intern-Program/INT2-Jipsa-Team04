@@ -9,6 +9,11 @@ interface EmphasisRange {
     end: number;
 }
 
+interface EvidenceBlock {
+    text: string;
+    start: number;
+}
+
 interface SourcePreviewModalProps {
     citation: Citation;
     fileName: string;
@@ -80,6 +85,30 @@ function splitEvidenceText(excerpt: string): string[] {
         .filter(Boolean);
 }
 
+function buildEvidenceBlocks(excerpt: string): { blocks: EvidenceBlock[]; searchableText: string } {
+    const texts = splitEvidenceText(excerpt);
+    let offset = 0;
+    const blocks = texts.map((text) => {
+        const block = { text, start: offset };
+        offset += text.length + 1;
+        return block;
+    });
+    return {
+        blocks,
+        searchableText: texts.join("\u0000"),
+    };
+}
+
+function rangesForBlock(block: EvidenceBlock, ranges: EmphasisRange[]): EmphasisRange[] {
+    const blockEnd = block.start + block.text.length;
+    return ranges
+        .filter((range) => range.start < blockEnd && range.end > block.start)
+        .map((range) => ({
+            start: Math.max(0, range.start - block.start),
+            end: Math.min(block.text.length, range.end - block.start),
+        }));
+}
+
 function renderEmphasizedText(text: string, ranges: EmphasisRange[]): ReactNode[] {
     const nodes: ReactNode[] = [];
     let cursor = 0;
@@ -107,13 +136,17 @@ function EvidenceCard({
 }) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const [fades, setFades] = useState({ top: false, bottom: false });
-    const blocks = useMemo(() => splitEvidenceText(excerpt), [excerpt]);
+    const evidence = useMemo(() => buildEvidenceBlocks(excerpt), [excerpt]);
+    const emphasisRanges = useMemo(
+        () => findEmphasisRanges(evidence.searchableText, contextText),
+        [evidence.searchableText, contextText]
+    );
     const formattedBlocks = useMemo(
-        () => blocks.map((block) => ({
-            text: block,
-            ranges: findEmphasisRanges(block, contextText),
+        () => evidence.blocks.map((block) => ({
+            text: block.text,
+            ranges: rangesForBlock(block, emphasisRanges),
         })),
-        [blocks, contextText]
+        [evidence.blocks, emphasisRanges]
     );
     const updateFades = useCallback(() => {
         const element = scrollRef.current;
@@ -155,7 +188,13 @@ function EvidenceCard({
                     {formattedBlocks.map((block, index) => {
                         const keyValue = block.text.match(/^([^:]{1,24}):\s*(.+)$/u);
                         if (keyValue) {
-                            const valueRanges = findEmphasisRanges(keyValue[2], contextText);
+                            const valueOffset = block.text.indexOf(keyValue[2]);
+                            const valueRanges = block.ranges
+                                .filter((range) => range.end > valueOffset)
+                                .map((range) => ({
+                                    start: Math.max(0, range.start - valueOffset),
+                                    end: Math.min(keyValue[2].length, range.end - valueOffset),
+                                }));
                             return (
                                 <div key={`${index}-${block.text}`} className="mb-3 last:mb-0">
                                     <div className="mb-0.5 text-[11px] font-bold text-on-surface-variant">
