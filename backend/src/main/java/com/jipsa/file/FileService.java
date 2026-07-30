@@ -323,28 +323,27 @@ public class FileService {
     public void setDocumentType(Long userId, Long fileId, String documentType) {
         File file = requireOwnedFile(userId, fileId);
         String value = documentType == null || documentType.isBlank() ? null : documentType.trim();
-        FileMetadata metadata = fileMetadataRepository.findById(fileId).orElseGet(() -> {
+        if (fileMetadataRepository.updateDocumentType(fileId, value, LocalDateTime.now()) == 0) {
             FileMetadata created = new FileMetadata();
             created.setFileId(file.getId());
             created.setFileType(file.getFileType());
-            return created;
-        });
-        metadata.setDocumentType(value);
-        fileMetadataRepository.save(metadata);
+            created.setDocumentType(value);
+            fileMetadataRepository.save(created);
+        }
     }
 
     @Transactional
     public void setTags(Long userId, Long fileId, List<String> tags) {
         File file = requireOwnedFile(userId, fileId);
         List<String> normalized = normalizeTags(tags);
-        FileMetadata metadata = fileMetadataRepository.findById(fileId).orElseGet(() -> {
+        String serializedTags = writeStringList(normalized);
+        if (fileMetadataRepository.updateTags(fileId, serializedTags, LocalDateTime.now()) == 0) {
             FileMetadata created = new FileMetadata();
             created.setFileId(file.getId());
             created.setFileType(file.getFileType());
-            return created;
-        });
-        metadata.setTags(writeStringList(normalized));
-        fileMetadataRepository.save(metadata);
+            created.setTags(serializedTags);
+            fileMetadataRepository.save(created);
+        }
     }
 
     private String applyOriginalExtension(String requestedName, String originalFileType) {

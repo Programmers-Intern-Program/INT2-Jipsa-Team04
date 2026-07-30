@@ -10,6 +10,8 @@ import com.jipsa.file.FileRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
+
 @Service
 public class MetadataCallbackService {
 
@@ -28,32 +30,36 @@ public class MetadataCallbackService {
     public void apply(Long fileIdx, IngestMetadataRequest request) {
         File file = fileRepository.findByIdAndDeletedAtIsNull(fileIdx)
                 .orElseThrow(() -> new FileNotFoundException("파일을 찾을 수 없습니다: " + fileIdx));
-        FileMetadata metadata = fileMetadataRepository.findById(fileIdx).orElseGet(() -> {
-            FileMetadata created = new FileMetadata();
-            created.setFileId(file.getId());
-            created.setFileType(file.getFileType());
-            return created;
-        });
         Integer incoming = request.indexVersion();
-        Integer stored = metadata.getExtractionIndexVersion();
-        if (incoming != null && stored != null && incoming < stored) {
+        LocalDateTime now = LocalDateTime.now();
+        int updated;
+        if (request.success()) {
+            updated = fileMetadataRepository.applyCallbackSuccess(
+                    fileIdx,
+                    request.summary(),
+                    writeJson(request.keywords()),
+                    writeJson(request.entities()),
+                    request.confidence(),
+                    incoming,
+                    now);
+        } else {
+            updated = fileMetadataRepository.applyCallbackFailure(fileIdx, incoming, now);
+        }
+        if (updated > 0 || fileMetadataRepository.existsById(fileIdx)) {
             return;
         }
-        if (!request.success()) {
+        FileMetadata metadata = new FileMetadata();
+        metadata.setFileId(file.getId());
+        metadata.setFileType(file.getFileType());
+        metadata.setExtractionIndexVersion(incoming);
+        if (request.success()) {
+            metadata.setSummary(request.summary());
+            metadata.setKeywords(writeJson(request.keywords()));
+            metadata.setExtractedEntities(writeJson(request.entities()));
+            metadata.setExtractionConfidence(request.confidence());
+            metadata.setExtractionStatus("READY");
+        } else {
             metadata.setExtractionStatus("FAILED");
-            if (incoming != null) {
-                metadata.setExtractionIndexVersion(incoming);
-            }
-            fileMetadataRepository.save(metadata);
-            return;
-        }
-        metadata.setSummary(request.summary());
-        metadata.setKeywords(writeJson(request.keywords()));
-        metadata.setExtractedEntities(writeJson(request.entities()));
-        metadata.setExtractionConfidence(request.confidence());
-        metadata.setExtractionStatus("READY");
-        if (incoming != null) {
-            metadata.setExtractionIndexVersion(incoming);
         }
         fileMetadataRepository.save(metadata);
     }
