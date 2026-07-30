@@ -13,11 +13,26 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+          cache-read-only: false
       - name: Build & test
         working-directory: backend
         run: |
-          chmod +x gradlew
-          ./gradlew build --no-daemon
+          for attempt in 1 2 3; do
+            if output=$(./gradlew build --no-daemon 2>&1); then
+              printf '%s\n' "$output"
+              exit 0
+            else
+              status=$?
+              printf '%s\n' "$output"
+            fi
+            if ! grep -q 'status code 429' <<< "$output" || [ "$attempt" -eq 3 ]; then
+              exit "$status"
+            fi
+            sleep $((attempt * 30))
+          done
 
   frontend:
     name: Frontend (Vite)
