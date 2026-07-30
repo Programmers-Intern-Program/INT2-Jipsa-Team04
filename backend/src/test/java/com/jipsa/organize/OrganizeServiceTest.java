@@ -11,15 +11,12 @@ import com.jipsa.folder.FolderNotFoundException;
 import com.jipsa.folder.FolderRepository;
 import com.jipsa.folder.FolderResponse;
 import com.jipsa.folder.FolderService;
-import com.jipsa.user.UserSetting;
-import com.jipsa.user.UserSettingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -49,9 +46,6 @@ class OrganizeServiceTest {
     private OrganizeInputAssembler organizeInputAssembler;
     @Mock
     private AiOrganizeClient aiOrganizeClient;
-    @Mock
-    private UserSettingService userSettingService;
-
     private OrganizeService organizeService;
 
     private static final Long USER = 1L;
@@ -60,7 +54,7 @@ class OrganizeServiceTest {
     @BeforeEach
     void setUp() {
         organizeService = new OrganizeService(folderRepository, fileRepository, folderService, fileService,
-                organizeInputAssembler, aiOrganizeClient, userSettingService);
+                organizeInputAssembler, aiOrganizeClient);
     }
 
     private File ownedFile(Long id) {
@@ -68,13 +62,6 @@ class OrganizeServiceTest {
         file.setId(id);
         file.setUsersId(USER);
         return file;
-    }
-
-    /** confidence를 쓰는 테스트에서만 stubbing — 확신도 없는 매핑만 있는 테스트는 이 값 자체를 조회하지 않는다. */
-    private void givenSensitivity(String sensitivity) {
-        UserSetting setting = new UserSetting(USER);
-        setting.setSensitivity(new BigDecimal(sensitivity));
-        when(userSettingService.getOrCreate(USER)).thenReturn(setting);
     }
 
     // ---- 현재 폴더 트리 조립 ----
@@ -305,11 +292,8 @@ class OrganizeServiceTest {
         verify(fileService).moveToFolder(USER, 10L, 100L);
     }
 
-    // ---- confidence 기반 자동 적용 필터링 ----
-
     @Test
-    void applyProposal_confidence가_민감도_미만이면_보류되고_이동하지않는다() {
-        givenSensitivity("0.500");
+    void applyProposal_낮은_confidence도_요청에_포함되면_적용된다() {
         when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(ownedFile(10L)));
         when(folderRepository.findByIdAndUsersId(5L, USER)).thenReturn(Optional.of(new Folder()));
 
@@ -319,25 +303,38 @@ class OrganizeServiceTest {
 
         OrganizeApplyResponse response = organizeService.applyProposal(USER, proposal);
 
-        verify(fileService, never()).moveToFolder(any(), any(), any());
+        verify(fileService).moveToFolder(USER, 10L, 5L);
         assertThat(response.success()).isTrue();
-        assertThat(response.held()).hasSize(1);
-        assertThat(response.held().get(0).fileId()).isEqualTo(10L);
+        assertThat(response.held()).isEmpty();
     }
 
     @Test
-    void applyProposal_confidence가_민감도_이상이면_그대로_적용된다() {
-        givenSensitivity("0.500");
+    void applyProposal_높은_confidence도_요청에서_제외되면_적용되지않는다() {
+        OrganizeProposal proposal = new OrganizeProposal(List.of(), List.of());
+
+        OrganizeApplyResponse response = organizeService.applyProposal(USER, proposal);
+
+        verifyNoInteractions(folderService, fileService);
+        assertThat(response.success()).isTrue();
+        assertThat(response.held()).isEmpty();
+    }
+
+    @Test
+    void applyProposal_서로다른_confidence의_선택된_매핑을_모두_적용한다() {
         when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(ownedFile(10L)));
+        when(fileRepository.findByIdAndDeletedAtIsNull(11L)).thenReturn(Optional.of(ownedFile(11L)));
         when(folderRepository.findByIdAndUsersId(5L, USER)).thenReturn(Optional.of(new Folder()));
 
         OrganizeProposal proposal = new OrganizeProposal(
                 List.of(),
-                List.of(new FileMapping(10L, 5L, null, null, 0.92)));
+                List.of(
+                        new FileMapping(10L, 5L, null, null, 0.92),
+                        new FileMapping(11L, 5L, null, null, 0.12)));
 
         OrganizeApplyResponse response = organizeService.applyProposal(USER, proposal);
 
         verify(fileService).moveToFolder(USER, 10L, 5L);
+        verify(fileService).moveToFolder(USER, 11L, 5L);
         assertThat(response.held()).isEmpty();
     }
 
@@ -354,71 +351,23 @@ class OrganizeServiceTest {
 
         verify(fileService).moveToFolder(USER, 10L, 5L);
         assertThat(response.held()).isEmpty();
-        // confidence가 아예 없는 매핑뿐이면 민감도 조회 자체를 하지 않는다.
-        verifyNoInteractions(userSettingService);
     }
 
     @Test
-    void applyProposal_매핑전부보류되면_그새폴더는_생성되지않는다() {
-        givenSensitivity("0.500");
+    void applyProposal_선택되지않은_매핑의_새폴더는_생성되지않는다() {
         when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(ownedFile(10L)));
 
         OrganizeProposal proposal = new OrganizeProposal(
-                List.of(new ProposedFolder("t1", "제안폴더", null, null)),
+                List.of(
+                        new ProposedFolder("t1", "선택폴더", null, null),
+                        new ProposedFolder("t2", "제외폴더", null, null)),
                 List.of(new FileMapping(10L, null, "t1", null, 0.1)));
 
         OrganizeApplyResponse response = organizeService.applyProposal(USER, proposal);
 
-        verifyNoInteractions(folderService);
-        verify(fileService, never()).moveToFolder(any(), any(), any());
-        assertThat(response.held()).hasSize(1);
-    }
-
-    @Test
-    void applyProposal_일부매핑만보류돼도_적용되는매핑이_쓰는새폴더는_생성된다() {
-        givenSensitivity("0.500");
-        when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(ownedFile(10L)));
-        when(fileRepository.findByIdAndDeletedAtIsNull(11L)).thenReturn(Optional.of(ownedFile(11L)));
-        when(folderService.create(USER, "제안폴더", null)).thenReturn(100L);
-
-        OrganizeProposal proposal = new OrganizeProposal(
-                List.of(new ProposedFolder("t1", "제안폴더", null, null)),
-                List.of(new FileMapping(10L, null, "t1", null, 0.9),
-                        new FileMapping(11L, null, "t1", null, 0.1)));
-
-        OrganizeApplyResponse response = organizeService.applyProposal(USER, proposal);
-
-        verify(folderService).create(USER, "제안폴더", null);
-        verify(fileService).moveToFolder(USER, 10L, 100L);
-        verify(fileService, never()).moveToFolder(eq(USER), eq(11L), any());
-        assertThat(response.held()).hasSize(1);
-        assertThat(response.held().get(0).fileId()).isEqualTo(11L);
-    }
-
-    /**
-     * 이 배치의 다른 매핑에 confidence가 있으면(=민감도 조회가 실제로 일어나면) confidence가
-     * 빠진 매핑은 무조건 적용이 아니라 보류돼야 한다 — AI 응답이 일부 매핑에서만 confidence를
-     * 빠뜨려도 안전장치가 뚫리면 안 된다는 걸 확인하는 테스트. 요청 전체에 confidence가 하나도
-     * 없는 완전 레거시 케이스(위 "confidence가_없으면_필터링없이_그대로_적용된다")와는 다른 경우다.
-     */
-    @Test
-    void applyProposal_같은배치에_confidence있는매핑이있으면_confidence없는매핑은_보류된다() {
-        givenSensitivity("0.500");
-        when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(ownedFile(10L)));
-        when(fileRepository.findByIdAndDeletedAtIsNull(11L)).thenReturn(Optional.of(ownedFile(11L)));
-        when(folderRepository.findByIdAndUsersId(5L, USER)).thenReturn(Optional.of(new Folder()));
-
-        OrganizeProposal proposal = new OrganizeProposal(
-                List.of(),
-                List.of(new FileMapping(10L, 5L, null, null, 0.9),
-                        new FileMapping(11L, 5L, null, null)));
-
-        OrganizeApplyResponse response = organizeService.applyProposal(USER, proposal);
-
-        verify(fileService).moveToFolder(USER, 10L, 5L);
-        verify(fileService, never()).moveToFolder(eq(USER), eq(11L), any());
-        assertThat(response.held()).hasSize(1);
-        assertThat(response.held().get(0).fileId()).isEqualTo(11L);
+        verify(folderService).create(USER, "선택폴더", null);
+        verify(folderService, never()).create(USER, "제외폴더", null);
+        assertThat(response.held()).isEmpty();
     }
 
     // ---- AI 제안 생성 ----
@@ -512,8 +461,6 @@ class OrganizeServiceTest {
     @Test
     void applyProposal_빈_newName은_이름변경을_건너뛴다() {
         when(fileRepository.findByIdAndDeletedAtIsNull(10L)).thenReturn(Optional.of(ownedFile(10L)));
-        givenSensitivity("0.0");
-
         OrganizeProposal proposal = new OrganizeProposal(
                 List.of(),
                 List.of(new FileMapping(10L, null, null, "   ", 0.9)));

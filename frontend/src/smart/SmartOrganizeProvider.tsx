@@ -10,6 +10,7 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
   const [stage, setStage] = useState<SmartOrganizeStage>("idle");
   const [proposal, setProposal] = useState<OrganizeProposal | null>(null);
   const [applyResult, setApplyResult] = useState<OrganizeApplyResponse | null>(null);
+  const [appliedFileIds, setAppliedFileIds] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isVisible, setIsVisible] = useState(true);
   const [isUploadFlow, setIsUploadFlow] = useState(false);
@@ -21,6 +22,7 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
     setStage("idle");
     setProposal(null);
     setApplyResult(null);
+    setAppliedFileIds([]);
     setError(null);
     setIsVisible(true);
     setIsUploadFlow(false);
@@ -31,6 +33,7 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
     setStage("proposing");
     setProposal(null);
     setApplyResult(null);
+    setAppliedFileIds([]);
     setError(null);
     setIsVisible(true);
     setIsUploadFlow(uploadFlow);
@@ -52,6 +55,7 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
     setStage("uploading");
     setProposal(null);
     setApplyResult(null);
+    setAppliedFileIds([]);
     setError(null);
     setIsUploadFlow(true);
     setUploadFileIds([]);
@@ -70,14 +74,15 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
     }
   }, [uploadQueuedAndWait, startProposal]);
 
-  const apply = useCallback(async () => {
+  const apply = useCallback(async (selectedProposal: OrganizeProposal) => {
     if (!proposal || stage !== "reviewing") return;
     setStage("applying");
     setIsVisible(true);
     setError(null);
     try {
-      const result = await applyOrganization(proposal);
+      const result = await applyOrganization(selectedProposal);
       setApplyResult(result);
+      setAppliedFileIds(selectedProposal.mappings.map((mapping) => mapping.fileId));
       setStage("result");
       setCompletedSignal((value) => value + 1);
     } catch (err) {
@@ -104,6 +109,7 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
         stage,
         proposal,
         applyResult,
+        appliedFileIds,
         error,
         isVisible,
         isUploadFlow,

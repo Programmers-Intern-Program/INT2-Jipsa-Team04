@@ -125,22 +125,6 @@ class OrganizeControllerTest {
     }
 
     @Test
-    void apply_보류된_매핑이_있으면_held로_반환한다() throws Exception {
-        given(currentUserProvider.requireUserId()).willReturn(USER_ID);
-        given(organizeService.applyProposal(eq(USER_ID), any()))
-                .willReturn(new OrganizeApplyResponse(true,
-                        List.of(new FileMapping(10L, 5L, null, null, 0.2))));
-
-        mockMvc.perform(post("/api/v1/organize/apply")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"newFolders\":[],\"mappings\":[]}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.held[0].fileId").value(10))
-                .andExpect(jsonPath("$.held[0].confidence").value(0.2));
-    }
-
-    @Test
     void apply_존재하지않는_폴더면_404() throws Exception {
         given(currentUserProvider.requireUserId()).willReturn(USER_ID);
         doThrow(new FolderNotFoundException(99L))

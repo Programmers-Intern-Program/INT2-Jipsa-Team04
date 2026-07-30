@@ -28,7 +28,7 @@ import {
   Pencil,
   Info
 } from "lucide-react";
-import type { Document, FileMapping, Folder as FolderType, OrganizeApplyResponse, OrganizeProposal, ProposedFolder } from "../types";
+import type { Document, FileMapping, Folder as FolderType, OrganizeProposal, ProposedFolder } from "../types";
 import { formatBytes } from "../utils/formatBytes";
 import { formatDateTime } from "../utils/formatDateTime";
 import { fetchWithRetry } from "../utils/retry";
@@ -105,10 +105,12 @@ export default function MyDocumentsView({
 
   // AI Organize state
   const [isSmartMenuOpen, setIsSmartMenuOpen] = useState(false);
+  const [organizeSelection, setOrganizeSelection] = useState<Record<number, boolean>>({});
   const {
     stage: smartStage,
     proposal: organizeResult,
     applyResult,
+    appliedFileIds,
     error: smartError,
     isVisible: isSmartWorkflowVisible,
     startOrganization,
@@ -732,6 +734,7 @@ export default function MyDocumentsView({
   const runSmartUpload = async () => {
     const sessionId = smartUploadSessionId;
     if (!sessionId || isSmartUploadLocked) return;
+    setOrganizeSelection({});
     const startedModalEpoch = uploadModalEpochRef.current;
     await startSmartUpload(sessionId, autoRename);
     if (uploadModalOpenRef.current && uploadModalEpochRef.current === startedModalEpoch) {
@@ -810,16 +813,22 @@ export default function MyDocumentsView({
   // 비로그인 상태면 401이 나는 게 정상 — 안내만 하고 종료한다. 폴더 목록처럼
   // mock으로 폴백할 수 없다(AI 제안 자체가 서버에서만 생성 가능하므로).
   const handleOrganizeFolders = async (allowRename: boolean) => {
+    setOrganizeSelection({});
     startOrganization(allowRename);
   };
 
-  // POST /api/v1/organize/apply — 제안을 그대로 백엔드에 되돌려보내 실제 파일 이동/이름변경 반영.
-  // 응답(성공 여부 + held)을 alert가 아니라 applyResult 상태에 담아, 모달이 "결과" 화면으로
-  // 전환되도록 한다 — 예전엔 응답을 버리고 모달을 바로 닫은 뒤 알림창만 띄워서, 일부만
-  // 보류돼도 사용자가 뭐가 어떻게 됐는지 모달에서 다시 확인할 방법이 없었다.
   const handleApplyOrganization = async () => {
     if (!organizeResult) return;
-    await applySmartOrganization();
+    const mappings = organizeResult.mappings.filter((mapping) =>
+      organizeSelection[mapping.fileId] ?? (mapping.confidence != null && mapping.confidence >= sensitivity)
+    );
+    const tempIds = computeTempIdsToCreate(mappings, organizeResult.newFolders);
+    const selectedProposal: OrganizeProposal = {
+      ...organizeResult,
+      mappings,
+      newFolders: organizeResult.newFolders.filter((folder) => tempIds.has(folder.tempId)),
+    };
+    await applySmartOrganization(selectedProposal);
     setSelectedFolder(null);
   };
 
@@ -871,22 +880,12 @@ export default function MyDocumentsView({
     return tempIdsToCreate;
   };
 
-  // 아직 적용 전이면 confidence/민감도로 "적용될 매핑"을 추정, 적용 후면 실제 held 응답으로
-  // 정확히 계산한다 — 어느 쪽이든 결과는 { appliedMappings, tempIdsToCreate } 형태로 통일해서 쓴다.
-  const getOrganizeApplyPreview = (result: OrganizeProposal, applied: OrganizeApplyResponse | null) => {
-    let appliedMappings: FileMapping[];
-    if (applied) {
-      appliedMappings = result.mappings.filter((m) => !applied.held.some((h) => h.fileId === m.fileId));
-    } else {
-      // 백엔드(OrganizeService.isBelowThreshold)와 같은 규칙을 따른다: 이 제안 안에 confidence를
-      // 가진 매핑이 하나도 없으면(완전 레거시 제안) 필터링 없이 전부 적용될 것으로 본다. 반면
-      // 하나라도 confidence가 있으면(=apply 시 민감도 조회가 실제로 일어남), confidence가 빠진
-      // 매핑도 서버에서는 보류되므로 여기서 "적용될 것"으로 잘못 미리 보여주면 안 된다.
-      const anyConfidencePresent = result.mappings.some((m) => m.confidence != null);
-      appliedMappings = result.mappings.filter(
-        (m) => !anyConfidencePresent || (m.confidence != null && m.confidence >= sensitivity)
-      );
-    }
+  const getOrganizeApplyPreview = (result: OrganizeProposal) => {
+    const appliedMappings = result.mappings.filter((mapping) =>
+      applyResult
+        ? appliedFileIds.includes(mapping.fileId)
+        : organizeSelection[mapping.fileId] ?? (mapping.confidence != null && mapping.confidence >= sensitivity)
+    );
     return { appliedMappings, tempIdsToCreate: computeTempIdsToCreate(appliedMappings, result.newFolders) };
   };
 
@@ -2669,8 +2668,8 @@ export default function MyDocumentsView({
               onClick={(event) => event.stopPropagation()}
             >
               {(() => {
-                const { appliedMappings, tempIdsToCreate } = getOrganizeApplyPreview(organizeResult, applyResult);
-                const heldCount = applyResult?.held.length ?? 0;
+                const { appliedMappings, tempIdsToCreate } = getOrganizeApplyPreview(organizeResult);
+                const excludedCount = organizeResult.mappings.length - appliedMappings.length;
                 return (
                 <>
               {/* Header */}
@@ -2683,7 +2682,7 @@ export default function MyDocumentsView({
                     </h3>
                     <p className="text-[10.5px] text-outline font-medium">
                       {applyResult
-                        ? "실제로 반영된 항목과 확신도 미달로 보류된 항목입니다."
+                        ? "사용자가 선택한 항목만 반영한 결과입니다."
                         : "기존 가상 폴더 구조와 AI가 의미론적으로 추천하는 신규 배치안을 비교해 보세요."}
                     </p>
                   </div>
@@ -2712,27 +2711,22 @@ export default function MyDocumentsView({
                   <div className="text-[11px] text-outline font-sans bg-white px-3 py-1.5 rounded-lg border border-outline-variant/40">
                     새 폴더 <span className="font-bold text-primary">{tempIdsToCreate.size}개</span> ·
                     파일 <span className="font-bold text-primary">{appliedMappings.length}건</span>{" "}
-                    {applyResult ? "반영됨" : "이동/이름변경 제안"}
-                    {heldCount > 0 && (
-                      <> · 보류 <span className="font-bold text-amber-600">{heldCount}건</span></>
+                    {applyResult ? "반영됨" : "선택됨"}
+                    {excludedCount > 0 && (
+                      <> · 제외 <span className="font-bold text-amber-600">{excludedCount}건</span></>
                     )}
                   </div>
                 </div>
 
-                {/* confidence가 하나라도 있으면(적용 전/후 공통), 민감도 미달 항목이 어떻게 되는지 안내한다. */}
                 {organizeResult.mappings.some((m) => m.confidence != null) && (
                   <div className="p-3 bg-secondary/5 border border-secondary/20 rounded-lg text-xs leading-relaxed text-on-surface">
                     ℹ️ {applyResult ? (
-                      <>
-                        확신도가 자동 분류 민감도보다 낮았던 항목은 반영되지 않고 원래 위치에 그대로 남았습니다.
-                        <br />
-                        (아래 목록에 보류로 표시)
-                      </>
+                      <>선택한 항목만 반영되었으며, 선택하지 않은 항목은 원래 위치에 남았습니다.</>
                     ) : (
                       <>
-                        확신도가 설정에서 지정한 자동 분류 민감도보다 낮은 항목은 적용해도 자동으로 이동되지 않고 보류됩니다.
+                        자동 분류 민감도 이상의 항목은 기본 선택되고, 미만인 항목은 기본 해제됩니다.
                         <br />
-                        (설정 &gt; AI 설정에서 민감도 조정 가능)
+                        적용하기 전에 각 항목의 선택을 자유롭게 변경할 수 있습니다.
                       </>
                     )}
                   </div>
@@ -2771,7 +2765,7 @@ export default function MyDocumentsView({
                               willCreate ? "bg-secondary text-white" : "bg-outline-variant text-outline"
                             }`}
                           >
-                            {willCreate ? "신규" : applyResult ? "미생성" : "보류 예정"}
+                            {willCreate ? "신규" : applyResult ? "미생성" : "제외 예정"}
                           </span>
                           <p className={`text-[11px] font-extrabold truncate ${willCreate ? "text-secondary" : "text-outline"}`}>
                             📂 {resolveProposedFolderPath(folder, organizeResult.newFolders)}
@@ -2798,38 +2792,45 @@ export default function MyDocumentsView({
                       {organizeResult.mappings.map((mapping) => {
                         const { currentName, currentPath, targetPath, newName, confidence } =
                             resolveMappingDisplay(mapping, organizeResult.newFolders);
-                        // 적용 후엔 실제 held 응답으로, 적용 전엔 confidence/민감도로 예측한다 —
-                        // 어느 쪽이든 "보류"면 AI가 제안한 대상이 뭐였든 상관없이 "미분류"로 보여준다.
-                        // 이 앱에서 폴더가 지정 안 된 파일은 원래 "미분류"로 표시되는데, 확신도가
-                        // 낮아 반영이 안 되면(또는 안 될 예정이면) 결국 그 상태와 같기 때문이다.
-                        const isHeld = applyResult
-                          ? applyResult.held.some((h) => h.fileId === mapping.fileId)
-                          : !appliedMappings.some((m) => m.fileId === mapping.fileId);
+                        const isSelected = appliedMappings.some((m) => m.fileId === mapping.fileId);
                         return (
                           <div
                             key={mapping.fileId}
                             className={`p-3 bg-white border rounded-xl text-[11px] ${
-                              isHeld ? "border-amber-300 bg-amber-50/40" : "border-outline-variant/40"
+                              isSelected ? "border-primary/30" : "border-amber-300 bg-amber-50/40"
                             }`}
                           >
                             <div className="flex items-center justify-between gap-2">
-                              <p className="font-extrabold text-on-surface truncate">
-                                📄 {currentName}
-                                {newName && newName !== currentName && (
-                                  <span className="text-secondary"> → {newName}</span>
-                                )}
-                              </p>
+                              <div className="flex items-center gap-2 min-w-0">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  disabled={applyResult != null}
+                                  onChange={(event) =>
+                                    setOrganizeSelection((current) => ({
+                                      ...current,
+                                      [mapping.fileId]: event.target.checked,
+                                    }))
+                                  }
+                                  className="h-4 w-4 shrink-0 accent-primary cursor-pointer disabled:cursor-default"
+                                  aria-label={`${currentName} 정리 적용`}
+                                />
+                                <p className="font-extrabold text-on-surface truncate">
+                                  📄 {currentName}
+                                  {newName && newName !== currentName && (
+                                    <span className="text-secondary"> → {newName}</span>
+                                  )}
+                                </p>
+                              </div>
                               <div className="flex items-center gap-1.5 shrink-0">
-                                {/* AI 확신도 — apply 시 이 값이 자동 분류 민감도보다 낮으면 실제로는
-                                    반영되지 않고 보류된다. */}
                                 {confidence != null && (
                                   <span className="text-[9px] font-bold text-outline bg-surface-container-low px-1.5 py-0.5 rounded">
                                     확신도 {Math.round(confidence * 100)}%
                                   </span>
                                 )}
-                                {isHeld ? (
+                                {!isSelected ? (
                                   <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">
-                                    {applyResult ? "보류됨" : "보류 예정"}
+                                    {applyResult ? "제외됨" : "제외 예정"}
                                   </span>
                                 ) : applyResult ? (
                                   <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-primary/10 text-primary">
@@ -2840,8 +2841,8 @@ export default function MyDocumentsView({
                             </div>
                             <p className="text-outline mt-1">
                               {currentPath || "미분류"} <span className="mx-1">→</span>{" "}
-                              <span className={`font-bold ${isHeld ? "text-amber-700" : "text-primary"}`}>
-                                {isHeld ? "미분류" : targetPath}
+                              <span className={`font-bold ${isSelected ? "text-primary" : "text-outline"}`}>
+                                {targetPath}
                               </span>
                             </p>
                           </div>

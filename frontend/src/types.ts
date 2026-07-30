@@ -141,8 +141,6 @@ export interface ProposedFolder {
 /**
  * 파일 하나를 어디로 옮기고 어떤 이름으로 바꿀지에 대한 AI 제안. backend FileMapping과 1:1.
  * targetFolderId/targetTempId 동시 사용 불가, 둘 다 null이면 루트로 이동.
- * confidence: 이 매핑에 대한 AI 확신도(0~1). apply 시 사용자의 자동 분류 민감도보다 낮으면
- * 자동 반영에서 제외되고 OrganizeApplyResponse.held로 돌아온다. 없을 수 있다(optional).
  */
 export interface FileMapping {
   fileId: number;
@@ -164,11 +162,6 @@ export interface OrganizeProposal {
   idempotencyKey?: string;
 }
 
-/**
- * POST /api/v1/organize/apply 응답. backend OrganizeApplyResponse와 1:1.
- * held: confidence가 사용자의 자동 분류 민감도보다 낮아 자동 반영에서 제외되고 보류된 매핑 목록.
- * 이 목록의 파일은 이동/이름변경되지 않고 원래 위치에 그대로 남는다.
- */
 export interface OrganizeApplyResponse {
   success: boolean;
   held: FileMapping[];

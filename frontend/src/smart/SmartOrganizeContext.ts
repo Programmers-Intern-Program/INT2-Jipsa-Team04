@@ -14,6 +14,7 @@ export interface SmartOrganizeContextValue {
   stage: SmartOrganizeStage;
   proposal: OrganizeProposal | null;
   applyResult: OrganizeApplyResponse | null;
+  appliedFileIds: number[];
   error: string | null;
   isVisible: boolean;
   isUploadFlow: boolean;
@@ -21,7 +22,7 @@ export interface SmartOrganizeContextValue {
   completedSignal: number;
   startOrganization: (allowRename: boolean) => void;
   startSmartUpload: (sessionId: string, allowRename: boolean) => Promise<void>;
-  apply: () => Promise<void>;
+  apply: (selectedProposal: OrganizeProposal) => Promise<void>;
   dismiss: () => void;
   show: () => void;
   reset: () => void;

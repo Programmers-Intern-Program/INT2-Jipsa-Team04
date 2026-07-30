@@ -24,11 +24,6 @@ export function proposeForUpload(fileIds: number[], allowRename: boolean): Promi
   });
 }
 
-/**
- * POST /api/v1/organize/apply — 제안을 검증 후 실제 파일 이동/이름변경 및 새 폴더 생성에 반영.
- * confidence가 사용자의 자동 분류 민감도보다 낮은 매핑은 반영되지 않고 응답의 held로 돌아오므로,
- * 호출부가 그 목록을 보고 사용자에게 알려줄 수 있도록 응답을 그대로 반환한다(과거엔 버렸음).
- */
 export function applyOrganization(proposal: OrganizeProposal): Promise<OrganizeApplyResponse> {
   return apiFetch<OrganizeApplyResponse>("/organize/apply", {
     method: "POST",

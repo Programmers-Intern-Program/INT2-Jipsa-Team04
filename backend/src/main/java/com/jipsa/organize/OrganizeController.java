@@ -47,11 +47,6 @@ public class OrganizeController {
         return organizeService.generateProposalForFiles(userId, request == null ? null : request.fileIds(), allowRename);
     }
 
-    /**
-     * 제안(OrganizeProposal)을 검증하고, 통과하면 confidence가 사용자 민감도 이상인 매핑만
-     * 실제 파일 이동/이름변경 및 새 폴더 생성으로 반영한다. 민감도 미달 매핑은 응답의
-     * held 목록으로 돌아온다(파일은 그대로 둠).
-     */
     @PostMapping("/apply")
     public OrganizeApplyResponse apply(@RequestBody OrganizeProposal proposal) {
         Long userId = currentUserProvider.requireUserId();
