@@ -1,274 +1,431 @@
-# RAG-Performance 테스트 및 실행 명령어
+# Jipsa External RAG Performance Test Commands
 
-> 기준 경로: `D:\Programming\INT2-Jipsa-Team04`  
-> Shell: Windows PowerShell 5.1  
-> Python: 3.12  
-> 성능 측정 대상: `RAG`  
-> 독립 측정 프로그램: `RAG-Performance`
-
-## 1. PowerShell 실행 정책을 현재 프로세스에서만 허용
+## 1. PowerShell 준비
 
 ```powershell
 Set-ExecutionPolicy `
     -Scope Process `
     -ExecutionPolicy Bypass `
     -Force
-```
 
-이 설정은 현재 PowerShell 프로세스가 종료되면 사라집니다.
-
-## 2. RAG-Performance 최초 의존성 동기화
-
-```powershell
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG-Performance'
-
-uv sync
 ```
 
-최초 `uv sync`가 현재 Windows·Python 3.12 환경에 맞는 `uv.lock`을 생성합니다.
-이후부터는 다음 명령으로 Lock 파일과 실제 환경의 정합성을 고정합니다.
+## 2. 적용 파일 확인
 
 ```powershell
-uv sync --frozen
+@(
+    '.\scripts\run-staged-stress-test.ps1'
+    '.\src\jipsa_rag_benchmark\rag_environment.py'
+    '.\src\jipsa_rag_benchmark\test_data_discovery.py'
+    '.\src\jipsa_rag_benchmark\external_target.py'
+    '.\src\jipsa_rag_benchmark\stress_runner.py'
+    '.\README.md'
+    '.\README.html'
+    '..\RAG\.env.local'
+) |
+    ForEach-Object {
+        [PSCustomObject]@{
+            Path   = $_
+            Exists = Test-Path -LiteralPath $_ -PathType Leaf
+        }
+    } |
+    Format-Table -AutoSize
 ```
 
-## 3. RAG-Performance 정적 검사와 단위 테스트
+모든 `Exists`가 `True`여야 합니다.
+
+## 3. 전체 품질 게이트
 
 ```powershell
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
-Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG-Performance'
-
 uv sync --frozen
 uv run ruff format --check src tests
 uv run ruff check src tests
 uv run mypy src tests
 uv run pytest
+uv run python -m compileall -q src tests
 ```
 
-예상 결과:
+## 4. 자동 환경 로드 확인
+
+Token 값은 출력하지 않고 존재 여부만 확인합니다.
+
+```powershell
+$RagEnvPath = '..\RAG\.env.local'
+
+$RequiredKeys = @(
+    'JIPSA_RAG_EXTERNAL_BASE_URL'
+    'JIPSA_RAG_API_V1_PREFIX'
+    'RAG_INGEST_TOKEN'
+    'JIPSA_RAG_QDRANT_URL'
+    'JIPSA_RAG_QDRANT_COLLECTION'
+)
+
+$RequiredKeys |
+    ForEach-Object {
+        $Key = $_
+        $Match = Select-String `
+            -LiteralPath $RagEnvPath `
+            -Pattern "^\s*$([Regex]::Escape($Key))=" `
+            -ErrorAction Stop
+
+        [PSCustomObject]@{
+            Key = $Key
+            Configured = $null -ne $Match
+        }
+    } |
+    Format-Table -AutoSize
+```
+
+## 5. 외부 RAG 연결 확인
+
+공개 Origin은 RAG 환경 파일에서 읽습니다.
+
+```powershell
+$ExternalBaseUrl = (
+    Select-String `
+        -LiteralPath '..\RAG\.env.local' `
+        -Pattern '^JIPSA_RAG_EXTERNAL_BASE_URL=' |
+    Select-Object -Last 1
+).Line.Split('=', 2)[1].Trim().Trim('"').Trim("'")
+
+$ApiPrefix = (
+    Select-String `
+        -LiteralPath '..\RAG\.env.local' `
+        -Pattern '^JIPSA_RAG_API_V1_PREFIX=' |
+    Select-Object -Last 1
+).Line.Split('=', 2)[1].Trim().Trim('"').Trim("'")
+
+Invoke-RestMethod `
+    -Method Get `
+    -Uri "$($ExternalBaseUrl.TrimEnd('/'))$ApiPrefix/health/live"
+
+Invoke-RestMethod `
+    -Method Get `
+    -Uri "$($ExternalBaseUrl.TrimEnd('/'))$ApiPrefix/health/ready"
+```
+
+## 6. 자동 데이터 선정 단독 확인
+
+실제 Stress Traffic을 보내기 전에 환경과 기존 데이터 선정만 검증합니다.
+
+```powershell
+uv run python -c @'
+from pathlib import Path
+from jipsa_rag_benchmark.rag_environment import load_rag_environment
+from jipsa_rag_benchmark.test_data_discovery import discover_test_data
+
+settings = load_rag_environment(Path('../RAG/.env.local'))
+result = discover_test_data(
+    settings,
+    source='auto',
+    files_per_user=2,
+    query_count=8,
+    random_seed=159,
+    snapshot_path=None,
+    snapshot_search_roots=(Path('snapshots'), Path('..'), Path('../RAG')),
+)
+print(result.to_public_dict())
+'@
+```
+
+출력에는 Source, Seed, User IDX, File IDX와 후보 수만 표시되어야 하며 Token·Content·Query는
+표시되지 않아야 합니다.
+
+## 7. Quick
+
+환경 변수, Token, User IDX와 File IDX를 직접 입력하지 않습니다.
+
+```powershell
+& .\scripts\run-staged-stress-test.ps1 `
+    -TestProfile quick `
+    -SkipQualityGate
+```
+
+## 8. Standard
+
+```powershell
+& .\scripts\run-staged-stress-test.ps1 `
+    -TestProfile standard `
+    -SkipQualityGate
+```
+
+## 9. Endurance
+
+```powershell
+& .\scripts\run-staged-stress-test.ps1 `
+    -TestProfile endurance `
+    -SkipQualityGate
+```
+
+## 10. Destructive
+
+```powershell
+& .\scripts\run-staged-stress-test.ps1 `
+    -TestProfile destructive `
+    -AllowDestructive `
+    -ConfirmTargetHost 'int2-jipsa.iptime.org' `
+    -SkipQualityGate
+```
+
+## 11. Qdrant Source 강제
+
+```powershell
+& .\scripts\run-staged-stress-test.ps1 `
+    -TestProfile quick `
+    -DataSource qdrant `
+    -SkipQualityGate
+```
+
+## 12. DB Source 강제
+
+`mariadb` 또는 `mysql` Client가 PATH에 있어야 합니다.
+
+```powershell
+& .\scripts\run-staged-stress-test.ps1 `
+    -TestProfile quick `
+    -DataSource database `
+    -SkipQualityGate
+```
+
+## 13. Snapshot 자동 탐색
+
+Snapshot을 다음 경로에 둡니다.
 
 ```text
-Ruff format: 변경 필요 없음
-Ruff lint: 오류 없음
-Mypy strict: 오류 없음
-Pytest: 전체 통과
+D:\Programming\INT2-Jipsa-Team04\RAG-Performance\snapshots\*.snapshot
 ```
 
-## 4. 측정 대상 RAG 품질 게이트
-
-독립 측정 프로그램의 오류와 RAG 자체 오류를 구분하기 위해 성능 측정 전에 RAG 품질
-게이트도 별도로 실행합니다.
+실행:
 
 ```powershell
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
-Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG'
-
-uv sync --frozen
-uv run ruff format --check src tests
-uv run ruff check src tests
-uv run mypy src tests
-uv run pytest
+& .\scripts\run-staged-stress-test.ps1 `
+    -TestProfile quick `
+    -DataSource snapshot `
+    -SkipQualityGate
 ```
 
-실제 CUDA, Local RAG DB, Qdrant, Microsoft Office COM 및 Claude까지 포함하는 기존 전체
-검증은 다음 스크립트를 사용합니다.
+## 14. 특정 Snapshot과 Seed 재현
 
 ```powershell
-Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG'
-
-& .\scripts\run-all-rag-tests.ps1
+& .\scripts\run-staged-stress-test.ps1 `
+    -TestProfile quick `
+    -DataSource snapshot `
+    -SnapshotPath `
+        '.\snapshots\rag_chunk_vector_qwen3_embedding_0_6b_1024.snapshot' `
+    -RandomSeed 159 `
+    -SkipQualityGate
 ```
 
-같은 Git Commit에서 `verify-rag-quality.ps1`이 이미 성공한 경우에만 다음처럼 일반 품질
-게이트를 생략할 수 있습니다.
+## 15. 선택 파일 수 변경
 
 ```powershell
-& .\scripts\run-all-rag-tests.ps1 -SkipQualityGate
+& .\scripts\run-staged-stress-test.ps1 `
+    -TestProfile quick `
+    -FilesPerUser 4 `
+    -QueryCount 12 `
+    -SkipQualityGate
 ```
 
-## 5. Claude 비용 없이 기본 측정
+후보 User가 4개 파일을 보유하지 않으면 가장 많은 활성 파일을 가진 User 중 무작위로
+선정하고 실제 가능한 파일 수만 사용합니다.
 
-인제스트와 청크 검색의 자원 사용량·동시성 한계를 먼저 확인하는 권장 첫 실행입니다.
-
-```powershell
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
-Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG-Performance'
-
-& .\scripts\run-benchmark.ps1 `
-    -DisableAnswers
-```
-
-이 실행은 다음 항목을 포함합니다.
-
-- Git Branch와 Commit SHA
-- CPU, RAM, GPU, VRAM
-- Host Disk I/O와 Network I/O
-- RAG Process Tree 자원 사용량
-- TEI·Qdrant Docker Container 자원 사용량
-- PDF, DOCX, PPTX, XLSX, TXT 형식별 인제스트
-- 일반 텍스트와 OCR 문서 비교
-- 파일 크기, 이미지 수, 실제 생성 청크 수 단계 증가
-- Cold Start와 Warm Run 분리
-- 청크 검색 API 단일·동시 요청
-- 동시성 증가에 따른 최초 포화 후보
-
-## 6. lookup·synthesis를 포함한 전체 측정
-
-Claude API 호출 비용이 발생합니다.
+## 16. 결과 확인
 
 ```powershell
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
-Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG-Performance'
-
-& .\scripts\run-benchmark.ps1
-```
-
-전체 실행은 다음 답변 측정을 추가합니다.
-
-- 단일 문서 `lookup`
-- 다중 문서 `synthesis`
-- 각 유형의 Cold·Warm 응답 시간
-- 동시 요청별 평균, p50, p95, p99
-- 성공률, 오류율과 처리량
-- Claude 입력·출력 Token 사용량
-
-## 7. 이미 실행 중인 Qdrant·TEI를 유지한 Warm 중심 측정
-
-```powershell
-Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG-Performance'
-
-& .\scripts\run-benchmark.ps1 `
-    -DisableAnswers `
-    -PreserveRunningInfrastructure
-```
-
-이 모드는 기존 Qdrant와 TEI를 재시작하지 않으므로 인프라 Cold Start 결과로 해석하면
-안 됩니다. RAG API Process와 요청 단위 Cold·Warm 구분은 계속 기록합니다.
-
-## 8. 측정 종료 후 인프라 유지
-
-연속 측정이나 실패 분석을 위해 Qdrant와 TEI를 그대로 유지합니다.
-
-```powershell
-Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG-Performance'
-
-& .\scripts\run-benchmark.ps1 `
-    -DisableAnswers `
-    -KeepInfrastructureRunning
-```
-
-## 9. 전용 테스트 데이터 유지
-
-실패한 DB·Qdrant 상태를 직접 확인해야 할 때만 사용합니다.
-
-```powershell
-Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG-Performance'
-
-& .\scripts\run-benchmark.ps1 `
-    -DisableAnswers `
-    -KeepTestData `
-    -KeepInfrastructureRunning
-```
-
-`JIPSA_RAG_APP_ENV=test`와 Issue #159 전용 `Users_IDX`·`File_IDX` 범위에서만 동작하지만,
-일반 측정은 자동 정리를 사용하는 것이 안전합니다.
-
-## 10. 별도 위치의 RAG를 대상으로 측정
-
-```powershell
-Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG-Performance'
-
-& .\scripts\run-benchmark.ps1 `
-    -RagRoot 'D:\Programming\INT2-Jipsa-Team04\RAG' `
-    -DisableAnswers
-```
-
-## 11. 사용자 정의 측정 계획 실행
-
-기본 계획 파일을 복사해 동시성, 반복 횟수와 Fixture 크기를 변경한 뒤 다음처럼 실행합니다.
-
-```powershell
-Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG-Performance'
-
-& .\scripts\run-benchmark.ps1 `
-    -PlanPath 'D:\Programming\INT2-Jipsa-Team04\RAG-Performance\configs\benchmark-plan.json' `
-    -DisableAnswers
-```
-
-이번 이슈는 측정만 수행하므로 계획 변경은 부하 수준과 반복 횟수에 한정합니다. RAG의
-청킹 정책, Timeout, 모델, 동시성 제한이나 Qdrant 설정은 자동으로 변경하지 않습니다.
-
-## 12. 결과 확인
-
-```powershell
-Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG-Performance'
-
 $LatestRun = Get-ChildItem `
-    -LiteralPath '.\artifacts' `
+    -LiteralPath '.\artifacts\external-stress' `
     -Directory |
-    Sort-Object -Property LastWriteTime -Descending |
+    Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
 
-$LatestRun.FullName
-Get-Content -LiteralPath (Join-Path $LatestRun.FullName 'report.md') -Encoding UTF8
+Get-Content `
+    -LiteralPath (Join-Path $LatestRun.FullName 'report.md') `
+    -Encoding UTF8
+
+Invoke-Item `
+    -LiteralPath (Join-Path $LatestRun.FullName 'report.html')
+
+Invoke-Item `
+    -LiteralPath (
+        Join-Path $LatestRun.FullName 'external-stress\report.html'
+    )
 ```
 
-대표 결과 파일:
-
-```text
-artifacts/<run-id>/
-├─ environment.json
-├─ benchmark_plan.resolved.json
-├─ all_owned_fixtures.json
-├─ fixtures/
-├─ target.log
-├─ request_records.csv
-├─ level_summaries.csv
-├─ resource_samples.jsonl
-├─ resource_samples.csv
-├─ resource_summaries.csv
-├─ ingest_stage_events.csv
-├─ ingest_stage_resource_summary.csv
-├─ host_io_deltas.csv
-├─ saturation_candidates.json
-├─ report.json
-└─ report.md
-```
-
-## 13. 권장 최종 검증 순서
+## 17. 자동 선정 정보 확인
 
 ```powershell
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+$PublicTarget = Get-Content `
+    -LiteralPath (
+        Join-Path $LatestRun.FullName `
+            'external-stress\target_config.public.json'
+    ) `
+    -Raw `
+    -Encoding UTF8 |
+    ConvertFrom-Json
 
-Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG-Performance'
-uv sync --frozen
-uv run ruff format --check src tests
-uv run ruff check src tests
-uv run mypy src tests
-uv run pytest
-
-Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG'
-uv sync --frozen
-uv run ruff format --check src tests
-uv run ruff check src tests
-uv run mypy src tests
-uv run pytest
-
-Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG-Performance'
-& .\scripts\run-benchmark.ps1 -DisableAnswers -SkipQualityGate
+$PublicTarget |
+    Select-Object `
+        target_base_url,
+        selection_source,
+        selection_seed,
+        candidate_user_count,
+        candidate_file_count,
+        candidate_chunk_count,
+        test_user_idx,
+        reference_file_idxs,
+        query_count
 ```
 
-`-SkipQualityGate`는 같은 Commit과 같은 파일 상태에서 바로 앞의 품질 검사가 모두 성공한
-경우에만 사용합니다.
+## 18. README 자동 갱신 확인
+
+```powershell
+Select-String `
+    -Path '.\README.md' `
+    -Pattern `
+        '16. 마지막 검증 기록|상태:|Run ID:|데이터 Source|선정 Seed'
+
+Select-String `
+    -Path '.\README.html' `
+    -Pattern `
+        '16. 마지막 검증 기록|status-passed|status-degraded|status-failed|데이터 Source'
+```
+
+## 19. Snapshot 임시 Container 정리 확인
+
+정상·실패 여부와 관계없이 이름이 `jipsa-perf-snapshot-`으로 시작하는 임시 Container가
+남아 있지 않아야 합니다.
+
+```powershell
+docker ps -a `
+    --filter 'name=jipsa-perf-snapshot-' `
+    --format '{{.Names}}'
+```
+
+정상 출력은 빈 문자열입니다.
+
+
+---
+
+## 13. Quick Soak 실제 2분 검증
+
+Quick 실행 후 최신 결과에서 Soak가 최소 119초 이상 실행됐는지 확인합니다. 1초 허용치는
+Thread 종료와 Clock 경계 차이를 위한 것입니다.
+
+```powershell
+$LatestRun = Get-ChildItem `
+    -LiteralPath '.\artifacts\external-stress' `
+    -Directory |
+    Sort-Object LastWriteTimeUtc -Descending |
+    Select-Object -First 1
+
+$Soak = Get-Content `
+    -LiteralPath (Join-Path $LatestRun.FullName 'external-stress\stage_summaries.json') `
+    -Raw `
+    -Encoding UTF8 |
+    ConvertFrom-Json |
+    Select-Object -ExpandProperty records |
+    Where-Object { $_.mode -eq 'soak' } |
+    Select-Object -First 1
+
+if ($null -eq $Soak) {
+    throw '최신 결과에서 Soak Stage를 찾을 수 없습니다.'
+}
+if ([double] $Soak.elapsed_seconds -lt 119.0) {
+    throw "Soak가 목표 2분보다 일찍 종료되었습니다: $($Soak.elapsed_seconds)s"
+}
+if ($Soak.stop_reason -eq 'soak_max_requests_reached_before_duration') {
+    throw 'Soak 요청 안전 상한이 목표 시간보다 먼저 소진되었습니다.'
+}
+
+$Soak |
+    Select-Object `
+        stage_id,
+        elapsed_seconds,
+        submitted_request_count,
+        throughput_requests_per_second,
+        status,
+        stop_reason |
+    Format-List
+```
+
+
+## 13-1. 모든 Profile Soak 설정 검증
+
+Quick뿐 아니라 Standard, Endurance, Destructive도 요청 수 상한 없이 설정 시간 전체를
+사용하는지 확인합니다.
+
+```powershell
+$ExpectedDurations = @{
+    quick       = 120.0
+    standard    = 1200.0
+    endurance   = 18000.0
+    destructive = 900.0
+}
+
+foreach ($Profile in $ExpectedDurations.Keys) {
+    $Plan = Get-Content `
+        -LiteralPath ".\configs\stress-plan-$Profile.json" `
+        -Raw `
+        -Encoding UTF8 |
+        ConvertFrom-Json
+
+    $Soak = $Plan.stages |
+        Where-Object { $_.mode -eq 'soak' } |
+        Select-Object -First 1
+
+    if ($null -eq $Soak) {
+        throw "$Profile Profile에 Soak Stage가 없습니다."
+    }
+    if ([double] $Soak.duration_seconds -ne $ExpectedDurations[$Profile]) {
+        throw "$Profile Soak 시간이 계약과 다릅니다: $($Soak.duration_seconds)s"
+    }
+    if ([int64] $Soak.max_requests -ne 0) {
+        throw "$Profile Soak의 요청 수 상한이 비활성화되지 않았습니다."
+    }
+
+    [PSCustomObject]@{
+        Profile         = $Profile
+        DurationSeconds = $Soak.duration_seconds
+        MaxRequests     = $Soak.max_requests
+        DurationFirst   = $Soak.max_requests -eq 0
+    }
+}
+```
+
+## 14. Quick → Standard Capacity Ladder
+
+Quick C32에서 실패가 없으면 같은 자동 선정 데이터와 같은 Seed로 Standard C128까지 자동
+승격합니다. Standard에서 최초 실패가 나오면 더 높은 Profile을 실행하지 않습니다.
+
+```powershell
+& .\scripts\run-capacity-ladder.ps1 `
+    -SkipQualityGate
+```
+
+이미 Quick를 실행했다면 Standard부터 시작합니다.
+
+```powershell
+& .\scripts\run-capacity-ladder.ps1 `
+    -StartProfile standard `
+    -SkipQualityGate
+```
+
+Standard C128에서도 실패가 없고 승인된 Test 환경에서 C256까지 확인해야 하는 경우:
+
+```powershell
+& .\scripts\run-capacity-ladder.ps1 `
+    -AllowDestructive `
+    -ConfirmTargetHost 'int2-jipsa.iptime.org' `
+    -SkipQualityGate
+```
+
+결과 요약은 다음 경로에 생성됩니다.
+
+```text
+artifacts/external-stress/capacity-ladder-*.json
+artifacts/external-stress/capacity-ladder-*.md
+```

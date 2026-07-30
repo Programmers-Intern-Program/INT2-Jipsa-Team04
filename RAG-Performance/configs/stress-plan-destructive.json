@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "suite_name": "issue-159-external-stress-destructive",
+  "profile": "destructive",
+  "description": "외부 RAG 검색 API에 고동시성 Burst, Relay, Batch, Ramp, Spike와 15분 Soak를 적용해 계획 범위 내 최초 실패 경계를 찾는다. 서버 Process나 Container는 제어하지 않는다. Soak는 요청 수 상한 없이 설정 시간 전체를 수행한다.",
+  "destructive": true,
+  "requires_explicit_confirmation": true,
+  "sla_seconds": 3.0,
+  "max_total_requests": 200000,
+  "stop_policy": {
+    "max_error_rate": 0.2,
+    "max_p95_ms": 30000.0,
+    "max_system_memory_percent": 94.0,
+    "max_gpu_memory_percent": 99.0,
+    "stop_on_target_exit": false,
+    "consecutive_failed_stages": 1
+  },
+  "stages": [
+    {
+      "stage_id": "d01-burst",
+      "name": "1단계 · 외부 Endpoint 순간 포화",
+      "mode": "burst",
+      "operation": "search",
+      "enabled": true,
+      "destructive": true,
+      "total_requests": 1000,
+      "concurrency": 256,
+      "cooldown_seconds": 10.0
+    },
+    {
+      "stage_id": "d02-interval",
+      "name": "2단계 · 외부 극한 고밀도 릴레이",
+      "mode": "interval",
+      "operation": "search",
+      "enabled": true,
+      "destructive": true,
+      "total_requests": 2000,
+      "concurrency": 256,
+      "interval_seconds": 0.005,
+      "cooldown_seconds": 15.0
+    },
+    {
+      "stage_id": "d03-batch",
+      "name": "3단계 · 외부 극한 Batch Wave",
+      "mode": "batch",
+      "operation": "search",
+      "enabled": true,
+      "destructive": true,
+      "total_requests": 5000,
+      "batch_size": 250,
+      "max_workers": 256,
+      "interval_seconds": 0.25,
+      "cooldown_seconds": 20.0
+    },
+    {
+      "stage_id": "d04-ramp",
+      "name": "4단계 · 외부 검색 최초 실패 Ramp",
+      "mode": "ramp",
+      "operation": "search",
+      "enabled": true,
+      "destructive": true,
+      "start_concurrency": 32,
+      "step_concurrency": 32,
+      "max_concurrency": 256,
+      "requests_per_worker": 4,
+      "wave_interval_seconds": 3.0,
+      "cooldown_seconds": 20.0
+    },
+    {
+      "stage_id": "d05-chaos",
+      "name": "5단계 · 외부 10분 대형 Spike",
+      "mode": "chaos",
+      "operation": "search",
+      "enabled": true,
+      "destructive": true,
+      "duration_seconds": 600.0,
+      "baseline_tps": 50,
+      "spike_size": 400,
+      "spike_interval_seconds": 20.0,
+      "max_workers": 256,
+      "max_pending_multiplier": 8,
+      "cooldown_seconds": 30.0
+    },
+    {
+      "stage_id": "d06-soak",
+      "name": "추가 · 외부 고동시성 15분 지속 압박",
+      "mode": "soak",
+      "operation": "search",
+      "enabled": true,
+      "destructive": true,
+      "duration_seconds": 900.0,
+      "window_seconds": 60.0,
+      "concurrency": 128,
+      "max_requests": 0,
+      "cooldown_seconds": 1.0
+    }
+  ]
+}

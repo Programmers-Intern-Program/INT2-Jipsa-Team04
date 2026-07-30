@@ -4,6 +4,11 @@
 # Generated benchmark fixtures and measurement artifacts
 artifacts/
 
+# Local target overrides and Qdrant snapshots can contain environment-specific metadata.
+configs/external-target.local.json
+snapshots/*.snapshot
+snapshots/**/*.snapshot
+
 # Python caches
 __pycache__/
 *.py[cod]

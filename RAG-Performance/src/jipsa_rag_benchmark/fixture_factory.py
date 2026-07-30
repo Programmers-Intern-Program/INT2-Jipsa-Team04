@@ -205,7 +205,7 @@ class FixtureFactory:
         repetitions: list[str] = []
         for repetition_index in range(profile.repetitions_per_unit):
             digest = hashlib.sha256(
-                f"{case_id}:{unit_index}:{repetition_index}".encode("utf-8")
+                f"{case_id}:{unit_index}:{repetition_index}".encode()
             ).hexdigest()
             repetitions.append(
                 " ".join(
@@ -243,14 +243,17 @@ class FixtureFactory:
 
         # 문서 크기가 이미지 수에 따라 실제로 증가하도록 텍스트 영역 밖에 결정적인
         # 회색 패턴을 배치한다. OCR 핵심 문구는 흰 배경 중앙에 유지한다.
-        seed = hashlib.sha256(f"{case_id}:{image_index}".encode("utf-8")).digest()
+        seed = hashlib.sha256(f"{case_id}:{image_index}".encode()).digest()
         for block_index in range(180):
             source = seed[block_index % len(seed)]
-            x = 20 + ((source * 37 + block_index * 53) % 1540)
-            y = 520 + ((source * 19 + block_index * 29) % 340)
+            block_x = 20 + ((source * 37 + block_index * 53) % 1540)
+            block_y = 520 + ((source * 19 + block_index * 29) % 340)
             size = 3 + (source % 10)
             shade = 205 + (source % 40)
-            draw.rectangle((x, y, x + size, y + size), fill=(shade, shade, shade))
+            draw.rectangle(
+                (block_x, block_y, block_x + size, block_y + size),
+                fill=(shade, shade, shade),
+            )
 
         font = _load_ocr_font(size=64)
         small_font = _load_ocr_font(size=42)
@@ -261,14 +264,14 @@ class FixtureFactory:
             "RESOURCE LIMIT BENCHMARK",
         )
 
-        y = 80
+        text_y = 80.0
         for line_index, line in enumerate(lines):
             selected_font = font if line_index == 0 else small_font
             bounds = draw.textbbox((0, 0), line, font=selected_font)
-            text_width = bounds[2] - bounds[0]
-            x = max((width - text_width) // 2, 40)
-            draw.text((x, y), line, fill="black", font=selected_font)
-            y += 105
+            text_width = float(bounds[2] - bounds[0])
+            text_x = max((float(width) - text_width) / 2.0, 40.0)
+            draw.text((text_x, text_y), line, fill="black", font=selected_font)
+            text_y += 105.0
 
         output_path = self._image_directory / f"{file_idx}-{image_index + 1:03d}.png"
         image.save(output_path, format="PNG", optimize=False)
@@ -333,9 +336,11 @@ class FixtureFactory:
             document.add_picture(str(image_path), width=DocxInches(6.2))
             # 캡션은 OCR-only 비교에서 일반 텍스트 근거가 되지 않도록 추가하지 않는다.
             if image_index < len(image_paths) - 1:
-                document.add_page_break()
+                # python-docx의 타입 Stub이 반환 타입을 제공하지 않으므로 이 호출 경계만
+                # 제한적으로 무시한다. 실제 동작과 생성 문서 구조는 단위 테스트로 검증한다.
+                document.add_page_break()  # type: ignore[no-untyped-call]
         document.core_properties.title = title
-        document.save(output_path)
+        document.save(str(output_path))
 
     @staticmethod
     def _write_pptx(
@@ -379,7 +384,7 @@ class FixtureFactory:
         if len(presentation.slides) == 0:
             presentation.slides.add_slide(blank_layout)
         presentation.core_properties.title = title
-        presentation.save(output_path)
+        presentation.save(str(output_path))
 
     @staticmethod
     def _write_xlsx(

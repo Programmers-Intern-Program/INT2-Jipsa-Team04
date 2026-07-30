@@ -16,11 +16,11 @@ import argparse
 import csv
 import importlib.metadata
 import json
-import os
 import platform
 import secrets
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from collections import defaultdict
@@ -28,6 +28,7 @@ from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Final, TextIO, cast
 from uuid import uuid4
@@ -156,9 +157,7 @@ class TargetLogCollector:
         if not isinstance(event, str) or event not in _STAGE_EVENTS:
             return None
         file_idx = _optional_positive_int(payload.get("file_idx"))
-        duration_ms = _optional_float(
-            payload.get("duration_ms", payload.get("total_duration_ms"))
-        )
+        duration_ms = _optional_float(payload.get("duration_ms", payload.get("total_duration_ms")))
         if file_idx is None or duration_ms is None:
             return None
 
@@ -175,16 +174,16 @@ class TargetLogCollector:
             stage=(
                 stage
                 if isinstance(stage, str) and stage
-                else "file_processing" if event == "file_processing_completed" else event
+                else "file_processing"
+                if event == "file_processing_completed"
+                else event
             ),
             event=event,
             completed_at_utc=_utc_iso(completed_epoch),
             completed_epoch_seconds=completed_epoch,
             duration_ms=duration_ms,
             chunk_count=_optional_non_negative_int(payload.get("chunk_count")),
-            structure_unit_count=_optional_non_negative_int(
-                payload.get("structure_unit_count")
-            ),
+            structure_unit_count=_optional_non_negative_int(payload.get("structure_unit_count")),
             text_unit_count=_optional_non_negative_int(payload.get("text_unit_count")),
             size_bytes=_optional_non_negative_int(payload.get("size_bytes")),
         )
@@ -488,7 +487,7 @@ class BenchmarkRunner:
         self._sampler.set_target_pid(process.pid)
         if process.stdout is None:
             raise RuntimeError("Target process stdout pipe was not created.")
-        self._target_log_collector.start(process.stdout)
+        self._target_log_collector.start(cast(TextIO, process.stdout))
 
         health = self._wait_target_ready(timeout_seconds=300.0)
         pid = _optional_positive_int(health.get("pid"))
@@ -617,24 +616,20 @@ class BenchmarkRunner:
         raise TimeoutError(f"No service readiness endpoint succeeded: {list(urls)}")
 
     def _run_cold_warm_ingest(self) -> None:
-        for label, phase in (
+        for label, raw_phase in (
             ("cold_text", "cold"),
             ("warm_text", "warm"),
             ("cold_ocr", "cold"),
             ("warm_ocr", "warm"),
         ):
             fixture = self._cold_warm_cases[label]
+            phase = cast(BenchmarkPhase, raw_phase)
             self._run_request_batch(
                 case_id=label,
                 operation="ingest",
-                phase=cast(BenchmarkPhase, phase),
+                phase=phase,
                 concurrency=1,
-                tasks=(
-                    lambda fixture=fixture, phase=phase: self._ingest_request(
-                        fixture,
-                        phase=cast(BenchmarkPhase, phase),
-                    ),
-                ),
+                tasks=(partial(self._ingest_request, fixture, phase=phase),),
             )
 
     def _run_format_coverage_and_scale_ingest(self) -> None:
@@ -645,18 +640,14 @@ class BenchmarkRunner:
                 operation="ingest",
                 phase=phase,
                 concurrency=1,
-                tasks=(
-                    lambda fixture=fixture, phase=phase: self._ingest_request(
-                        fixture,
-                        phase=phase,
-                    ),
-                ),
+                tasks=(partial(self._ingest_request, fixture, phase=phase),),
             )
 
     def _run_ingest_concurrency(self) -> None:
         for concurrency, fixtures in self._ingest_concurrency_cases.items():
             tasks = tuple(
-                lambda fixture=fixture, concurrency=concurrency: self._ingest_request(
+                partial(
+                    self._ingest_request,
                     fixture,
                     phase="concurrency",
                     concurrency=concurrency,
@@ -679,7 +670,7 @@ class BenchmarkRunner:
             operation="search",
             phase="cold",
             concurrency=1,
-            tasks=(lambda: self._api_request("search-cold", "search", "cold", 1, payload),),
+            tasks=(partial(self._api_request, "search-cold", "search", "cold", 1, payload),),
         )
         for _ in range(self._plan.warmup_requests):
             self._api_request("search-warmup", "search", "warm", 1, payload, store=False)
@@ -688,12 +679,13 @@ class BenchmarkRunner:
             operation="search",
             phase="warm",
             concurrency=1,
-            tasks=(lambda: self._api_request("search-warm", "search", "warm", 1, payload),),
+            tasks=(partial(self._api_request, "search-warm", "search", "warm", 1, payload),),
         )
 
         for concurrency in self._plan.search.load.concurrency_levels:
             tasks = tuple(
-                lambda concurrency=concurrency: self._api_request(
+                partial(
+                    self._api_request,
                     f"search-concurrency-{concurrency}",
                     "search",
                     "concurrency",
@@ -730,9 +722,10 @@ class BenchmarkRunner:
                 phase="cold",
                 concurrency=1,
                 tasks=(
-                    lambda operation=operation_value, payload=payload: self._api_request(
+                    partial(
+                        self._api_request,
                         f"{operation}-cold",
-                        operation,
+                        operation_value,
                         "cold",
                         1,
                         payload,
@@ -754,9 +747,10 @@ class BenchmarkRunner:
                 phase="warm",
                 concurrency=1,
                 tasks=(
-                    lambda operation=operation_value, payload=payload: self._api_request(
+                    partial(
+                        self._api_request,
                         f"{operation}-warm",
-                        operation,
+                        operation_value,
                         "warm",
                         1,
                         payload,
@@ -787,7 +781,8 @@ class BenchmarkRunner:
     ) -> None:
         for concurrency in levels:
             tasks = tuple(
-                lambda concurrency=concurrency: self._api_request(
+                partial(
+                    self._api_request,
                     f"{operation}-concurrency-{concurrency}",
                     operation,
                     "concurrency",
@@ -1144,14 +1139,12 @@ class BenchmarkRunner:
             "logical_cpu_count": psutil.cpu_count(logical=True),
             "total_memory_bytes": int(memory.total),
             "benchmark_python_version": platform.python_version(),
-            "benchmark_python_executable": os.sys.executable,
+            "benchmark_python_executable": sys.executable,
             "benchmark_package_versions": package_versions,
             "rag_runtime_versions": parsed_rag_versions,
             "nvidia_smi_summary": nvidia.splitlines() if nvidia else [],
             "uv_version": command(["uv", "--version"]),
-            "docker_version": command(
-                ["docker", "version", "--format", "{{.Server.Version}}"]
-            ),
+            "docker_version": command(["docker", "version", "--format", "{{.Server.Version}}"]),
             "docker_compose_version": command(["docker", "compose", "version", "--short"]),
             "safe_rag_settings": safe_settings,
             "target_base_url": self._target_base_url,
@@ -1305,7 +1298,7 @@ def _find_saturation_candidates(
             grouped[summary.operation].append(summary)
 
     candidates: list[SaturationCandidate] = []
-    for operation, values in grouped.items():
+    for _operation, values in grouped.items():
         candidate = detect_saturation_candidate(tuple(values), policy=plan.saturation)
         if candidate is not None:
             candidates.append(candidate)
@@ -1515,9 +1508,7 @@ def _run_command(
         errors="replace",
     )
     if result.returncode != 0 and not allow_failure:
-        raise RuntimeError(
-            f"Command failed with exit code {result.returncode}: {command[0]}"
-        )
+        raise RuntimeError(f"Command failed with exit code {result.returncode}: {command[0]}")
     if not capture_output:
         return ""
     return result.stdout or ""

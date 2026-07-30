@@ -41,8 +41,5 @@ def test_target_log_collector_ignores_non_stage_log(tmp_path: Path) -> None:
 
     assert collector._parse_stage_event("not-json") is None
     assert (
-        collector._parse_stage_event(
-            '{"event":"http_request_completed","status_code":200}'
-        )
-        is None
+        collector._parse_stage_event('{"event":"http_request_completed","status_code":200}') is None
     )

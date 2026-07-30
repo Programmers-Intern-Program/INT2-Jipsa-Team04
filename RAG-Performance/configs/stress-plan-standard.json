@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "suite_name": "issue-159-external-stress-standard",
+  "profile": "standard",
+  "description": "외부 RAG 검색 API의 1~5단계와 20분 Soak를 약 30~45분 동안 실행해 표준 처리 한계와 회복성을 측정한다. Soak는 요청 수 상한 없이 설정 시간 전체를 수행한다.",
+  "destructive": false,
+  "requires_explicit_confirmation": false,
+  "sla_seconds": 3.0,
+  "max_total_requests": 50000,
+  "stop_policy": {
+    "max_error_rate": 0.1,
+    "max_p95_ms": 10000.0,
+    "max_system_memory_percent": 93.0,
+    "max_gpu_memory_percent": 99.0,
+    "stop_on_target_exit": false,
+    "consecutive_failed_stages": 1
+  },
+  "stages": [
+    {
+      "stage_id": "s01-burst",
+      "name": "1단계 · 외부 대규모 순간 폭주",
+      "mode": "burst",
+      "operation": "search",
+      "enabled": true,
+      "destructive": false,
+      "total_requests": 200,
+      "concurrency": 32,
+      "cooldown_seconds": 5.0
+    },
+    {
+      "stage_id": "s02-interval",
+      "name": "2단계 · 외부 고밀도 릴레이",
+      "mode": "interval",
+      "operation": "search",
+      "enabled": true,
+      "destructive": false,
+      "total_requests": 300,
+      "concurrency": 64,
+      "interval_seconds": 0.02,
+      "cooldown_seconds": 5.0
+    },
+    {
+      "stage_id": "s03-batch",
+      "name": "3단계 · 외부 대형 Batch Wave",
+      "mode": "batch",
+      "operation": "search",
+      "enabled": true,
+      "destructive": false,
+      "total_requests": 1000,
+      "batch_size": 50,
+      "max_workers": 100,
+      "interval_seconds": 0.5,
+      "cooldown_seconds": 5.0
+    },
+    {
+      "stage_id": "s04-ramp",
+      "name": "4단계 · 외부 검색 처리 한계 Ramp",
+      "mode": "ramp",
+      "operation": "search",
+      "enabled": true,
+      "destructive": false,
+      "start_concurrency": 8,
+      "step_concurrency": 8,
+      "max_concurrency": 128,
+      "requests_per_worker": 2,
+      "wave_interval_seconds": 2.0,
+      "cooldown_seconds": 10.0
+    },
+    {
+      "stage_id": "s05-chaos",
+      "name": "5단계 · 외부 5분 피크 복구",
+      "mode": "chaos",
+      "operation": "search",
+      "enabled": true,
+      "destructive": false,
+      "duration_seconds": 300.0,
+      "baseline_tps": 20,
+      "spike_size": 200,
+      "spike_interval_seconds": 30.0,
+      "max_workers": 256,
+      "max_pending_multiplier": 4,
+      "cooldown_seconds": 10.0
+    },
+    {
+      "stage_id": "s06-soak",
+      "name": "추가 · 외부 20분 지속 부하",
+      "mode": "soak",
+      "operation": "search",
+      "enabled": true,
+      "destructive": false,
+      "duration_seconds": 1200.0,
+      "window_seconds": 120.0,
+      "concurrency": 32,
+      "max_requests": 0,
+      "cooldown_seconds": 2.0
+    }
+  ]
+}

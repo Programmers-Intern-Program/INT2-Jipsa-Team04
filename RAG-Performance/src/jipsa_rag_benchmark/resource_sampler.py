@@ -13,10 +13,11 @@ import re
 import subprocess
 import threading
 import time
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final, Iterable, Mapping, Sequence, TypedDict, cast
+from typing import Final, TypedDict, cast
 
 import psutil
 
@@ -310,7 +311,11 @@ class ResourceSampler:
         while not self._stop_event.is_set():
             started = time.perf_counter()
             sample = self._collect_sample(started_at=started)
-            serialized = json.dumps(sample.to_dict(), ensure_ascii=False, separators=(",", ":"))
+            serialized = json.dumps(
+                sample.to_dict(),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
             with self._output_path.open("a", encoding="utf-8") as stream:
                 stream.write(serialized)
                 stream.write("\n")
@@ -454,7 +459,9 @@ def capture_host_io_snapshot() -> HostIoSnapshot:
         )
 
 
-def summarize_resource_samples(samples: Sequence[ResourceSample]) -> list[dict[str, object]]:
+def summarize_resource_samples(
+    samples: Sequence[ResourceSample],
+) -> list[dict[str, object]]:
     """operation·phase·concurrency·case별 평균과 최대 자원을 계산한다."""
 
     groups: dict[tuple[str, str, int, str], list[ResourceSample]] = {}

@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "campaign_name": "issue-159-reliability-smoke",
+  "soak": {
+    "enabled": true,
+    "duration_seconds": 300,
+    "window_seconds": 60,
+    "concurrency": 2,
+    "max_requests": 200,
+    "cooldown_seconds": 2.0,
+    "latency_p95_growth_report_percent": 20.0,
+    "rss_p95_growth_report_percent": 15.0,
+    "vram_p95_growth_report_percent": 15.0,
+    "thread_growth_report_count": 5,
+    "handle_growth_report_count": 100
+  },
+  "failure_probes": {
+    "timeout": {
+      "enabled": true,
+      "delay_seconds": 2.0,
+      "client_timeout_seconds": 0.25
+    },
+    "oom": {
+      "enabled": true,
+      "mode": "controlled_worker",
+      "bounded_allocation_mib": 64
+    },
+    "external_services": {
+      "enabled": true,
+      "services": [
+        "embedding",
+        "qdrant"
+      ],
+      "request_timeout_seconds": 15.0,
+      "recovery_timeout_seconds": 1200.0
+    },
+    "abnormal_termination": {
+      "enabled": true,
+      "restart_for_cleanup": true
+    }
+  },
+  "isolation": {
+    "qdrant_collection_prefix": "rag_benchmark_issue_159_",
+    "test_user_idx_min": 159000,
+    "file_idx_min": 1590000,
+    "require_test_app_env": true,
+    "database_name_override": null
+  },
+  "cleanup": {
+    "restore_infrastructure": true,
+    "verify_database_rows_zero": true,
+    "verify_qdrant_collection_absent": true,
+    "verify_temp_files_zero": true,
+    "verify_target_process_stopped": true
+  },
+  "scope_guard": {
+    "forbidden_environment_overrides": [
+      "JIPSA_RAG_FILE_DOWNLOAD_MAX_SIZE_BYTES",
+      "JIPSA_RAG_EMBEDDING_BATCH_SIZE",
+      "JIPSA_RAG_EMBEDDING_TIMEOUT_SECONDS",
+      "JIPSA_RAG_OCR_MAX_CONCURRENCY",
+      "JIPSA_RAG_CHUNK_SIZE_CHARS",
+      "JIPSA_RAG_CHUNK_OVERLAP_CHARS",
+      "JIPSA_RAG_QDRANT_TIMEOUT_SECONDS",
+      "JIPSA_RAG_APP_SERVER_MAX_ATTEMPTS",
+      "JIPSA_RAG_APP_SERVER_CONNECT_TIMEOUT_SECONDS",
+      "JIPSA_RAG_APP_SERVER_READ_TIMEOUT_SECONDS"
+    ],
+    "protected_repository_paths": [
+      "RAG/src",
+      "RAG/pyproject.toml",
+      "RAG/infra/qdrant/compose.yaml",
+      "RAG/.env.local"
+    ]
+  }
+}

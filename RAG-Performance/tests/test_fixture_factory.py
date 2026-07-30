@@ -36,9 +36,7 @@ def test_fixture_factory_generates_five_text_formats_and_ocr_pdf(tmp_path: Path)
     assert {fixture.content_origin for fixture in fixtures} == {"text", "ocr"}
 
     text_fixtures = {
-        fixture.file_type: fixture
-        for fixture in fixtures
-        if fixture.content_origin == "text"
+        fixture.file_type: fixture for fixture in fixtures if fixture.content_origin == "text"
     }
     assert text_fixtures["pdf"].search_query in _pdf_text(text_fixtures["pdf"].path)
     assert text_fixtures["docx"].search_query in _docx_text(text_fixtures["docx"].path)
@@ -115,12 +113,12 @@ def _pdf_text(path: Path) -> str:
 
 
 def _docx_text(path: Path) -> str:
-    document = Document(path)
+    document = Document(str(path))
     return "\n".join(paragraph.text for paragraph in document.paragraphs)
 
 
 def _pptx_text(path: Path) -> str:
-    presentation = Presentation(path)
+    presentation = Presentation(str(path))
     return "\n".join(
         shape.text
         for slide in presentation.slides

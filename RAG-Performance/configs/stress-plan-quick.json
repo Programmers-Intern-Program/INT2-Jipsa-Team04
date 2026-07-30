@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "suite_name": "issue-159-external-stress-quick",
+  "profile": "quick",
+  "description": "외부 RAG 검색 API의 1~5단계 Burst, Interval, Batch, Ramp, Chaos와 실제 2분 전체 Soak를 검증한다. Quick Ramp 상한에서 실패가 없으면 Capacity Ladder가 Standard로 자동 승격할 수 있다. Soak는 요청 수 상한 없이 설정 시간 전체를 수행한다.",
+  "destructive": false,
+  "requires_explicit_confirmation": false,
+  "sla_seconds": 3.0,
+  "max_total_requests": 55000,
+  "stop_policy": {
+    "max_error_rate": 0.05,
+    "max_p95_ms": 5000.0,
+    "max_system_memory_percent": 92.0,
+    "max_gpu_memory_percent": 99.0,
+    "stop_on_target_exit": false,
+    "consecutive_failed_stages": 1
+  },
+  "stages": [
+    {
+      "stage_id": "q01-burst",
+      "name": "1단계 · 외부 Endpoint 순간 동시 폭주",
+      "mode": "burst",
+      "operation": "search",
+      "enabled": true,
+      "destructive": false,
+      "total_requests": 40,
+      "concurrency": 8,
+      "cooldown_seconds": 2.0
+    },
+    {
+      "stage_id": "q02-interval",
+      "name": "2단계 · 외부 Network 릴레이",
+      "mode": "interval",
+      "operation": "search",
+      "enabled": true,
+      "destructive": false,
+      "total_requests": 80,
+      "concurrency": 16,
+      "interval_seconds": 0.05,
+      "cooldown_seconds": 2.0
+    },
+    {
+      "stage_id": "q03-batch",
+      "name": "3단계 · 외부 Batch Wave",
+      "mode": "batch",
+      "operation": "search",
+      "enabled": true,
+      "destructive": false,
+      "total_requests": 160,
+      "batch_size": 16,
+      "max_workers": 32,
+      "interval_seconds": 0.5,
+      "cooldown_seconds": 2.0
+    },
+    {
+      "stage_id": "q04-ramp",
+      "name": "4단계 · 외부 검색 동시성 Ramp",
+      "mode": "ramp",
+      "operation": "search",
+      "enabled": true,
+      "destructive": false,
+      "start_concurrency": 4,
+      "step_concurrency": 4,
+      "max_concurrency": 32,
+      "requests_per_worker": 2,
+      "wave_interval_seconds": 1.0,
+      "cooldown_seconds": 2.0
+    },
+    {
+      "stage_id": "q05-chaos",
+      "name": "5단계 · 외부 기본 TPS와 반복 Spike",
+      "mode": "chaos",
+      "operation": "search",
+      "enabled": true,
+      "destructive": false,
+      "duration_seconds": 60.0,
+      "baseline_tps": 5,
+      "spike_size": 40,
+      "spike_interval_seconds": 15.0,
+      "max_workers": 64,
+      "max_pending_multiplier": 4,
+      "cooldown_seconds": 2.0
+    },
+    {
+      "stage_id": "q06-soak",
+      "name": "추가 · 외부 2분 전체 지속 안정성 Window",
+      "mode": "soak",
+      "operation": "search",
+      "enabled": true,
+      "destructive": false,
+      "duration_seconds": 120.0,
+      "window_seconds": 30.0,
+      "concurrency": 8,
+      "max_requests": 0,
+      "cooldown_seconds": 1.0
+    }
+  ]
+}

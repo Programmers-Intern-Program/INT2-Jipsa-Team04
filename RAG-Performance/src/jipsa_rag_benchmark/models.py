@@ -324,10 +324,7 @@ def load_benchmark_plan(path: Path) -> BenchmarkPlan:
     if schema_version != 1:
         raise ValueError(f"Unsupported benchmark plan schema_version: {schema_version}")
 
-    profiles = tuple(
-        _parse_fixture_profile(value)
-        for value in _objects(raw, "fixture_profiles")
-    )
+    profiles = tuple(_parse_fixture_profile(value) for value in _objects(raw, "fixture_profiles"))
     if not profiles:
         raise ValueError("fixture_profiles must contain at least one profile.")
 
@@ -335,10 +332,7 @@ def load_benchmark_plan(path: Path) -> BenchmarkPlan:
     if len(profile_names) != len(set(profile_names)):
         raise ValueError("fixture profile names must be unique.")
 
-    matrix = tuple(
-        _parse_fixture_matrix_entry(value)
-        for value in _objects(raw, "fixture_matrix")
-    )
+    matrix = tuple(_parse_fixture_matrix_entry(value) for value in _objects(raw, "fixture_matrix"))
     if not matrix:
         raise ValueError("fixture_matrix must contain at least one entry.")
 
@@ -437,9 +431,7 @@ def percentile(values: tuple[float, ...], percentile_value: float) -> float | No
         return ordered[lower_index]
 
     fraction = position - lower_index
-    return ordered[lower_index] + (
-        (ordered[upper_index] - ordered[lower_index]) * fraction
-    )
+    return ordered[lower_index] + ((ordered[upper_index] - ordered[lower_index]) * fraction)
 
 
 def summarize_level(
@@ -498,7 +490,7 @@ def detect_saturation_candidate(
                 operation=current.operation,
                 concurrency=current.concurrency,
                 reason="error_rate_exceeded",
-                previous_concurrency=(previous.concurrency if previous is not None else None),
+                previous_concurrency=previous.concurrency if previous is not None else None,
                 throughput_gain_percent=None,
                 p95_growth_percent=None,
                 error_rate=current.error_rate,
@@ -591,9 +583,7 @@ def _parse_load_plan(raw: dict[str, object], label: str) -> LoadPlan:
     if any(level <= 0 for level in levels):
         raise ValueError(f"{label}.concurrency_levels must contain positive integers.")
     if tuple(sorted(set(levels))) != levels:
-        raise ValueError(
-            f"{label}.concurrency_levels must be unique and strictly increasing."
-        )
+        raise ValueError(f"{label}.concurrency_levels must be unique and strictly increasing.")
 
     requests_per_level = _positive_int(raw, "requests_per_level")
     if requests_per_level < max(levels):

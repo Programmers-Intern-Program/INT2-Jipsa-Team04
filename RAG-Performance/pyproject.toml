@@ -1,17 +1,17 @@
 [project]
 name = "jipsa-rag-performance"
 version = "0.1.0"
-description = "Standalone resource and saturation benchmark for Jipsa Local RAG."
+description = "Standalone resource, saturation, soak, failure-boundary, and cleanup benchmark for Jipsa Local RAG."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 authors = [
     { name = "안수현", email = "soxyxs4996@gmail.com" },
 ]
 dependencies = [
-    # API 부하 생성과 Loopback 대상 서버 준비 상태 확인
+    # API 부하 생성, Loopback 관리 Probe와 대상 서버 준비 상태 확인
     "httpx>=0.28.1,<0.29",
 
-    # Host와 대상 Process Tree의 CPU, RAM, Disk I/O, Network I/O 측정
+    # Host와 대상 Process Tree의 CPU, RAM, Disk I/O, Network I/O 및 종료 상태 측정
     "psutil>=7.0.0,<8.0",
 
     # PDF, DOCX, PPTX, XLSX, TXT 및 OCR 이미지 합성 Fixture 생성
@@ -23,7 +23,14 @@ dependencies = [
 ]
 
 [project.scripts]
+# 기존 형식·OCR·동시성·포화 기준선 측정
 jipsa-rag-benchmark = "jipsa_rag_benchmark.runner:main"
+
+# Issue #159의 장시간 반복, 실패 조건, 격리, 정리와 범위 검증 캠페인
+jipsa-rag-reliability = "jipsa_rag_benchmark.reliability_runner:main"
+
+# 단계형 Burst·Interval·Batch·Ramp·Soak·Chaos·Fault Suite 실행
+jipsa-rag-stress = "jipsa_rag_benchmark.stress_runner:main"
 
 [build-system]
 requires = ["uv_build>=0.11.28,<0.12.0"]

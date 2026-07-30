@@ -17,9 +17,7 @@ _DEFAULT_PLAN = _PROJECT_ROOT / "configs/benchmark-plan.json"
 def test_default_plan_covers_requested_formats_origins_and_api_modes() -> None:
     plan = load_benchmark_plan(_DEFAULT_PLAN)
     formats = {
-        file_type
-        for matrix_entry in plan.fixture_matrix
-        for file_type in matrix_entry.formats
+        file_type for matrix_entry in plan.fixture_matrix for file_type in matrix_entry.formats
     }
     origins = {profile.content_origin for profile in plan.fixture_profiles}
 
