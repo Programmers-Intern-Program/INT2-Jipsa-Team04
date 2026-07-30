@@ -26,7 +26,8 @@ import {
   Trash2,
   Undo2,
   Pencil,
-  Info
+  Info,
+  MoreHorizontal
 } from "lucide-react";
 import type { Document, DocumentNavigationTarget, FileMapping, Folder as FolderType, OrganizeProposal, ProposedFolder } from "../types";
 import { formatBytes } from "../utils/formatBytes";
@@ -346,6 +347,7 @@ export default function MyDocumentsView({
   const [fileRenameName, setFileRenameName] = useState("");
   const [fileRenameError, setFileRenameError] = useState("");
   const [isRenamingFile, setIsRenamingFile] = useState(false);
+  const [listActionDocument, setListActionDocument] = useState<Document | null>(null);
 
   // Modals state
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
@@ -2482,8 +2484,11 @@ export default function MyDocumentsView({
               </div>
             ) : (
               /* List Layout view */
-              <div className="w-full min-w-0 overflow-hidden border border-outline-variant/50 rounded-2xl bg-surface-bright" id="vault-table-wrapper">
+              <div className="w-full min-w-0 overflow-x-auto border border-outline-variant/50 rounded-2xl bg-surface-bright" id="vault-table-wrapper">
                 <style>{`
+                  #vault-table-wrapper {
+                    container-type: inline-size;
+                  }
                   #vault-table th,
                   #vault-table td {
                     min-width: 0;
@@ -2493,19 +2498,42 @@ export default function MyDocumentsView({
                   #vault-table td > * {
                     max-width: 100%;
                   }
+                  #vault-table .list-actions-compact {
+                    display: none;
+                  }
+                  @container (max-width: 760px) {
+                    #vault-table .list-col-secondary {
+                      display: none;
+                    }
+                    #vault-table .list-col-select {
+                      width: 10%;
+                    }
+                    #vault-table .list-col-name {
+                      width: 75%;
+                    }
+                    #vault-table .list-col-actions {
+                      width: 15%;
+                    }
+                    #vault-table .list-actions-wide {
+                      display: none;
+                    }
+                    #vault-table .list-actions-compact {
+                      display: flex;
+                    }
+                  }
                 `}</style>
                 <table className="w-full max-w-full text-left table-fixed" id="vault-table">
                   <colgroup>
-                    <col className="w-[6%]" />
-                    <col className="w-[28%]" />
-                    <col className="w-[20%]" />
-                    <col className="w-[14%]" />
-                    <col className="w-[10%]" />
-                    <col className="w-[22%]" />
+                    <col className="list-col-select w-[6%]" />
+                    <col className="list-col-name w-[28%]" />
+                    <col className="list-col-secondary w-[20%]" />
+                    <col className="list-col-secondary w-[14%]" />
+                    <col className="list-col-secondary w-[10%]" />
+                    <col className="list-col-actions w-[22%]" />
                   </colgroup>
                   <thead>
                     <tr className="bg-surface-container-low text-outline text-[11px] font-extrabold border-b border-outline-variant uppercase tracking-wider">
-                      <th className="px-6 py-4 text-center whitespace-nowrap">
+                      <th className="list-col-select px-6 py-4 text-center whitespace-nowrap">
                         <button
                           type="button"
                           onClick={toggleSelectAllVisibleFiles}
@@ -2520,11 +2548,11 @@ export default function MyDocumentsView({
                           <Check className="w-3 h-3 stroke-[3]" />
                         </button>
                       </th>
-                      <th className="px-6 py-4 whitespace-nowrap">파일명 및 경로</th>
-                      <th className="px-6 py-4 whitespace-nowrap">태그</th>
-                      <th className="px-6 py-4 whitespace-nowrap">최종 수정일</th>
-                      <th className="px-6 py-4 whitespace-nowrap">용량</th>
-                      <th className="px-6 py-4 text-center whitespace-nowrap">작업</th>
+                      <th className="list-col-name px-6 py-4 whitespace-nowrap">파일명 및 경로</th>
+                      <th className="list-col-secondary px-6 py-4 whitespace-nowrap">태그</th>
+                      <th className="list-col-secondary px-6 py-4 whitespace-nowrap">최종 수정일</th>
+                      <th className="list-col-secondary px-6 py-4 whitespace-nowrap">용량</th>
+                      <th className="list-col-actions px-6 py-4 text-center whitespace-nowrap">작업</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-outline-variant" id="vault-table-body">
@@ -2537,10 +2565,10 @@ export default function MyDocumentsView({
                           onClick={() => navigateToFolder(folder.folderId)}
                           className="hover:bg-primary/[0.01] cursor-pointer transition-colors group"
                         >
-                          <td className="px-6 py-4 text-center">
+                          <td className="list-col-select px-6 py-4 text-center">
                             <Folder className="w-4 h-4 text-primary fill-primary/5 mx-auto shrink-0" />
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="list-col-name px-6 py-4">
                             <div className="flex min-w-0 items-center gap-3">
                               <Folder className="w-5 h-5 text-primary fill-primary/10 shrink-0" />
                               <div className="min-w-0 flex-1 truncate">
@@ -2549,17 +2577,17 @@ export default function MyDocumentsView({
                               </div>
                             </div>
                           </td>
-                          <td className="px-6 py-4 text-[10px] font-extrabold text-outline font-sans truncate">
+                          <td className="list-col-secondary px-6 py-4 text-[10px] font-extrabold text-outline font-sans truncate">
                             가상 폴더 디렉터리
                           </td>
-                          <td className="px-6 py-4 text-xs font-semibold text-outline font-sans whitespace-nowrap">
+                          <td className="list-col-secondary px-6 py-4 text-xs font-semibold text-outline font-sans whitespace-nowrap">
                             -
                           </td>
-                          <td className="px-6 py-4 text-xs font-semibold text-outline font-sans whitespace-nowrap">
+                          <td className="list-col-secondary px-6 py-4 text-xs font-semibold text-outline font-sans whitespace-nowrap">
                             -
                           </td>
-                          <td className="px-6 py-4 text-center whitespace-nowrap">
-                            <div className="flex items-center justify-center gap-2">
+                          <td className="list-col-actions px-6 py-4 text-center">
+                            <div className="flex flex-wrap items-center justify-center gap-1">
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -2592,7 +2620,7 @@ export default function MyDocumentsView({
                       const isChecked = checkedTrashFolderIds.includes(folder.folderId);
                       return (
                       <tr key={`trash-folder-row-${folder.folderId}`} className={`hover:bg-surface-container-low transition-colors group ${isChecked ? "bg-primary/[0.02]" : ""}`}>
-                        <td className="px-6 py-4 text-center">
+                        <td className="list-col-select px-6 py-4 text-center">
                           <div className="flex items-center justify-center gap-2">
                             <button
                               type="button"
@@ -2607,19 +2635,19 @@ export default function MyDocumentsView({
                             <FolderClosed className="w-4 h-4 text-outline shrink-0" />
                           </div>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="list-col-name px-6 py-4">
                           <div className="flex min-w-0 items-center gap-3">
                             <FolderClosed className="w-5 h-5 text-outline shrink-0" />
                             <p className="min-w-0 flex-1 font-bold text-xs text-on-surface leading-tight truncate">{folder.name}</p>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-[10px] font-extrabold text-outline font-sans truncate">
+                        <td className="list-col-secondary px-6 py-4 text-[10px] font-extrabold text-outline font-sans truncate">
                           가상 폴더 디렉터리
                         </td>
-                        <td className="px-6 py-4 text-xs font-semibold text-outline font-sans whitespace-nowrap">-</td>
-                        <td className="px-6 py-4 text-xs font-semibold text-outline font-sans whitespace-nowrap">-</td>
-                        <td className="px-6 py-4 text-center whitespace-nowrap">
-                          <div className="flex items-center justify-center gap-2">
+                        <td className="list-col-secondary px-6 py-4 text-xs font-semibold text-outline font-sans whitespace-nowrap">-</td>
+                        <td className="list-col-secondary px-6 py-4 text-xs font-semibold text-outline font-sans whitespace-nowrap">-</td>
+                        <td className="list-col-actions px-6 py-4 text-center">
+                          <div className="flex flex-wrap items-center justify-center gap-1">
                             <button
                               type="button"
                               onClick={() => handleRestoreFolder(folder.folderId, folder.name)}
@@ -2661,7 +2689,7 @@ export default function MyDocumentsView({
                           }}
                           className={`hover:bg-surface-container-low transition-colors group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${isChecked ? "bg-primary/[0.01]" : ""}`}
                         >
-                          <td className="px-6 py-4 text-center">
+                          <td className="list-col-select px-6 py-4 text-center">
                             <button
                               type="button"
                               onClick={(event) => {
@@ -2679,7 +2707,7 @@ export default function MyDocumentsView({
                               <Check className="w-3 h-3 stroke-[3]" />
                             </button>
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="list-col-name px-6 py-4">
                             <div className="flex min-w-0 items-center gap-3">
                               {/* Star button inside list view */}
                               <button
@@ -2723,7 +2751,7 @@ export default function MyDocumentsView({
                               </div>
                             </div>
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="list-col-secondary px-6 py-4">
                             <div className="flex max-h-12 min-w-0 flex-wrap gap-1 overflow-hidden">
                               {doc.tags.map((tag, idx) => (
                                 <span key={idx} className="px-1.5 py-0.5 bg-primary/5 text-primary text-[9.5px] font-extrabold rounded border border-primary/10 whitespace-nowrap">
@@ -2738,14 +2766,14 @@ export default function MyDocumentsView({
                               ))}
                             </div>
                           </td>
-                          <td className="px-6 py-4 text-xs font-semibold text-on-surface-variant font-sans whitespace-nowrap">
+                          <td className="list-col-secondary px-6 py-4 text-xs font-semibold text-on-surface-variant font-sans whitespace-nowrap">
                             {formatDateTime(doc.modifiedAt)}
                           </td>
-                          <td className="px-6 py-4 text-xs font-semibold text-on-surface-variant font-sans whitespace-nowrap">
+                          <td className="list-col-secondary px-6 py-4 text-xs font-semibold text-on-surface-variant font-sans whitespace-nowrap">
                             {formatBytes(doc.sizeBytes)}
                           </td>
-                          <td className="px-6 py-4 text-center whitespace-nowrap">
-                            <div className="flex min-w-0 items-center justify-center gap-1">
+                          <td className="list-col-actions px-6 py-4 text-center">
+                            <div className="list-actions-wide flex min-w-0 items-center justify-center gap-1">
                               <button
                                 onClick={(event) => {
                                   event.stopPropagation();
@@ -2799,6 +2827,19 @@ export default function MyDocumentsView({
                                 <Pencil className="w-4 h-4" />
                               </button>
                             </div>
+                            <div className="list-actions-compact items-center justify-center">
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setListActionDocument(doc);
+                                }}
+                                className="p-2 rounded-lg text-outline hover:text-on-surface hover:bg-surface-container transition-colors cursor-pointer"
+                                aria-label={`${doc.name} 작업 메뉴`}
+                              >
+                                <MoreHorizontal className="w-5 h-5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -2810,6 +2851,81 @@ export default function MyDocumentsView({
           </div>
         </section>
       </div>
+
+      {listActionDocument && createPortal(
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-[145] bg-black/20 backdrop-blur-[1px] cursor-default"
+            onClick={() => setListActionDocument(null)}
+            aria-label="작업 메뉴 닫기"
+          />
+          <div className="fixed bottom-4 right-4 z-[146] w-56 overflow-hidden rounded-2xl border border-outline-variant bg-white p-2 shadow-2xl">
+            <p className="truncate border-b border-outline-variant/50 px-3 py-2 text-xs font-bold text-on-surface">
+              {listActionDocument.name}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                onNavigateToChat([listActionDocument.id]);
+                setListActionDocument(null);
+              }}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs font-semibold text-on-surface hover:bg-secondary/10 hover:text-secondary cursor-pointer"
+            >
+              <Sparkles className="h-4 w-4" />
+              RAG 검색 및 대화
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setMovingDocIds([listActionDocument.id]);
+                setMoveTargetFolder(listActionDocument.folderId);
+                setIsMoveModalOpen(true);
+                setListActionDocument(null);
+              }}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs font-semibold text-on-surface hover:bg-primary/5 hover:text-primary cursor-pointer"
+            >
+              <FolderInput className="h-4 w-4" />
+              폴더로 이동
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDetailFileId(Number(listActionDocument.id));
+                setListActionDocument(null);
+              }}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs font-semibold text-on-surface hover:bg-surface-container cursor-pointer"
+            >
+              <Info className="h-4 w-4" />
+              상세 정보
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                downloadFile(Number(listActionDocument.id), listActionDocument.name)
+                  .catch(() => alert("다운로드에 실패했습니다."));
+                setListActionDocument(null);
+              }}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs font-semibold text-on-surface hover:bg-surface-container cursor-pointer"
+            >
+              <Download className="h-4 w-4" />
+              다운로드
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                openFileRename(listActionDocument);
+                setListActionDocument(null);
+              }}
+              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs font-semibold text-on-surface hover:bg-primary/5 hover:text-primary cursor-pointer"
+            >
+              <Pencil className="h-4 w-4" />
+              이름 변경
+            </button>
+          </div>
+        </>,
+        document.body
+      )}
 
       {!isSmartWorkflowVisible && (isOrganizing || organizeResult) && createPortal(
         <button
