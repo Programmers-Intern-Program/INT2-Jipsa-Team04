@@ -43,6 +43,23 @@ const EMPTY_CHAT_HISTORY: ChatMessage[] = [];
 interface PreviewSource {
   citation: Citation;
   documentOnly: boolean;
+  contextText?: string;
+}
+
+function extractCitationContext(text: string, sourceId: string): string {
+  const marker = `[${sourceId}]`;
+  const markerIndex = text.indexOf(marker);
+  if (markerIndex < 0) return "";
+  const precedingText = text
+      .slice(0, markerIndex)
+      .replace(/\[SOURCE-\d+\]/g, "")
+      .trimEnd();
+  const boundaries = [...precedingText.matchAll(/(?:[.!?。](?=\s)|\n+)/gu)];
+  const lastBoundary = boundaries.at(-1);
+  const context = precedingText
+      .slice(lastBoundary ? (lastBoundary.index ?? 0) + lastBoundary[0].length : 0)
+      .trim();
+  return context.length > 400 ? context.slice(-400) : context;
 }
 
 function deduplicateCitationsByFile(citations: Citation[]): Citation[] {
@@ -76,13 +93,15 @@ export default function AIChatView({
     return message.text.split(/(\[SOURCE-\d+\])/g).map((part, index) => {
       const match = part.match(/^\[SOURCE-(\d+)\]$/);
       if (!match) return part;
-      const citation = message.citations.find((c) => c.sourceId === `SOURCE-${match[1]}`);
+      const sourceId = `SOURCE-${match[1]}`;
+      const citation = message.citations.find((c) => c.sourceId === sourceId);
       if (!citation) return part;
+      const contextText = extractCitationContext(message.text, sourceId);
       return (
           <button
               key={index}
               type="button"
-              onClick={() => setPreviewSource({ citation, documentOnly: false })}
+              onClick={() => setPreviewSource({ citation, documentOnly: false, contextText })}
               className="inline-flex items-center align-baseline text-[11px] font-bold text-secondary bg-secondary/10 hover:bg-secondary/20 rounded px-1 mx-0.5 cursor-pointer"
           >
             {match[1]}
@@ -579,6 +598,7 @@ export default function AIChatView({
               fileName={previewSource.citation.fileName}
               fileType={previewSource.citation.fileName.split(".").pop() ?? ""}
               documentOnly={previewSource.documentOnly}
+              contextText={previewSource.contextText}
               onClose={() => setPreviewSource(null)}
           />
       )}

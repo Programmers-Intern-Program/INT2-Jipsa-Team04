@@ -31,6 +31,11 @@ interface SourcePosition {
     offset: number;
 }
 
+interface GuidePosition {
+    left: number;
+    top: number;
+}
+
 function normalize(text: string): string {
     return text.normalize("NFKC").replace(/[^\p{L}\p{N}]/gu, "");
 }
@@ -123,7 +128,11 @@ function findLocationRange(
     return null;
 }
 
-function centerRange(container: HTMLElement, range: Range): number | null {
+function positionRange(
+    container: HTMLElement,
+    range: Range,
+    horizontalAnchor: HTMLElement
+): GuidePosition | null {
     const bounds = range.getBoundingClientRect();
     if (bounds.width === 0 && bounds.height === 0) return null;
     const containerBounds = container.getBoundingClientRect();
@@ -134,11 +143,18 @@ function centerRange(container: HTMLElement, range: Range): number | null {
         left: Math.max(0, left),
         behavior: "auto",
     });
-    const centeredBounds = range.getBoundingClientRect();
-    return Math.min(
-        Math.max(8, centeredBounds.left - containerBounds.left - 28),
-        Math.max(8, container.clientWidth - 32)
-    );
+    const positionedBounds = range.getBoundingClientRect();
+    const anchorBounds = horizontalAnchor.getBoundingClientRect();
+    return {
+        left: Math.min(
+            Math.max(8, anchorBounds.left - containerBounds.left - 28),
+            Math.max(8, container.clientWidth - 32)
+        ),
+        top: Math.min(
+            Math.max(0, positionedBounds.top - containerBounds.top + positionedBounds.height / 2),
+            container.clientHeight
+        ),
+    };
 }
 
 function pageContainsLocation(text: string, excerpt: string | null, sectionTitle: string | null): boolean {
@@ -146,11 +162,11 @@ function pageContainsLocation(text: string, excerpt: string | null, sectionTitle
     return locationCandidates(excerpt, sectionTitle).some((candidate) => normalizedText.includes(candidate));
 }
 
-function LocationGuide({ left }: { left: number }) {
+function LocationGuide({ position }: { position: GuidePosition }) {
     return (
         <div
-            className="citation-location-guide pointer-events-none absolute top-1/2 z-30 flex -translate-y-1/2 items-center text-secondary"
-            style={{ left }}
+            className="citation-location-guide pointer-events-none absolute z-30 flex -translate-y-1/2 items-center text-secondary"
+            style={{ left: position.left, top: position.top }}
         >
             <div className="h-12 w-1 rounded-full bg-secondary shadow-[0_0_12px_rgba(0,121,140,0.35)]" />
             <ChevronRight className="-ml-0.5 h-6 w-6 stroke-[3]" />
@@ -164,16 +180,13 @@ function PdfPreview({ data, location }: { data: ArrayBuffer; location?: PreviewL
     const [targetPage, setTargetPage] = useState<number | null>(null);
     const [containerWidth, setContainerWidth] = useState(0);
     const [renderError, setRenderError] = useState(false);
-    const [guideVisible, setGuideVisible] = useState(false);
-    const [guideLeft, setGuideLeft] = useState(8);
+    const [guidePosition, setGuidePosition] = useState<GuidePosition | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const textLayerRef = useRef<HTMLDivElement>(null);
-    const locatedKeyRef = useRef("");
     const excerpt = location?.excerpt ?? null;
     const sectionTitle = location?.sectionTitle ?? null;
     const requestedPage = location?.page ?? 1;
-    const locationKey = `${requestedPage}|${sectionTitle ?? ""}|${excerpt ?? ""}`;
 
     useEffect(() => {
         let active = true;
@@ -206,42 +219,44 @@ function PdfPreview({ data, location }: { data: ArrayBuffer; location?: PreviewL
     useEffect(() => {
         if (!pdf) return;
         let active = true;
-        locatedKeyRef.current = "";
         const resolvePage = async () => {
             const page = Math.min(Math.max(requestedPage, 1), pdf.numPages);
+            setPageNumber(page);
+            setTargetPage(null);
+            setGuidePosition(null);
             if (!excerpt && !sectionTitle) {
-                if (active) {
-                    setTargetPage(null);
-                    setPageNumber(page);
-                }
                 return;
             }
-            const order = [
-                page,
-                ...Array.from({ length: pdf.numPages }, (_, index) => index + 1).filter((candidate) => candidate !== page),
-            ];
+            const hasRequestedPage = location?.page != null;
+            const order = hasRequestedPage
+                ? [page]
+                : Array.from({ length: pdf.numPages }, (_, index) => index + 1);
             for (const candidate of order) {
-                const pdfPage = await pdf.getPage(candidate);
-                const content = await pdfPage.getTextContent();
-                const text = content.items.map((item) => ("str" in item ? item.str : "")).join(" ");
-                if (pageContainsLocation(text, excerpt, sectionTitle)) {
+                try {
+                    const pdfPage = await pdf.getPage(candidate);
+                    const content = await pdfPage.getTextContent();
+                    const text = content.items.map((item) => ("str" in item ? item.str : "")).join(" ");
+                    if (pageContainsLocation(text, excerpt, sectionTitle)) {
+                        if (active) {
+                            setTargetPage(candidate);
+                            setPageNumber(candidate);
+                        }
+                        return;
+                    }
+                } catch {
                     if (active) {
-                        setTargetPage(candidate);
-                        setPageNumber(candidate);
+                        setTargetPage(null);
+                        setGuidePosition(null);
                     }
                     return;
                 }
-            }
-            if (active) {
-                setTargetPage(null);
-                setPageNumber(page);
             }
         };
         void resolvePage();
         return () => {
             active = false;
         };
-    }, [pdf, excerpt, sectionTitle, requestedPage]);
+    }, [pdf, excerpt, sectionTitle, requestedPage, location?.page]);
 
     useEffect(() => {
         if (!pdf || containerWidth <= 0) return;
@@ -268,28 +283,38 @@ function PdfPreview({ data, location }: { data: ArrayBuffer; location?: PreviewL
             layer.style.width = `${viewport.width}px`;
             layer.style.height = `${viewport.height}px`;
             layer.style.setProperty("--scale-factor", String(viewport.scale));
-            renderTask = page.render({
-                canvasContext: context,
-                canvas,
-                viewport,
-                transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0],
-            });
-            await renderTask.promise;
+            try {
+                renderTask = page.render({
+                    canvasContext: context,
+                    canvas,
+                    viewport,
+                    transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0],
+                });
+                await renderTask.promise;
+            } catch {
+                if (active) setRenderError(true);
+                return;
+            }
             if (!active) return;
-            const textContent = await page.getTextContent();
-            if (!active) return;
-            textLayer = new TextLayer({ textContentSource: textContent, container: layer, viewport });
-            await textLayer.render();
-            if (!active || targetPage !== pageNumber || locatedKeyRef.current === locationKey) return;
-            locatedKeyRef.current = locationKey;
-            const range = findLocationRange(layer, excerpt, sectionTitle);
-            const container = containerRef.current;
-            if (range && container) {
-                const left = centerRange(container, range);
-                if (left != null) {
-                    setGuideLeft(left);
-                    setGuideVisible(true);
+            try {
+                const textContent = await page.getTextContent();
+                if (!active) return;
+                textLayer = new TextLayer({ textContentSource: textContent, container: layer, viewport });
+                await textLayer.render();
+                if (!active || targetPage !== pageNumber) {
+                    if (active) setGuidePosition(null);
+                    return;
                 }
+                const range = findLocationRange(layer, excerpt, sectionTitle);
+                const container = containerRef.current;
+                if (range && container) {
+                    setGuidePosition(positionRange(container, range, layer));
+                } else {
+                    setGuidePosition(null);
+                }
+            } catch {
+                layer.replaceChildren();
+                if (active) setGuidePosition(null);
             }
         };
         void renderPage().catch(() => {
@@ -300,10 +325,10 @@ function PdfPreview({ data, location }: { data: ArrayBuffer; location?: PreviewL
             renderTask?.cancel();
             textLayer?.cancel();
         };
-    }, [pdf, pageNumber, containerWidth, targetPage, locationKey, excerpt, sectionTitle]);
+    }, [pdf, pageNumber, containerWidth, targetPage, excerpt, sectionTitle]);
 
     const movePage = (page: number) => {
-        setGuideVisible(false);
+        setGuidePosition(null);
         setPageNumber(page);
     };
 
@@ -342,7 +367,7 @@ function PdfPreview({ data, location }: { data: ArrayBuffer; location?: PreviewL
                     <div ref={textLayerRef} className="textLayer absolute inset-0" />
                 </div>
             </div>
-            {guideVisible && <LocationGuide left={guideLeft} />}
+            {guidePosition && <LocationGuide position={guidePosition} />}
         </div>
     );
 }
@@ -359,8 +384,8 @@ export default function FilePreview({
     const [pdfData, setPdfData] = useState<ArrayBuffer | null>(null);
     const [html, setHtml] = useState<string>("");
     const [text, setText] = useState<string>("");
-    const [guideVisible, setGuideVisible] = useState(false);
-    const [guideLeft, setGuideLeft] = useState(8);
+    const [guidePosition, setGuidePosition] = useState<GuidePosition | null>(null);
+    const [layoutVersion, setLayoutVersion] = useState(0);
     const previewContainerRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
     const excerpt = location?.excerpt ?? null;
@@ -411,20 +436,36 @@ export default function FilePreview({
     }, [fileId, type]);
 
     useEffect(() => {
-        if (status !== "docx" && status !== "xlsx" && status !== "txt") return;
-        if (!excerpt && !sectionTitle) return;
-        const content = contentRef.current;
         const container = previewContainerRef.current;
-        if (!content || !container) return;
-        const range = findLocationRange(content, excerpt, sectionTitle);
-        if (range) {
-            const left = centerRange(container, range);
-            if (left != null) {
-                setGuideLeft(left);
-                setGuideVisible(true);
+        if (!container) return;
+        const observer = new ResizeObserver(() => {
+            setLayoutVersion((current) => current + 1);
+        });
+        observer.observe(container);
+        return () => observer.disconnect();
+    }, [status]);
+
+    useEffect(() => {
+        const frame = requestAnimationFrame(() => {
+            if (status !== "docx" && status !== "xlsx" && status !== "txt") {
+                setGuidePosition(null);
+                return;
             }
-        }
-    }, [status, excerpt, sectionTitle]);
+            if (!excerpt && !sectionTitle) {
+                setGuidePosition(null);
+                return;
+            }
+            const content = contentRef.current;
+            const container = previewContainerRef.current;
+            if (!content || !container) {
+                setGuidePosition(null);
+                return;
+            }
+            const range = findLocationRange(content, excerpt, sectionTitle);
+            setGuidePosition(range ? positionRange(container, range, content) : null);
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [status, excerpt, sectionTitle, layoutVersion]);
 
     return (
         <div className={`relative ${className ?? "h-full"}`}>
@@ -481,7 +522,7 @@ export default function FilePreview({
                     </div>
                 </div>
             )}
-            {guideVisible && <LocationGuide left={guideLeft} />}
+            {guidePosition && <LocationGuide position={guidePosition} />}
             {(status === "unsupported" || status === "error") && (
                 <div className="h-full flex flex-col items-center justify-center gap-3 text-center px-6">
                     <p className="text-body-md text-on-surface-variant">
