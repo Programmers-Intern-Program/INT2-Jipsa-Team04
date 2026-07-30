@@ -133,7 +133,12 @@ export default function MyDocumentsView({
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedFolder, setSelectedFolder] = useState<number | null>(
-    navigationTarget.tab === "mydrive" ? navigationTarget.folderId : null
+    navigationTarget.tab === "mydrive" && navigationTarget.mode === "folder"
+      ? navigationTarget.folderId
+      : null
+  );
+  const [isUnclassifiedView, setIsUnclassifiedView] = useState(
+    navigationTarget.tab === "mydrive" && navigationTarget.mode === "unclassified"
   );
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [selectedDocumentType, setSelectedDocumentType] = useState<string | null>(null);
@@ -351,6 +356,7 @@ export default function MyDocumentsView({
   const navigateToFolder = (folderId: number | null) => {
     setCurrentTab("mydrive");
     setSelectedFolder(folderId);
+    setIsUnclassifiedView(false);
     setCheckedDocIds([]);
     setCheckedTrashFolderIds([]);
   };
@@ -453,8 +459,9 @@ export default function MyDocumentsView({
 
       let matchesTabAndFolder = true;
       if (currentTab === "mydrive") {
-        matchesTabAndFolder = selectedFolder === null ||
-            isDescendantOrSelf(doc.folderId, selectedFolder, folders);
+        matchesTabAndFolder = isUnclassifiedView
+            ? doc.folderId === null
+            : selectedFolder === null || isDescendantOrSelf(doc.folderId, selectedFolder, folders);
       } else if (currentTab === "starred") {
         matchesTabAndFolder = !!doc.star;
       } else if (currentTab === "recent") {
@@ -471,7 +478,7 @@ export default function MyDocumentsView({
 
       return matchesSearch && matchesTabAndFolder && matchesType && matchesDocumentType && matchesTag && matchesDate;
     });
-  }, [documents, trashDocs, searchQuery, selectedFolder, selectedType, selectedDocumentType, tagFilter, dateFromFilter, dateToFilter, currentTab, folders]);
+  }, [documents, trashDocs, searchQuery, selectedFolder, isUnclassifiedView, selectedType, selectedDocumentType, tagFilter, dateFromFilter, dateToFilter, currentTab, folders]);
 
   const sortedFilteredDocuments = useMemo(() => {
     if (currentTab === "recent") {
@@ -511,9 +518,9 @@ export default function MyDocumentsView({
 
   // Find folders at the current directory level
   const currentLevelFolders = useMemo(() => {
-    if (currentTab !== "mydrive") return [];
+    if (currentTab !== "mydrive" || isUnclassifiedView) return [];
     return folders.filter((f) => f.parentFolderId === selectedFolder);
-  }, [folders, selectedFolder, currentTab]);
+  }, [folders, selectedFolder, currentTab, isUnclassifiedView]);
 
   // Find files at the current directory level (only direct files during browsing, or all matching files during search/other tab views)
   const currentLevelDocuments = useMemo(() => {
@@ -528,8 +535,10 @@ export default function MyDocumentsView({
     }
     
     // Otherwise, show only direct documents of the current selected folder level
-    return sortedFilteredDocuments.filter(doc => doc.folderId === selectedFolder);
-  }, [sortedFilteredDocuments, selectedFolder, currentTab, searchQuery]);
+    return isUnclassifiedView
+      ? sortedFilteredDocuments.filter(doc => doc.folderId === null)
+      : sortedFilteredDocuments.filter(doc => doc.folderId === selectedFolder);
+  }, [sortedFilteredDocuments, selectedFolder, currentTab, searchQuery, isUnclassifiedView]);
 
   // Determine if both folders and files at the current view level are empty
   const isWorkspaceEmpty = useMemo(() => {
@@ -1441,6 +1450,7 @@ export default function MyDocumentsView({
   const switchDocumentTab = (tab: "mydrive" | "starred" | "recent" | "trash", folderId: number | null = null) => {
     setCurrentTab(tab);
     setSelectedFolder(folderId);
+    setIsUnclassifiedView(false);
     setCheckedDocIds([]);
     setCheckedTrashFolderIds([]);
   };
@@ -1689,7 +1699,7 @@ export default function MyDocumentsView({
                     switchDocumentTab("mydrive");
                   }}
                   className={`group py-2.5 px-3 rounded-r-full flex items-center justify-between cursor-pointer gap-2 transition-all mr-1.5 ${
-                    currentTab === "mydrive" && selectedFolder === null
+                    currentTab === "mydrive" && selectedFolder === null && !isUnclassifiedView
                       ? "bg-primary/10 text-primary font-bold border-l-4 border-primary pl-2" 
                       : "text-on-surface hover:bg-surface-container-low pl-3"
                   }`}
@@ -1703,13 +1713,13 @@ export default function MyDocumentsView({
                       }}
                       className="p-0.5 hover:bg-black/5 dark:hover:bg-white/5 rounded transition-colors shrink-0 cursor-pointer flex items-center justify-center"
                     >
-                      <ChevronRight className={`w-4 h-4 transition-transform duration-200 ${isMyDriveExpanded ? "rotate-90" : ""} ${currentTab === "mydrive" && selectedFolder === null ? "text-primary" : "text-outline"}`} />
+                      <ChevronRight className={`w-4 h-4 transition-transform duration-200 ${isMyDriveExpanded ? "rotate-90" : ""} ${currentTab === "mydrive" && selectedFolder === null && !isUnclassifiedView ? "text-primary" : "text-outline"}`} />
                     </button>
-                    <HardDrive className={`w-4 h-4 shrink-0 ${currentTab === "mydrive" && selectedFolder === null ? "text-primary" : "text-outline group-hover:text-primary transition-colors"}`} />
+                    <HardDrive className={`w-4 h-4 shrink-0 ${currentTab === "mydrive" && selectedFolder === null && !isUnclassifiedView ? "text-primary" : "text-outline group-hover:text-primary transition-colors"}`} />
                     <span className="text-[13px] font-semibold truncate">내 드라이브</span>
                   </div>
                   <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold shrink-0 ${
-                    currentTab === "mydrive" && selectedFolder === null ? "bg-primary/20 text-primary" : "bg-surface-container-low text-outline"
+                    currentTab === "mydrive" && selectedFolder === null && !isUnclassifiedView ? "bg-primary/20 text-primary" : "bg-surface-container-low text-outline"
                   }`}>
                     {documents.length}
                   </span>
@@ -1825,7 +1835,14 @@ export default function MyDocumentsView({
                   Drive
                 </button>
                 
-                {currentTab === "mydrive" && selectedFolder !== null ? (
+                {currentTab === "mydrive" && isUnclassifiedView ? (
+                  <>
+                    <ChevronRight className="w-3 h-3 text-outline-variant shrink-0" />
+                    <span className="text-primary bg-primary/5 px-2.5 py-1 rounded-full border border-primary/10">
+                      미분류
+                    </span>
+                  </>
+                ) : currentTab === "mydrive" && selectedFolder !== null ? (
                   <>
                     {getFolderAncestors(selectedFolder, folders).map((ancestor, index, arr) => (
                         <div key={ancestor.folderId} className="flex items-center gap-1.5">
@@ -1947,7 +1964,7 @@ export default function MyDocumentsView({
               />
 
               {/* Filter Reset */}
-              {(selectedFolder || selectedType || searchQuery || selectedDocumentType || tagFilter || dateFromFilter || dateToFilter) && (
+              {(isUnclassifiedView || selectedFolder || selectedType || searchQuery || selectedDocumentType || tagFilter || dateFromFilter || dateToFilter) && (
                 <button 
                   onClick={() => {
                     navigateToFolder(null);
@@ -1996,7 +2013,11 @@ export default function MyDocumentsView({
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-extrabold text-on-surface">
                   {currentTab === "mydrive" 
-                    ? (selectedFolder !== null ? `[${getFolderPath(selectedFolder, folders)}] 내부 파일` : "내 드라이브 전체 문서")
+                    ? (isUnclassifiedView
+                        ? "미분류 문서"
+                        : selectedFolder !== null
+                          ? `[${getFolderPath(selectedFolder, folders)}] 내부 파일`
+                          : "내 드라이브 전체 문서")
                     : currentTab === "starred" ? "중요 문서함 (Starred)"
                     : currentTab === "recent" ? "최근 수정된 문서"
                     : "휴지통"

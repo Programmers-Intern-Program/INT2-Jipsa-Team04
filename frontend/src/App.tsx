@@ -153,7 +153,7 @@ export default function App() {
   }, [activeTab]);
   const [documents, setDocuments] = useState<Document[]>([]);
   const [documentNavigation, setDocumentNavigation] = useState<{ target: DocumentNavigationTarget; requestId: number }>({
-    target: { tab: "mydrive", folderId: null },
+    target: { tab: "mydrive", mode: "all" },
     requestId: 0,
   });
   const { uploadedSignal } = useUploads();

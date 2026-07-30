@@ -89,7 +89,9 @@ export interface Document {
 }
 
 export type DocumentNavigationTarget =
-  | { tab: "mydrive"; folderId: number | null }
+  | { tab: "mydrive"; mode: "all" }
+  | { tab: "mydrive"; mode: "folder"; folderId: number }
+  | { tab: "mydrive"; mode: "unclassified" }
   | { tab: "starred" };
 
 export interface AISettings {

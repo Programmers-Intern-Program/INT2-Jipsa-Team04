@@ -43,7 +43,10 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
       .sort((a, b) => b.count - a.count);
   const topFolder = folderCounts[0];
   const topPercent = totalCount > 0 ? Math.round((topFolder.count / totalCount) * 100) : 0;
-  const topFolderDescription = topFolder.name === "미분류" ? "폴더가 지정되지 않은 문서" : "문서가 가장 많은 폴더";
+  const topFolderDescription = topFolder.folderId === null ? "폴더가 지정되지 않은 문서" : "문서가 가장 많은 폴더";
+  const topFolderTarget: DocumentNavigationTarget = topFolder.folderId === null
+      ? { tab: "mydrive", mode: "unclassified" }
+      : { tab: "mydrive", mode: "folder", folderId: topFolder.folderId };
 
   return (
     <motion.div 
@@ -60,7 +63,7 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
           <p className="text-body-md text-on-surface-variant font-sans mt-1">AI가 최근에 분류한 문서들의 실시간 통계 및 분석 현황입니다.</p>
         </div>
         <button 
-          onClick={() => onNavigateToDocuments({ tab: "mydrive", folderId: null })}
+          onClick={() => onNavigateToDocuments({ tab: "mydrive", mode: "all" })}
           className="text-primary font-semibold text-label-md flex items-center gap-1 hover:underline cursor-pointer group transition-all"
           id="btn-view-all-reports"
         >
@@ -71,7 +74,7 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
 
       {/* Bento Grid Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6" id="dashboard-stats-grid">
-        <button type="button" onClick={() => onNavigateToDocuments({ tab: "mydrive", folderId: null })} className="col-span-1 md:col-span-2 bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" id="card-stat-total">
+        <button type="button" onClick={() => onNavigateToDocuments({ tab: "mydrive", mode: "all" })} className="col-span-1 md:col-span-2 bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" id="card-stat-total">
           <div className="flex items-start gap-3">
             <div className="p-3 bg-primary/10 rounded-xl text-primary">
               <Files className="w-6 h-6" />
@@ -89,7 +92,7 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
           </div>
         </button>
 
-        <button type="button" onClick={() => onNavigateToDocuments({ tab: "mydrive", folderId: topFolder.folderId })} className="bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" id="card-stat-top-folder">
+        <button type="button" onClick={() => onNavigateToDocuments(topFolderTarget)} className="bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" id="card-stat-top-folder">
           <div className="flex items-center gap-3 mb-4">
             <span className="p-2 bg-primary/5 text-primary rounded-lg">
               <Folder className="w-5 h-5" />
@@ -131,7 +134,7 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
         <div className="px-8 py-5 border-b border-outline-variant flex justify-between items-center" id="recent-docs-header-bar">
           <h2 className="text-lg font-bold text-on-surface">최근 접근 및 가공한 문서</h2>
           <button 
-            onClick={() => onNavigateToDocuments({ tab: "mydrive", folderId: null })}
+            onClick={() => onNavigateToDocuments({ tab: "mydrive", mode: "all" })}
             className="p-2 hover:bg-surface-container rounded-lg transition-colors cursor-pointer text-outline hover:text-on-surface"
             id="btn-grid-view-tab"
             title="문서 보관함 가기"
