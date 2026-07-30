@@ -14,6 +14,8 @@ import com.jipsa.purge.S3DeleteService;
 import com.jipsa.chunk.ChunkRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -181,6 +183,19 @@ class FileServiceTest {
     @Test
     void renameRejectsBlank() {
         assertThatThrownBy(() -> fileService.rename(1L, 1L, "   "))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"pdf", "txt", "docx", "xlsx", "pptx"})
+    void renameRejectsExtensionOnlyName(String extension) {
+        File file = ownedFile();
+        file.setFileType(extension);
+        when(fileRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(file));
+
+        assertThatThrownBy(() -> fileService.rename(1L, 1L, "." + extension))
+                .isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> fileService.rename(1L, 1L, "." + extension.toUpperCase()))
                 .isInstanceOf(BadRequestException.class);
     }
 

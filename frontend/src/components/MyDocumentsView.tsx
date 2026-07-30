@@ -627,7 +627,7 @@ export default function MyDocumentsView({
   const handleRenameDocument = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!fileRenameTarget || isRenamingFile) return;
-    const baseName = fileRenameName.trim();
+    const baseName = getBaseName(fileRenameName.trim(), fileRenameTarget.fileType).trim();
     if (!baseName) {
       setFileRenameError("파일 이름을 입력해 주세요.");
       return;

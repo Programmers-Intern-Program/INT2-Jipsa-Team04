@@ -355,6 +355,9 @@ public class FileService {
         String base = requestedName.toLowerCase().endsWith(suffix)
                 ? requestedName.substring(0, requestedName.length() - suffix.length())
                 : requestedName;
+        if (base.isBlank()) {
+            throw new BadRequestException("파일명은 비어 있을 수 없습니다.");
+        }
         return base + suffix;
     }
 
