@@ -10,7 +10,7 @@ import { fetchFileBlob, downloadFile } from "../api/files";
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
-export interface PreviewHighlight {
+export interface PreviewLocation {
     excerpt?: string | null;
     sectionTitle?: string | null;
     page?: number | null;
@@ -20,13 +20,11 @@ interface FilePreviewProps {
     fileId: number;
     fileName: string;
     fileType: string;
-    highlight?: PreviewHighlight;
-    onHighlightStatusChange?: (status: HighlightStatus) => void;
+    location?: PreviewLocation;
     className?: string;
 }
 
 type PreviewStatus = "loading" | "pdf" | "docx" | "txt" | "xlsx" | "unsupported" | "error";
-export type HighlightStatus = "found" | "not-found" | "unavailable";
 
 interface SourcePosition {
     node: Text;
@@ -67,71 +65,37 @@ function decodeTextBytes(buffer: ArrayBuffer): string {
     }
 }
 
-function collectNormalized(container: HTMLElement): { norm: string; positions: SourcePosition[] } {
+function collectNormalized(container: HTMLElement): { normalized: string; positions: SourcePosition[] } {
     const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
     const positions: SourcePosition[] = [];
-    let norm = "";
+    let normalized = "";
     let current: Node | null;
     while ((current = walker.nextNode())) {
         const textNode = current as Text;
-        const data = textNode.data;
-        for (let k = 0; k < data.length; k++) {
-            const normalized = data[k].normalize("NFKC").replace(/[^\p{L}\p{N}]/gu, "");
-            if (!normalized) {
-                continue;
-            }
-            norm += normalized;
-            for (let index = 0; index < normalized.length; index++) {
-                positions.push({ node: textNode, offset: k });
+        for (let offset = 0; offset < textNode.data.length; offset++) {
+            const value = textNode.data[offset].normalize("NFKC").replace(/[^\p{L}\p{N}]/gu, "");
+            if (!value) continue;
+            normalized += value;
+            for (let index = 0; index < value.length; index++) {
+                positions.push({ node: textNode, offset });
             }
         }
     }
-    return { norm, positions };
+    return { normalized, positions };
 }
 
-function wrapRange(container: HTMLElement, start: SourcePosition, end: SourcePosition): boolean {
-    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-    const nodes: Text[] = [];
-    let collecting = false;
-    let current: Node | null;
-    while ((current = walker.nextNode())) {
-        const textNode = current as Text;
-        if (textNode === start.node) collecting = true;
-        if (collecting) nodes.push(textNode);
-        if (textNode === end.node) break;
-    }
-    let firstMark: HTMLElement | null = null;
-    for (const textNode of nodes) {
-        const from = textNode === start.node ? start.offset : 0;
-        const to = textNode === end.node ? end.offset + 1 : textNode.data.length;
-        if (to <= from) continue;
-        if (textNode.data.slice(from, to).trim().length === 0) continue;
-        const range = document.createRange();
-        range.setStart(textNode, from);
-        range.setEnd(textNode, to);
-        const mark = document.createElement("mark");
-        mark.className = "source-highlight";
-        range.surroundContents(mark);
-        if (!firstMark) firstMark = mark;
-    }
-    if (firstMark) {
-        firstMark.scrollIntoView({ block: "center" });
-        return true;
-    }
-    return false;
-}
-
-function highlightCandidates(excerpt: string | null, sectionTitle: string | null): string[] {
+function locationCandidates(excerpt: string | null, sectionTitle: string | null): string[] {
     const candidates: string[] = [];
     if (excerpt) {
         const full = normalize(excerpt);
         if (full) candidates.push(full);
-        const sentences = excerpt
-            .split(/[.!?。]\s*/)
-            .map(normalize)
-            .filter((sentence) => sentence.length >= 10)
-            .sort((left, right) => right.length - left.length);
-        candidates.push(...sentences);
+        candidates.push(
+            ...excerpt
+                .split(/[.!?。]\s*/)
+                .map(normalize)
+                .filter((sentence) => sentence.length >= 10)
+                .sort((left, right) => right.length - left.length)
+        );
         if (full.length > 160) candidates.push(full.slice(0, 160));
         if (full.length > 80) candidates.push(full.slice(0, 80));
     }
@@ -139,52 +103,77 @@ function highlightCandidates(excerpt: string | null, sectionTitle: string | null
     return [...new Set(candidates.filter(Boolean))];
 }
 
-function clearHighlights(container: HTMLElement) {
-    for (const mark of Array.from(container.querySelectorAll("mark.source-highlight"))) {
-        mark.replaceWith(document.createTextNode(mark.textContent ?? ""));
-    }
-    container.normalize();
-}
-
-function highlightExcerpt(container: HTMLElement, excerpt: string | null, sectionTitle: string | null): boolean {
-    clearHighlights(container);
-    const candidates = highlightCandidates(excerpt, sectionTitle);
-
-    const { norm, positions } = collectNormalized(container);
-    for (const needle of candidates) {
-        if (!needle) continue;
-        const idx = norm.indexOf(needle);
-        if (idx < 0) continue;
-        const start = positions[idx];
-        const end = positions[idx + needle.length - 1];
+function findLocationRange(
+    container: HTMLElement,
+    excerpt: string | null,
+    sectionTitle: string | null
+): Range | null {
+    const { normalized, positions } = collectNormalized(container);
+    for (const candidate of locationCandidates(excerpt, sectionTitle)) {
+        const startIndex = normalized.indexOf(candidate);
+        if (startIndex < 0) continue;
+        const start = positions[startIndex];
+        const end = positions[startIndex + candidate.length - 1];
         if (!start || !end) continue;
-        if (wrapRange(container, start, end)) return true;
+        const range = document.createRange();
+        range.setStart(start.node, start.offset);
+        range.setEnd(end.node, end.offset + 1);
+        return range;
     }
-    return false;
+    return null;
 }
 
-function pdfPageTextMatches(text: string, highlight: PreviewHighlight): boolean {
+function centerRange(container: HTMLElement, range: Range): number | null {
+    const bounds = range.getBoundingClientRect();
+    if (bounds.width === 0 && bounds.height === 0) return null;
+    const containerBounds = container.getBoundingClientRect();
+    const top = container.scrollTop + bounds.top - containerBounds.top - container.clientHeight / 2 + bounds.height / 2;
+    const left = container.scrollLeft + bounds.left - containerBounds.left - container.clientWidth / 2 + bounds.width / 2;
+    container.scrollTo({
+        top: Math.max(0, top),
+        left: Math.max(0, left),
+        behavior: "auto",
+    });
+    const centeredBounds = range.getBoundingClientRect();
+    return Math.min(
+        Math.max(8, centeredBounds.left - containerBounds.left - 28),
+        Math.max(8, container.clientWidth - 32)
+    );
+}
+
+function pageContainsLocation(text: string, excerpt: string | null, sectionTitle: string | null): boolean {
     const normalizedText = normalize(text);
-    return highlightCandidates(highlight.excerpt ?? null, highlight.sectionTitle ?? null)
-        .some((candidate) => normalizedText.includes(candidate));
+    return locationCandidates(excerpt, sectionTitle).some((candidate) => normalizedText.includes(candidate));
 }
 
-function PdfPreview({
-    data,
-    highlight,
-    onHighlightStatusChange,
-}: {
-    data: ArrayBuffer;
-    highlight?: PreviewHighlight;
-    onHighlightStatusChange?: (status: HighlightStatus) => void;
-}) {
+function LocationGuide({ left }: { left: number }) {
+    return (
+        <div
+            className="citation-location-guide pointer-events-none absolute top-1/2 z-30 flex -translate-y-1/2 items-center text-secondary"
+            style={{ left }}
+        >
+            <div className="h-12 w-1 rounded-full bg-secondary shadow-[0_0_12px_rgba(0,121,140,0.35)]" />
+            <ChevronRight className="-ml-0.5 h-6 w-6 stroke-[3]" />
+        </div>
+    );
+}
+
+function PdfPreview({ data, location }: { data: ArrayBuffer; location?: PreviewLocation }) {
     const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
     const [pageNumber, setPageNumber] = useState(1);
+    const [targetPage, setTargetPage] = useState<number | null>(null);
     const [containerWidth, setContainerWidth] = useState(0);
     const [renderError, setRenderError] = useState(false);
+    const [guideVisible, setGuideVisible] = useState(false);
+    const [guideLeft, setGuideLeft] = useState(8);
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const textLayerRef = useRef<HTMLDivElement>(null);
+    const locatedKeyRef = useRef("");
+    const excerpt = location?.excerpt ?? null;
+    const sectionTitle = location?.sectionTitle ?? null;
+    const requestedPage = location?.page ?? 1;
+    const locationKey = `${requestedPage}|${sectionTitle ?? ""}|${excerpt ?? ""}`;
 
     useEffect(() => {
         let active = true;
@@ -217,40 +206,42 @@ function PdfPreview({
     useEffect(() => {
         if (!pdf) return;
         let active = true;
+        locatedKeyRef.current = "";
         const resolvePage = async () => {
-            const hasTarget = Boolean(highlight?.excerpt || highlight?.sectionTitle);
-            const requestedPage = Math.min(Math.max(highlight?.page ?? 1, 1), pdf.numPages);
-            if (!hasTarget) {
-                setPageNumber(requestedPage);
-                onHighlightStatusChange?.("unavailable");
+            const page = Math.min(Math.max(requestedPage, 1), pdf.numPages);
+            if (!excerpt && !sectionTitle) {
+                if (active) {
+                    setTargetPage(null);
+                    setPageNumber(page);
+                }
                 return;
             }
             const order = [
-                requestedPage,
-                ...Array.from({ length: pdf.numPages }, (_, index) => index + 1)
-                    .filter((page) => page !== requestedPage),
+                page,
+                ...Array.from({ length: pdf.numPages }, (_, index) => index + 1).filter((candidate) => candidate !== page),
             ];
-            for (const candidatePage of order) {
-                const page = await pdf.getPage(candidatePage);
-                const content = await page.getTextContent();
-                const pageText = content.items
-                    .map((item) => ("str" in item ? item.str : ""))
-                    .join(" ");
-                if (pdfPageTextMatches(pageText, highlight ?? {})) {
-                    if (active) setPageNumber(candidatePage);
+            for (const candidate of order) {
+                const pdfPage = await pdf.getPage(candidate);
+                const content = await pdfPage.getTextContent();
+                const text = content.items.map((item) => ("str" in item ? item.str : "")).join(" ");
+                if (pageContainsLocation(text, excerpt, sectionTitle)) {
+                    if (active) {
+                        setTargetPage(candidate);
+                        setPageNumber(candidate);
+                    }
                     return;
                 }
             }
             if (active) {
-                setPageNumber(requestedPage);
-                onHighlightStatusChange?.("not-found");
+                setTargetPage(null);
+                setPageNumber(page);
             }
         };
         void resolvePage();
         return () => {
             active = false;
         };
-    }, [pdf, highlight, onHighlightStatusChange]);
+    }, [pdf, excerpt, sectionTitle, requestedPage]);
 
     useEffect(() => {
         if (!pdf || containerWidth <= 0) return;
@@ -289,66 +280,69 @@ function PdfPreview({
             if (!active) return;
             textLayer = new TextLayer({ textContentSource: textContent, container: layer, viewport });
             await textLayer.render();
-            if (!active) return;
-            if (highlight?.excerpt || highlight?.sectionTitle) {
-                const found = highlightExcerpt(
-                    layer,
-                    highlight.excerpt ?? null,
-                    highlight.sectionTitle ?? null
-                );
-                onHighlightStatusChange?.(found ? "found" : "not-found");
-            } else {
-                onHighlightStatusChange?.("unavailable");
+            if (!active || targetPage !== pageNumber || locatedKeyRef.current === locationKey) return;
+            locatedKeyRef.current = locationKey;
+            const range = findLocationRange(layer, excerpt, sectionTitle);
+            const container = containerRef.current;
+            if (range && container) {
+                const left = centerRange(container, range);
+                if (left != null) {
+                    setGuideLeft(left);
+                    setGuideVisible(true);
+                }
             }
         };
         void renderPage().catch(() => {
-            if (active) {
-                setRenderError(true);
-                onHighlightStatusChange?.(
-                    highlight?.excerpt || highlight?.sectionTitle ? "not-found" : "unavailable"
-                );
-            }
+            if (active) setRenderError(true);
         });
         return () => {
             active = false;
             renderTask?.cancel();
             textLayer?.cancel();
         };
-    }, [pdf, pageNumber, containerWidth, highlight, onHighlightStatusChange]);
+    }, [pdf, pageNumber, containerWidth, targetPage, locationKey, excerpt, sectionTitle]);
+
+    const movePage = (page: number) => {
+        setGuideVisible(false);
+        setPageNumber(page);
+    };
 
     if (renderError) {
         return <div className="h-full flex items-center justify-center text-outline text-body-sm">PDF를 렌더링하지 못했습니다.</div>;
     }
 
     return (
-        <div ref={containerRef} className="relative h-full overflow-auto bg-surface-container-lowest">
-            {pdf && (
-                <div className="sticky top-3 z-20 mx-auto mb-3 flex w-fit items-center gap-3 rounded-full border border-outline-variant bg-white/95 px-3 py-1.5 shadow-sm backdrop-blur">
-                    <button
-                        type="button"
-                        onClick={() => setPageNumber((current) => Math.max(1, current - 1))}
-                        disabled={pageNumber <= 1}
-                        className="rounded-full p-1 text-outline hover:bg-surface-container disabled:opacity-30 cursor-pointer"
-                    >
-                        <ChevronLeft className="h-4 w-4" />
-                    </button>
-                    <span className="min-w-16 text-center text-xs font-bold text-on-surface">
-                        {pageNumber} / {pdf.numPages}
-                    </span>
-                    <button
-                        type="button"
-                        onClick={() => setPageNumber((current) => Math.min(pdf.numPages, current + 1))}
-                        disabled={pageNumber >= pdf.numPages}
-                        className="rounded-full p-1 text-outline hover:bg-surface-container disabled:opacity-30 cursor-pointer"
-                    >
-                        <ChevronRight className="h-4 w-4" />
-                    </button>
+        <div className="relative h-full">
+            <div ref={containerRef} className="h-full overflow-auto bg-surface-container-lowest">
+                {pdf && (
+                    <div className="sticky top-3 z-20 mx-auto mb-3 flex w-fit items-center gap-3 rounded-full border border-outline-variant bg-white/95 px-3 py-1.5 shadow-sm backdrop-blur">
+                        <button
+                            type="button"
+                            onClick={() => movePage(Math.max(1, pageNumber - 1))}
+                            disabled={pageNumber <= 1}
+                            className="rounded-full p-1 text-outline hover:bg-surface-container disabled:opacity-30 cursor-pointer"
+                        >
+                            <ChevronLeft className="h-4 w-4" />
+                        </button>
+                        <span className="min-w-16 text-center text-xs font-bold text-on-surface">
+                            {pageNumber} / {pdf.numPages}
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => movePage(Math.min(pdf.numPages, pageNumber + 1))}
+                            disabled={pageNumber >= pdf.numPages}
+                            className="rounded-full p-1 text-outline hover:bg-surface-container disabled:opacity-30 cursor-pointer"
+                        >
+                            <ChevronRight className="h-4 w-4" />
+                        </button>
+                    </div>
+                )}
+                <div className="relative mx-auto mb-6 w-fit bg-white shadow-lg">
+                    <canvas ref={canvasRef} className="block" />
+                    <div ref={textLayerRef} className="textLayer absolute inset-0" />
                 </div>
-            )}
-            <div className="relative mx-auto mb-6 w-fit bg-white shadow-lg">
-                <canvas ref={canvasRef} className="block" />
-                <div ref={textLayerRef} className="textLayer absolute inset-0" />
             </div>
+            {guideVisible && <LocationGuide left={guideLeft} />}
         </div>
     );
 }
@@ -357,8 +351,7 @@ export default function FilePreview({
     fileId,
     fileName,
     fileType,
-    highlight,
-    onHighlightStatusChange,
+    location,
     className,
 }: FilePreviewProps) {
     const type = fileType.toLowerCase();
@@ -366,7 +359,12 @@ export default function FilePreview({
     const [pdfData, setPdfData] = useState<ArrayBuffer | null>(null);
     const [html, setHtml] = useState<string>("");
     const [text, setText] = useState<string>("");
+    const [guideVisible, setGuideVisible] = useState(false);
+    const [guideLeft, setGuideLeft] = useState(8);
+    const previewContainerRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
+    const excerpt = location?.excerpt ?? null;
+    const sectionTitle = location?.sectionTitle ?? null;
 
     useEffect(() => {
         if (!isRenderable(type)) return;
@@ -413,28 +411,30 @@ export default function FilePreview({
     }, [fileId, type]);
 
     useEffect(() => {
-        const excerpt = highlight?.excerpt ?? null;
-        const sectionTitle = highlight?.sectionTitle ?? null;
-        if (!excerpt && !sectionTitle) {
-            onHighlightStatusChange?.("unavailable");
-            return;
+        if (status !== "docx" && status !== "xlsx" && status !== "txt") return;
+        if (!excerpt && !sectionTitle) return;
+        const content = contentRef.current;
+        const container = previewContainerRef.current;
+        if (!content || !container) return;
+        const range = findLocationRange(content, excerpt, sectionTitle);
+        if (range) {
+            const left = centerRange(container, range);
+            if (left != null) {
+                setGuideLeft(left);
+                setGuideVisible(true);
+            }
         }
-        if ((status === "docx" || status === "xlsx" || status === "txt") && contentRef.current) {
-            const found = highlightExcerpt(contentRef.current, excerpt, sectionTitle);
-            onHighlightStatusChange?.(found ? "found" : "not-found");
-        }
-    }, [status, highlight?.excerpt, highlight?.sectionTitle, onHighlightStatusChange]);
-
-    useEffect(() => {
-        if (status !== "unsupported" && status !== "error") return;
-        onHighlightStatusChange?.(
-            highlight?.excerpt || highlight?.sectionTitle ? "not-found" : "unavailable"
-        );
-    }, [status, highlight?.excerpt, highlight?.sectionTitle, onHighlightStatusChange]);
+    }, [status, excerpt, sectionTitle]);
 
     return (
-        <div className={className ?? "h-full"}>
+        <div className={`relative ${className ?? "h-full"}`}>
             <style>{`
+        @keyframes citation-guide-arrive {
+          0% { opacity: 0; transform: translate(-10px, -50%); }
+          45% { opacity: 1; transform: translate(3px, -50%); }
+          100% { opacity: 1; transform: translate(0, -50%); }
+        }
+        .citation-location-guide { animation: citation-guide-arrive 700ms ease-out both; }
         .preview-rich h1 { font-size: 1.5rem; font-weight: 700; margin: 1rem 0 0.5rem; }
         .preview-rich h2 { font-size: 1.25rem; font-weight: 700; margin: 1rem 0 0.5rem; }
         .preview-rich h3 { font-size: 1.1rem; font-weight: 600; margin: 0.75rem 0 0.5rem; }
@@ -445,38 +445,43 @@ export default function FilePreview({
         .preview-rich td, .preview-rich th { border: 1px solid #d1d5db; padding: 4px 8px; }
         .preview-rich img { max-width: 100%; height: auto; }
         .preview-rich .xlsx-sheet-name { font-size: 0.95rem; font-weight: 700; margin: 1rem 0 0.5rem; color: #059669; }
-        .preview-rich mark.source-highlight { background: #fde68a; padding: 1px 2px; border-radius: 2px; }
-        .preview-plain mark.source-highlight { background: #fde68a; padding: 1px 2px; border-radius: 2px; }
       `}</style>
             {status === "loading" && (
                 <div className="h-full flex items-center justify-center text-outline text-body-sm">
                     문서를 불러오는 중...
                 </div>
             )}
-            {status === "pdf" && pdfData && (
-                <PdfPreview
-                    data={pdfData}
-                    highlight={highlight}
-                    onHighlightStatusChange={onHighlightStatusChange}
-                />
-            )}
+            {status === "pdf" && pdfData && <PdfPreview data={pdfData} location={location} />}
             {(status === "docx" || status === "xlsx") && (
                 <div
-                    ref={contentRef}
-                    className="preview-rich h-full overflow-auto px-8 py-6 bg-white text-on-surface leading-relaxed"
-                    dangerouslySetInnerHTML={{ __html: html }}
-                />
+                    ref={previewContainerRef}
+                    className="h-full overflow-auto bg-white"
+                >
+                    <div
+                        ref={contentRef}
+                        className={`preview-rich min-h-full px-8 py-6 text-on-surface leading-relaxed ${
+                            status === "xlsx" ? "w-max min-w-full" : "w-full"
+                        }`}
+                        dangerouslySetInnerHTML={{ __html: html }}
+                    />
+                </div>
             )}
             {status === "txt" && (
                 <div
-                    ref={contentRef}
-                    className="preview-plain h-full overflow-y-auto px-8 py-6 bg-white text-on-surface text-sm leading-relaxed font-mono whitespace-pre-wrap break-words"
+                    ref={previewContainerRef}
+                    className="h-full overflow-auto bg-white"
                 >
-                    {text.split("\n").map((line, i) => (
-                        <div key={i}>{line === "" ? " " : line}</div>
-                    ))}
+                    <div
+                        ref={contentRef}
+                        className="preview-plain min-h-full min-w-full px-8 py-6 text-on-surface text-sm leading-relaxed font-mono whitespace-pre-wrap break-words"
+                    >
+                        {text.split("\n").map((line, index) => (
+                            <div key={index}>{line === "" ? " " : line}</div>
+                        ))}
+                    </div>
                 </div>
             )}
+            {guideVisible && <LocationGuide left={guideLeft} />}
             {(status === "unsupported" || status === "error") && (
                 <div className="h-full flex flex-col items-center justify-center gap-3 text-center px-6">
                     <p className="text-body-md text-on-surface-variant">

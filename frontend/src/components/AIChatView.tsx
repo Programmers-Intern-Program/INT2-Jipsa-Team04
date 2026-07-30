@@ -40,17 +40,16 @@ interface AIChatViewProps {
 
 const EMPTY_CHAT_HISTORY: ChatMessage[] = [];
 
-function deduplicateCitations(citations: Citation[]): Citation[] {
-  const seen = new Set<string>();
+interface PreviewSource {
+  citation: Citation;
+  documentOnly: boolean;
+}
+
+function deduplicateCitationsByFile(citations: Citation[]): Citation[] {
+  const seen = new Set<number>();
   return citations.filter((citation) => {
-    const key = [
-      citation.fileId,
-      citation.page ?? "",
-      citation.sectionTitle?.trim() ?? "",
-      citation.excerpt?.replace(/\s+/g, " ").trim() ?? "",
-    ].join("|");
-    if (seen.has(key)) return false;
-    seen.add(key);
+    if (seen.has(citation.fileId)) return false;
+    seen.add(citation.fileId);
     return true;
   });
 }
@@ -71,7 +70,7 @@ export default function AIChatView({
   const [inputText, setInputText] = useState("");
   const [isAddSourceOpen, setIsAddSourceOpen] = useState(false);
   const [folders, setFolders] = useState<Folder[]>([]);
-  const [previewCitation, setPreviewCitation] = useState<Citation | null>(null);
+  const [previewSource, setPreviewSource] = useState<PreviewSource | null>(null);
   const renderMessageText = (message: ChatMessage) => {
     if (message.sender !== "ai" || message.citations.length === 0) return message.text;
     return message.text.split(/(\[SOURCE-\d+\])/g).map((part, index) => {
@@ -83,7 +82,7 @@ export default function AIChatView({
           <button
               key={index}
               type="button"
-              onClick={() => setPreviewCitation(citation)}
+              onClick={() => setPreviewSource({ citation, documentOnly: false })}
               className="inline-flex items-center align-baseline text-[11px] font-bold text-secondary bg-secondary/10 hover:bg-secondary/20 rounded px-1 mx-0.5 cursor-pointer"
           >
             {match[1]}
@@ -340,10 +339,10 @@ export default function AIChatView({
                       {msg.sender === "ai" && msg.citations.length > 0 && (
                         <div className="mt-5 flex flex-wrap gap-2 pt-4 border-t border-outline-variant/30">
                           <span className="text-[11px] text-outline w-full mb-1 font-bold">인용된 신뢰 근거 문서:</span>
-                          {deduplicateCitations(msg.citations).map((cite) => (
+                          {deduplicateCitationsByFile(msg.citations).map((cite) => (
                             <button 
-                              key={`${cite.fileId}-${cite.page ?? "none"}-${cite.sectionTitle ?? ""}-${cite.excerpt ?? ""}`}
-                              onClick={() => setPreviewCitation(cite)}
+                              key={cite.fileId}
+                              onClick={() => setPreviewSource({ citation: cite, documentOnly: true })}
                               className="px-3 py-1 bg-surface-container text-secondary text-xs font-bold rounded-lg border border-secondary/10 hover:bg-secondary/15 transition-all flex items-center gap-1 cursor-pointer"
                             >
                               <Link2 className="w-3.5 h-3.5" />
@@ -574,12 +573,13 @@ export default function AIChatView({
           </div>
         )}
       </AnimatePresence>
-      {previewCitation && (
+      {previewSource && (
           <SourcePreviewModal
-              citation={previewCitation}
-              fileName={previewCitation.fileName}
-              fileType={previewCitation.fileName.split(".").pop() ?? ""}
-              onClose={() => setPreviewCitation(null)}
+              citation={previewSource.citation}
+              fileName={previewSource.citation.fileName}
+              fileType={previewSource.citation.fileName.split(".").pop() ?? ""}
+              documentOnly={previewSource.documentOnly}
+              onClose={() => setPreviewSource(null)}
           />
       )}
     </motion.div>

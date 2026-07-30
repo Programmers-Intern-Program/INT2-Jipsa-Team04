@@ -1,18 +1,23 @@
-import { useState } from "react";
-import { X, Download, FileText, MapPin, Sparkles, Gauge, SearchX } from "lucide-react";
+import { X, Download, FileText, MapPin, Sparkles } from "lucide-react";
 import type { Citation } from "../api/chat";
 import { downloadFile } from "../api/files";
-import FilePreview, { type HighlightStatus } from "./FilePreview";
+import FilePreview from "./FilePreview";
 
 interface SourcePreviewModalProps {
     citation: Citation;
     fileName: string;
     fileType: string;
+    documentOnly?: boolean;
     onClose: () => void;
 }
 
-export default function SourcePreviewModal({ citation, fileName, fileType, onClose }: SourcePreviewModalProps) {
-    const [highlightStatus, setHighlightStatus] = useState<HighlightStatus | "checking">("checking");
+export default function SourcePreviewModal({
+    citation,
+    fileName,
+    fileType,
+    documentOnly = false,
+    onClose,
+}: SourcePreviewModalProps) {
     const locationLabel =
         citation.page != null ? `${citation.page}페이지` : citation.sectionTitle ? citation.sectionTitle : "위치 정보 없음";
     const typeLabel = fileType ? fileType.toUpperCase() : "FILE";
@@ -35,13 +40,11 @@ export default function SourcePreviewModal({ citation, fileName, fileType, onClo
                             <h3 className="truncate text-base font-bold text-on-surface">{fileName}</h3>
                             <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-outline">
                                 <span className="rounded-md bg-surface-container px-2 py-0.5">{typeLabel}</span>
-                                <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{locationLabel}</span>
-                                {citation.sectionTitle && citation.page != null && <span className="truncate">{citation.sectionTitle}</span>}
-                                {citation.score != null && (
-                                    <span className="flex items-center gap-1">
-                                        <Gauge className="h-3 w-3" />
-                                        관련도 {(citation.score * 100).toFixed(0)}%
-                                    </span>
+                                {!documentOnly && (
+                                    <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{locationLabel}</span>
+                                )}
+                                {!documentOnly && citation.sectionTitle && citation.page != null && (
+                                    <span className="truncate">{citation.sectionTitle}</span>
                                 )}
                             </div>
                         </div>
@@ -69,9 +72,13 @@ export default function SourcePreviewModal({ citation, fileName, fileType, onClo
                     <aside className="border-b border-outline-variant bg-white p-5 lg:overflow-y-auto lg:border-b-0 lg:border-r">
                         <div className="flex items-center gap-2 text-secondary">
                             <Sparkles className="h-4 w-4" />
-                            <h4 className="text-sm font-bold">AI가 사용한 근거</h4>
+                            <h4 className="text-sm font-bold">{documentOnly ? "참조 문서" : "AI가 사용한 근거"}</h4>
                         </div>
-                        {citation.excerpt ? (
+                        {documentOnly ? (
+                            <div className="mt-3 rounded-xl border border-outline-variant bg-surface-container-low p-4 text-sm leading-6 text-on-surface-variant">
+                                AI 답변에 사용된 문서의 전체 내용을 확인할 수 있습니다.
+                            </div>
+                        ) : citation.excerpt ? (
                             <div className="mt-3 rounded-xl border border-secondary/20 bg-secondary/[0.04] p-4 text-sm leading-7 text-on-surface">
                                 {citation.excerpt}
                             </div>
@@ -80,31 +87,18 @@ export default function SourcePreviewModal({ citation, fileName, fileType, onClo
                                 이 인용에는 별도의 근거 문장이 포함되지 않았습니다.
                             </div>
                         )}
-                        {highlightStatus === "checking" ? (
-                            <p className="mt-3 flex items-start gap-2 rounded-lg bg-surface-container-low px-3 py-2 text-xs font-semibold leading-5 text-on-surface-variant">
-                                <span className="mt-1 h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-secondary border-t-transparent" />
-                                문서에서 근거 위치를 찾고 있습니다.
-                            </p>
-                        ) : highlightStatus === "found" ? (
-                            <p className="mt-3 flex items-start gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold leading-5 text-emerald-700">
-                                <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                                문서에서 근거 위치를 찾아 강조했습니다.
-                            </p>
-                        ) : (
-                            <p className="mt-3 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold leading-5 text-amber-800">
-                                <SearchX className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                                문서 내 정확한 위치를 찾지 못했습니다.
-                            </p>
-                        )}
                     </aside>
                     <div className="min-h-0 overflow-hidden">
                         <FilePreview
-                            key={`${citation.fileId}-${citation.page ?? "none"}-${citation.sectionTitle ?? ""}-${citation.excerpt ?? ""}`}
+                            key={`${citation.fileId}-${documentOnly ? "document" : `${citation.page ?? "none"}-${citation.sectionTitle ?? ""}-${citation.excerpt ?? ""}`}`}
                             fileId={citation.fileId}
                             fileName={fileName}
                             fileType={fileType}
-                            highlight={{ excerpt: citation.excerpt, sectionTitle: citation.sectionTitle, page: citation.page }}
-                            onHighlightStatusChange={setHighlightStatus}
+                            location={documentOnly ? undefined : {
+                                excerpt: citation.excerpt,
+                                sectionTitle: citation.sectionTitle,
+                                page: citation.page,
+                            }}
                             className="h-full"
                         />
                     </div>
