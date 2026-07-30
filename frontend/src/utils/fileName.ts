@@ -13,5 +13,10 @@ export function getBaseName(fileName: string, fileType: string): string {
 
 export function buildFileName(baseName: string, fileType: string): string {
   const extension = normalizeExtension(fileType);
-  return extension ? `${baseName}.${extension}` : baseName;
+  if (!extension) return baseName;
+  const suffix = `.${extension}`;
+  const normalizedBaseName = baseName.toLowerCase().endsWith(suffix)
+    ? baseName.slice(0, -suffix.length)
+    : baseName;
+  return `${normalizedBaseName}${suffix}`;
 }
