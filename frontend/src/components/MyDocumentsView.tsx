@@ -391,7 +391,7 @@ export default function MyDocumentsView({
       const matchesSearch =
           doc.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
           doc.summary.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          doc.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
+          [...doc.tags, ...doc.keywords].some(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
 
       let matchesTabAndFolder = true;
       if (currentTab === "mydrive") {
@@ -407,7 +407,7 @@ export default function MyDocumentsView({
 
       const matchesType = !selectedType || doc.fileType === selectedType;
       const matchesDocumentType = !selectedDocumentType || doc.documentType === selectedDocumentType;
-      const matchesTag = !tagFilter.trim() || (doc.tags ?? []).some((t) => t.toLowerCase().includes(tagFilter.trim().toLowerCase()));
+      const matchesTag = !tagFilter.trim() || [...doc.tags, ...doc.keywords].some((t) => t.toLowerCase().includes(tagFilter.trim().toLowerCase()));
       const docDate = (doc.modifiedAt ?? "").slice(0, 10);
       const matchesDate = (!dateFromFilter || docDate >= dateFromFilter) && (!dateToFilter || docDate <= dateToFilter);
 
@@ -2268,6 +2268,12 @@ export default function MyDocumentsView({
                                     #{tag}
                                   </span>
                                 ))}
+                                {doc.keywords.filter((keyword) => !doc.tags.includes(keyword)).map((keyword) => (
+                                  <span key={keyword} className="inline-flex items-center gap-1 bg-secondary/10 px-2 py-0.5 rounded text-[10px] font-extrabold text-secondary border border-secondary/15">
+                                    <Sparkles className="w-3 h-3" />
+                                    #{keyword}
+                                  </span>
+                                ))}
                               </div>
 
                               <div className="flex gap-2 border-t border-outline-variant/30 pt-4 mt-2">
@@ -2348,7 +2354,7 @@ export default function MyDocumentsView({
                         </button>
                       </th>
                       <th className="px-6 py-4 whitespace-nowrap">파일명 및 경로</th>
-                      <th className="px-6 py-4 whitespace-nowrap">AI 추출 태그</th>
+                      <th className="px-6 py-4 whitespace-nowrap">태그</th>
                       <th className="px-6 py-4 whitespace-nowrap">최종 수정일</th>
                       <th className="px-6 py-4 whitespace-nowrap">용량</th>
                       <th className="px-6 py-4 text-center whitespace-nowrap">작업</th>
@@ -2541,6 +2547,12 @@ export default function MyDocumentsView({
                               {doc.tags.map((tag, idx) => (
                                 <span key={idx} className="px-1.5 py-0.5 bg-primary/5 text-primary text-[9.5px] font-extrabold rounded border border-primary/10 whitespace-nowrap">
                                   #{tag}
+                                </span>
+                              ))}
+                              {doc.keywords.filter((keyword) => !doc.tags.includes(keyword)).map((keyword) => (
+                                <span key={keyword} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-secondary/10 text-secondary text-[9.5px] font-extrabold rounded border border-secondary/15 whitespace-nowrap">
+                                  <Sparkles className="w-3 h-3" />
+                                  #{keyword}
                                 </span>
                               ))}
                             </div>

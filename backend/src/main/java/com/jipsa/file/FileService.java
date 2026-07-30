@@ -388,6 +388,7 @@ public class FileService {
     private FileListItem toListItem(File file, FileMetadata metadata) {
         String summary = metadata != null && metadata.getSummary() != null ? metadata.getSummary() : "";
         List<String> tags = metadata != null ? parseStringList(metadata.getTags()) : List.of();
+        List<String> keywords = metadata != null ? parseStringList(metadata.getKeywords()) : List.of();
         return new FileListItem(
                 file.getId(),
                 file.getName(),
@@ -399,6 +400,7 @@ public class FileService {
                 file.getUpdatedAt(),
                 summary,
                 tags,
+                keywords,
                 file.getSecurityRank(),
                 metadata != null ? metadata.getDocumentType() : null,
                 metadata != null ? metadata.getExtractionStatus() : null);

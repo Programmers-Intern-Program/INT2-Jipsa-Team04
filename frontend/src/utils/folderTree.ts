@@ -44,10 +44,10 @@ export interface FolderMatch {
  * 일치하는 폴더가 하나도 없으면 null을 반환한다(= 현재 위치 유지 권장).
  */
 export function findBestMatchingFolder(
-  doc: { name: string; tags: string[]; docType?: string; summary: string; entities?: { project: string } },
+  doc: { name: string; tags: string[]; keywords?: string[]; docType?: string; summary: string; entities?: { project: string } },
   folders: Folder[]
 ): FolderMatch | null {
-  const haystack = [doc.name, doc.docType ?? "", doc.summary, doc.entities?.project ?? "", ...doc.tags]
+  const haystack = [doc.name, doc.docType ?? "", doc.summary, doc.entities?.project ?? "", ...doc.tags, ...(doc.keywords ?? [])]
     .join(" ")
     .toLowerCase();
 

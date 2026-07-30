@@ -139,7 +139,7 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
             <thead>
               <tr className="bg-surface-container-low text-outline text-label-sm font-semibold border-b border-outline-variant uppercase tracking-wider" id="recent-docs-table-head">
                 <th className="px-8 py-4">문서 이름</th>
-                <th className="px-8 py-4">AI 추출 태그</th>
+                <th className="px-8 py-4">태그</th>
                 <th className="px-8 py-4">마지막 수정</th>
                 <th className="px-8 py-4 text-center">RAG 즉시 물어보기</th>
               </tr>
@@ -179,6 +179,15 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
                           className="px-2.5 py-0.5 bg-primary/5 text-primary text-[11px] font-semibold rounded-full border border-primary/10"
                         >
                           #{tag}
+                        </span>
+                      ))}
+                      {doc.keywords.filter((keyword) => !doc.tags.includes(keyword)).map((keyword) => (
+                        <span
+                          key={keyword}
+                          className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-secondary/10 text-secondary text-[11px] font-semibold rounded-full border border-secondary/15"
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          #{keyword}
                         </span>
                       ))}
                     </div>

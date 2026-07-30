@@ -12,6 +12,7 @@ export interface FileListItem {
     modifiedAt: string;
     summary: string;
     tags: string[];
+    keywords: string[];
     documentType: string | null;
     extractionStatus: string | null;
 }
@@ -74,6 +75,7 @@ export function toDocument(item: FileListItem): Document {
         fileType: item.fileType,
         folderId: item.folderId,
         tags: item.tags ?? [],
+        keywords: item.keywords ?? [],
         modifiedAt: item.modifiedAt,
         ownerName: "",
         summary: item.summary ?? "",

@@ -68,6 +68,7 @@ export interface Document {
   folderId: number | null;
   /** was: aiTags */
   tags: string[];
+  keywords: string[];
   /** API 응답 스펙엔 명시되지 않았으나 화면 표시에 필요해 유지. */
   modifiedAt: string;
   /** was: owner */

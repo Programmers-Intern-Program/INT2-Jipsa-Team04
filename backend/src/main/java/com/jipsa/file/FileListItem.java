@@ -14,6 +14,7 @@ public record FileListItem(
         LocalDateTime modifiedAt,
         String summary,
         List<String> tags,
+        List<String> keywords,
         String securityRank,
         String documentType,
         String extractionStatus
