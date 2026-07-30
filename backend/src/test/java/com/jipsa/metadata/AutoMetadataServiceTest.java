@@ -43,7 +43,7 @@ class AutoMetadataServiceTest {
         MetadataProperties properties = new MetadataProperties();
         properties.setDocumentTypes(List.of("계약서", "보고서", "청구서"));
         service = new AutoMetadataService(fileMetadataRepository, chunkRepository, autoMetadataClient,
-                objectMapper, properties, transactionManager, 6, 4000, 300000L, 500);
+                objectMapper, properties, transactionManager, 6, 4000, 300000L, 1000);
     }
 
     private void stubClaim() {
@@ -140,6 +140,18 @@ class AutoMetadataServiceTest {
 
         verify(fileMetadataRepository).failGeneration(eq(1L), any(), any());
         verify(fileMetadataRepository, never()).completeGeneration(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void truncatesSummaryAtConfiguredLimit() {
+        stubClaim();
+        String summary = "가".repeat(1001);
+        when(autoMetadataClient.generate(any())).thenReturn(result(summary, List.of("k"), "보고서", 0.5));
+
+        service.process(1L);
+
+        verify(fileMetadataRepository).completeGeneration(
+                eq(1L), any(), eq("가".repeat(1000)), any(), any(), any(), any(), any());
     }
 
     @Test

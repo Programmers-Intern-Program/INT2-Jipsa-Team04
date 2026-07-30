@@ -83,6 +83,42 @@ interface FileRenameTarget {
   fileType: string;
 }
 
+function FileSummaryPreview({ id, summary }: { id: string; summary: string }) {
+  const textRef = useRef<HTMLParagraphElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+
+  const measureOverflow = useCallback(() => {
+    const text = textRef.current;
+    if (!text) return;
+    setOverflowing(text.scrollHeight > text.clientHeight + 1);
+  }, []);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(measureOverflow);
+    const text = textRef.current;
+    const observer = new ResizeObserver(measureOverflow);
+    if (text) observer.observe(text);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [summary, measureOverflow]);
+
+  return (
+    <div
+      className="relative overflow-hidden rounded-xl mb-4 border border-outline-variant/20 bg-surface-container-low/50"
+      id={`summary-box-${id}`}
+    >
+      <p ref={textRef} className="max-h-[5.5rem] overflow-hidden p-3 text-[11px] text-on-surface-variant leading-relaxed font-sans">
+        {summary}
+      </p>
+      {overflowing && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-surface-container-low via-surface-container-low/80 to-transparent" />
+      )}
+    </div>
+  );
+}
+
 export default function MyDocumentsView({
   documents,
   onNavigateToChat,
@@ -2304,10 +2340,7 @@ export default function MyDocumentsView({
                                 </div>
                               </div>
 
-                              {/* AI Summary block */}
-                              <p className="text-[11px] text-on-surface-variant line-clamp-2 leading-relaxed bg-surface-container-low/50 p-3 rounded-xl mb-4 font-sans border border-outline-variant/20" id={`summary-box-${doc.id}`}>
-                                {doc.summary}
-                              </p>
+                              <FileSummaryPreview id={doc.id} summary={doc.summary} />
                               
                               {/* Metadata Display for docType and entities */}
                               {(doc.docType || (doc.entities && (doc.entities.dates?.length || doc.entities.people?.length || doc.entities.amounts?.length || doc.entities.project))) && (
