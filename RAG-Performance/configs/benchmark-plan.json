@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "benchmark_name": "issue-159-resource-limit-measurement",
+  "test_user_idx": 159000,
+  "file_idx_start": 1590000,
+  "sample_interval_seconds": 0.5,
+  "docker_sample_interval_seconds": 2.0,
+  "request_timeout_seconds": 900.0,
+  "warmup_requests": 1,
+  "fixture_profiles": [
+    {
+      "name": "small_text",
+      "text_units": 8,
+      "repetitions_per_unit": 8,
+      "image_count": 0,
+      "ocr_only": false
+    },
+    {
+      "name": "medium_text",
+      "text_units": 40,
+      "repetitions_per_unit": 12,
+      "image_count": 0,
+      "ocr_only": false
+    },
+    {
+      "name": "large_text",
+      "text_units": 100,
+      "repetitions_per_unit": 16,
+      "image_count": 0,
+      "ocr_only": false
+    },
+    {
+      "name": "small_ocr",
+      "text_units": 0,
+      "repetitions_per_unit": 0,
+      "image_count": 1,
+      "ocr_only": true
+    },
+    {
+      "name": "medium_ocr",
+      "text_units": 0,
+      "repetitions_per_unit": 0,
+      "image_count": 4,
+      "ocr_only": true
+    },
+    {
+      "name": "large_ocr",
+      "text_units": 0,
+      "repetitions_per_unit": 0,
+      "image_count": 8,
+      "ocr_only": true
+    }
+  ],
+  "fixture_matrix": [
+    {
+      "group": "format-coverage",
+      "formats": ["pdf", "docx", "pptx", "xlsx", "txt"],
+      "profiles": ["small_text"]
+    },
+    {
+      "group": "ocr-comparison",
+      "formats": ["pdf", "docx", "pptx", "xlsx"],
+      "profiles": ["small_ocr"]
+    },
+    {
+      "group": "scale-text",
+      "formats": ["pdf"],
+      "profiles": ["medium_text", "large_text"]
+    },
+    {
+      "group": "scale-ocr",
+      "formats": ["pdf"],
+      "profiles": ["medium_ocr", "large_ocr"]
+    }
+  ],
+  "ingest": {
+    "concurrency_levels": [1, 2, 4],
+    "requests_per_level": 4
+  },
+  "search": {
+    "top_k": 5,
+    "score_threshold": null,
+    "load": {
+      "concurrency_levels": [1, 2, 4, 8, 16],
+      "requests_per_level": 16
+    }
+  },
+  "answers": {
+    "enabled": true,
+    "lookup": {
+      "concurrency_levels": [1, 2],
+      "requests_per_level": 2
+    },
+    "synthesis": {
+      "concurrency_levels": [1, 2],
+      "requests_per_level": 2
+    }
+  },
+  "saturation": {
+    "max_error_rate": 0.01,
+    "throughput_gain_floor_percent": 5.0,
+    "p95_growth_trigger_percent": 20.0
+  }
+}

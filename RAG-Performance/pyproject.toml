@@ -1,0 +1,84 @@
+[project]
+name = "jipsa-rag-performance"
+version = "0.1.0"
+description = "Standalone resource and saturation benchmark for Jipsa Local RAG."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+authors = [
+    { name = "안수현", email = "soxyxs4996@gmail.com" },
+]
+dependencies = [
+    # API 부하 생성과 Loopback 대상 서버 준비 상태 확인
+    "httpx>=0.28.1,<0.29",
+
+    # Host와 대상 Process Tree의 CPU, RAM, Disk I/O, Network I/O 측정
+    "psutil>=7.0.0,<8.0",
+
+    # PDF, DOCX, PPTX, XLSX, TXT 및 OCR 이미지 합성 Fixture 생성
+    "openpyxl>=3.1.5,<4.0",
+    "pillow>=11.0.0,<13.0",
+    "pymupdf>=1.26.0,<2.0",
+    "python-docx>=1.2.0,<2.0",
+    "python-pptx>=1.0.2,<2.0",
+]
+
+[project.scripts]
+jipsa-rag-benchmark = "jipsa_rag_benchmark.runner:main"
+
+[build-system]
+requires = ["uv_build>=0.11.28,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# 프로젝트 배포 이름과 실제 import package 이름이 다르므로 명시적으로 고정합니다.
+module-name = "jipsa_rag_benchmark"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.2.0,<3.0",
+    "pytest>=9.1.1,<10.0",
+    "ruff>=0.15.21,<1.0",
+    "types-psutil>=7.0.0.20250601",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra -q --strict-config --strict-markers --import-mode=importlib"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "B",
+    "UP",
+    "SIM",
+    "RUF",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+explicit_package_bases = true
+strict = true
+warn_unused_configs = true
+show_error_codes = true
+pretty = true
+
+[[tool.mypy.overrides]]
+# 이 Bridge 모듈은 독립 프로그램 환경이 아니라 측정 대상 RAG의 uv 환경에서 실행됩니다.
+# RAG 전용 httpx2·FastAPI·SQLAlchemy·Qdrant 타입은 대상 프로젝트가 검증하므로,
+# standalone Mypy에서는 동적 import 경계 자체만 격리합니다.
+module = "jipsa_rag_benchmark.target_server"
+ignore_errors = true
