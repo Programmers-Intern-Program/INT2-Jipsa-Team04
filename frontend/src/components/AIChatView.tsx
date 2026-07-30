@@ -121,6 +121,7 @@ export default function AIChatView({
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const isComposingRef = useRef(false);
 
   // Auto scroll to bottom on new messages
   useEffect(() => {
@@ -139,6 +140,7 @@ export default function AIChatView({
 
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (isComposingRef.current) return;
     if (!inputText.trim() || isLoadingChat) return;
 
     const textToSend = inputText;
@@ -475,10 +477,20 @@ export default function AIChatView({
                   ref={composerRef}
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
+                  onCompositionStart={() => {
+                    isComposingRef.current = true;
+                  }}
+                  onCompositionEnd={(e) => {
+                    isComposingRef.current = false;
+                    setInputText(e.currentTarget.value);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {
+                      if (isComposingRef.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) {
+                        return;
+                      }
                       e.preventDefault();
-                      handleSend();
+                      void handleSend();
                     }
                   }}
                   placeholder={
