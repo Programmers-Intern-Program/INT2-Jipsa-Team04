@@ -2428,16 +2428,26 @@ export default function MyDocumentsView({
               </div>
             ) : (
               /* List Layout view */
-              <div className="overflow-x-auto w-full border border-outline-variant/50 rounded-2xl bg-surface-bright" id="vault-table-wrapper">
-                <table className="min-w-[1000px] w-full text-left table-fixed" id="vault-table">
+              <div className="w-full min-w-0 overflow-hidden border border-outline-variant/50 rounded-2xl bg-surface-bright" id="vault-table-wrapper">
+                <style>{`
+                  #vault-table th,
+                  #vault-table td {
+                    min-width: 0;
+                    padding-left: clamp(0.5rem, 1vw, 1.5rem);
+                    padding-right: clamp(0.5rem, 1vw, 1.5rem);
+                  }
+                  #vault-table td > * {
+                    max-width: 100%;
+                  }
+                `}</style>
+                <table className="w-full max-w-full text-left table-fixed" id="vault-table">
                   <colgroup>
-                    <col className="w-12" />
-                    <col className="w-[32%] min-w-[280px]" />
-                    <col className="w-[20%] min-w-[180px]" />
-                    <col className="w-[14%] min-w-[120px]" />
-                    <col className="w-[10%] min-w-[90px]" />
-                    <col className="w-[12%] min-w-[110px]" />
-                    <col className="w-[12%] min-w-[120px]" />
+                    <col className="w-[6%]" />
+                    <col className="w-[28%]" />
+                    <col className="w-[20%]" />
+                    <col className="w-[14%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[22%]" />
                   </colgroup>
                   <thead>
                     <tr className="bg-surface-container-low text-outline text-[11px] font-extrabold border-b border-outline-variant uppercase tracking-wider">
@@ -2477,15 +2487,15 @@ export default function MyDocumentsView({
                             <Folder className="w-4 h-4 text-primary fill-primary/5 mx-auto shrink-0" />
                           </td>
                           <td className="px-6 py-4">
-                            <div className="flex items-center gap-3">
+                            <div className="flex min-w-0 items-center gap-3">
                               <Folder className="w-5 h-5 text-primary fill-primary/10 shrink-0" />
-                              <div className="truncate">
+                              <div className="min-w-0 flex-1 truncate">
                                 <p className="font-bold text-xs text-on-surface leading-tight group-hover:text-primary transition-colors truncate">{folderName}</p>
                                 <p className="text-[10px] text-outline mt-1 font-sans truncate">📂 {getFolderPath(folder.folderId, folders) || "미분류"}</p>
                               </div>
                             </div>
                           </td>
-                          <td className="px-6 py-4 text-[10px] font-extrabold text-outline font-sans whitespace-nowrap">
+                          <td className="px-6 py-4 text-[10px] font-extrabold text-outline font-sans truncate">
                             가상 폴더 디렉터리
                           </td>
                           <td className="px-6 py-4 text-xs font-semibold text-outline font-sans whitespace-nowrap">
@@ -2544,12 +2554,12 @@ export default function MyDocumentsView({
                           </div>
                         </td>
                         <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
                             <FolderClosed className="w-5 h-5 text-outline shrink-0" />
-                            <p className="font-bold text-xs text-on-surface leading-tight truncate">{folder.name}</p>
+                            <p className="min-w-0 flex-1 font-bold text-xs text-on-surface leading-tight truncate">{folder.name}</p>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-[10px] font-extrabold text-outline font-sans whitespace-nowrap">
+                        <td className="px-6 py-4 text-[10px] font-extrabold text-outline font-sans truncate">
                           가상 폴더 디렉터리
                         </td>
                         <td className="px-6 py-4 text-xs font-semibold text-outline font-sans whitespace-nowrap">-</td>
@@ -2616,7 +2626,7 @@ export default function MyDocumentsView({
                             </button>
                           </td>
                           <td className="px-6 py-4">
-                            <div className="flex items-center gap-3">
+                            <div className="flex min-w-0 items-center gap-3">
                               {/* Star button inside list view */}
                               <button
                                 type="button"
@@ -2646,7 +2656,7 @@ export default function MyDocumentsView({
                                 <FileText className="w-6 h-6 text-blue-500 shrink-0" />
                               )}
                               </button>
-                              <div className="truncate flex-1">
+                              <div className="min-w-0 truncate flex-1">
                                 <p className="font-bold text-xs text-on-surface leading-tight truncate">{doc.name}</p>
                                 <p className="text-[10px] text-outline mt-1 font-sans truncate">
                                   {getFolderPath(doc.folderId, folders) || "미분류"} · {doc.ownerName}
@@ -2660,7 +2670,7 @@ export default function MyDocumentsView({
                             </div>
                           </td>
                           <td className="px-6 py-4">
-                            <div className="flex flex-wrap gap-1">
+                            <div className="flex max-h-12 min-w-0 flex-wrap gap-1 overflow-hidden">
                               {doc.tags.map((tag, idx) => (
                                 <span key={idx} className="px-1.5 py-0.5 bg-primary/5 text-primary text-[9.5px] font-extrabold rounded border border-primary/10 whitespace-nowrap">
                                   #{tag}
@@ -2681,7 +2691,7 @@ export default function MyDocumentsView({
                             {formatBytes(doc.sizeBytes)}
                           </td>
                           <td className="px-6 py-4 text-center whitespace-nowrap">
-                            <div className="flex items-center justify-center gap-1.5">
+                            <div className="flex min-w-0 items-center justify-center gap-1">
                               <button
                                 onClick={(event) => {
                                   event.stopPropagation();
@@ -2689,7 +2699,8 @@ export default function MyDocumentsView({
                                 }}
                                 className="px-2.5 py-1.5 bg-secondary text-white text-[10px] font-extrabold rounded-lg hover:bg-opacity-95 shadow-sm transition-all cursor-pointer flex items-center gap-1"
                               >
-                                <Sparkles className="w-3 h-3 fill-white/10" /> RAG
+                                <Sparkles className="w-3 h-3 fill-white/10" />
+                                <span className="hidden xl:inline">RAG</span>
                               </button>
                               <button
                                 onClick={(event) => {
