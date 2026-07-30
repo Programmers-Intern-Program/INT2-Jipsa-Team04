@@ -11,20 +11,23 @@ import {
   FileSpreadsheet,
   Presentation
 } from "lucide-react";
-import type { Document, Folder as FolderType } from "../types";
+import type { Document, DocumentNavigationTarget, Folder as FolderType } from "../types";
 import { formatBytes } from "../utils/formatBytes";
 import { formatDateTime } from "../utils/formatDateTime";
 import { isDescendantOrSelf } from "../utils/folderTree";
 import { listFolders } from "../api/folders";
+import FileDetailPanel from "./FileDetailPanel";
 
 interface DashboardViewProps {
   documents: Document[];
   onNavigateToChat: (docIds: string[]) => void;
-  onNavigateToTab: (tab: string) => void;
+  onNavigateToDocuments: (target: DocumentNavigationTarget) => void;
+  onUpdateDocument: (fileId: number, changes: Partial<Document>) => void;
 }
 
-export default function DashboardView({ documents, onNavigateToChat, onNavigateToTab }: DashboardViewProps) {
+export default function DashboardView({ documents, onNavigateToChat, onNavigateToDocuments, onUpdateDocument }: DashboardViewProps) {
   const [folders, setFolders] = useState<FolderType[]>([]);
+  const [detailFileId, setDetailFileId] = useState<number | null>(null);
   useEffect(() => {
     listFolders().then(setFolders).catch(() => {});
   }, []);
@@ -33,12 +36,17 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
   const starredCount = documents.filter(d => d.star).length;
   const processingCount = documents.filter(d => d.status === "PROCESSING" || d.status === "UPLOADED").length;
   const rootFolders = folders.filter(f => f.parentFolderId === null);
-  const folderCounts = rootFolders
-      .map(f => ({ name: f.name, count: documents.filter(d => d.folderId !== null && isDescendantOrSelf(d.folderId, f.folderId, folders)).length }))
+  const folderCounts = [
+      ...rootFolders.map(f => ({ folderId: f.folderId, name: f.name, count: documents.filter(d => d.folderId !== null && isDescendantOrSelf(d.folderId, f.folderId, folders)).length })),
+      { folderId: null, name: "미분류", count: documents.filter(d => d.folderId === null).length },
+    ]
       .sort((a, b) => b.count - a.count);
-  const topFolder = folderCounts[0] ?? { name: "미분류", count: documents.filter(d => d.folderId === null).length };
+  const topFolder = folderCounts[0];
   const topPercent = totalCount > 0 ? Math.round((topFolder.count / totalCount) * 100) : 0;
-  const topFolderDescription = topFolder.name === "미분류" ? "폴더가 지정되지 않은 문서" : "문서가 가장 많은 폴더";
+  const topFolderDescription = topFolder.folderId === null ? "폴더가 지정되지 않은 문서" : "문서가 가장 많은 폴더";
+  const topFolderTarget: DocumentNavigationTarget = topFolder.folderId === null
+      ? { tab: "mydrive", mode: "unclassified" }
+      : { tab: "mydrive", mode: "folder", folderId: topFolder.folderId };
 
   return (
     <motion.div 
@@ -55,7 +63,7 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
           <p className="text-body-md text-on-surface-variant font-sans mt-1">AI가 최근에 분류한 문서들의 실시간 통계 및 분석 현황입니다.</p>
         </div>
         <button 
-          onClick={() => onNavigateToTab("documents")}
+          onClick={() => onNavigateToDocuments({ tab: "mydrive", mode: "all" })}
           className="text-primary font-semibold text-label-md flex items-center gap-1 hover:underline cursor-pointer group transition-all"
           id="btn-view-all-reports"
         >
@@ -66,7 +74,7 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
 
       {/* Bento Grid Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6" id="dashboard-stats-grid">
-        <div className="col-span-1 md:col-span-2 bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow" id="card-stat-total">
+        <button type="button" onClick={() => onNavigateToDocuments({ tab: "mydrive", mode: "all" })} className="col-span-1 md:col-span-2 bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" id="card-stat-total">
           <div className="flex items-start gap-3">
             <div className="p-3 bg-primary/10 rounded-xl text-primary">
               <Files className="w-6 h-6" />
@@ -82,9 +90,9 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
             </span>
             <span className="text-outline text-body-sm">업로드·분석 처리 중인 문서</span>
           </div>
-        </div>
+        </button>
 
-        <div className="bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow" id="card-stat-top-folder">
+        <button type="button" onClick={() => onNavigateToDocuments(topFolderTarget)} className="bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" id="card-stat-top-folder">
           <div className="flex items-center gap-3 mb-4">
             <span className="p-2 bg-primary/5 text-primary rounded-lg">
               <Folder className="w-5 h-5" />
@@ -100,9 +108,9 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
               <div className="bg-primary h-full rounded-full transition-all duration-500" style={{ width: `${topPercent}%` }}></div>
             </div>
           </div>
-        </div>
+        </button>
 
-        <div className="bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow" id="card-stat-starred">
+        <button type="button" onClick={() => onNavigateToDocuments({ tab: "starred" })} className="bg-white p-6 rounded-2xl border border-outline-variant flex flex-col justify-between shadow-sm hover:shadow-md transition-shadow text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" id="card-stat-starred">
           <div className="flex items-center gap-3 mb-4">
             <span className="p-2 bg-secondary/5 text-secondary rounded-lg">
               <Star className="w-5 h-5" />
@@ -118,7 +126,7 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
               <div className="bg-secondary h-full rounded-full transition-all duration-500" style={{ width: `${totalCount > 0 ? Math.round((starredCount / totalCount) * 100) : 0}%` }}></div>
             </div>
           </div>
-        </div>
+        </button>
       </div>
 
       {/* Recently Accessed Docs Table */}
@@ -126,7 +134,7 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
         <div className="px-8 py-5 border-b border-outline-variant flex justify-between items-center" id="recent-docs-header-bar">
           <h2 className="text-lg font-bold text-on-surface">최근 접근 및 가공한 문서</h2>
           <button 
-            onClick={() => onNavigateToTab("documents")}
+            onClick={() => onNavigateToDocuments({ tab: "mydrive", mode: "all" })}
             className="p-2 hover:bg-surface-container rounded-lg transition-colors cursor-pointer text-outline hover:text-on-surface"
             id="btn-grid-view-tab"
             title="문서 보관함 가기"
@@ -139,7 +147,7 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
             <thead>
               <tr className="bg-surface-container-low text-outline text-label-sm font-semibold border-b border-outline-variant uppercase tracking-wider" id="recent-docs-table-head">
                 <th className="px-8 py-4">문서 이름</th>
-                <th className="px-8 py-4">AI 추출 태그</th>
+                <th className="px-8 py-4">태그</th>
                 <th className="px-8 py-4">마지막 수정</th>
                 <th className="px-8 py-4 text-center">RAG 즉시 물어보기</th>
               </tr>
@@ -153,7 +161,21 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
                 </tr>
               )}
               {documents.slice(0, 12).map((doc) => (
-                <tr key={doc.id} className="hover:bg-surface-container-low transition-colors group" id={`recent-row-${doc.id}`}>
+                <tr
+                  key={doc.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setDetailFileId(Number(doc.id))}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return;
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setDetailFileId(Number(doc.id));
+                    }
+                  }}
+                  className="hover:bg-surface-container-low transition-colors group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+                  id={`recent-row-${doc.id}`}
+                >
                   <td className="px-8 py-5">
                     <div className="flex items-center gap-3">
                       {doc.fileType === "pdf" ? (
@@ -181,6 +203,15 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
                           #{tag}
                         </span>
                       ))}
+                      {doc.keywords.filter((keyword) => !doc.tags.includes(keyword)).map((keyword) => (
+                        <span
+                          key={keyword}
+                          className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-secondary/10 text-secondary text-[11px] font-semibold rounded-full border border-secondary/15"
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          #{keyword}
+                        </span>
+                      ))}
                     </div>
                   </td>
                   <td className="px-8 py-5 text-body-sm text-on-surface-variant">
@@ -188,7 +219,10 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
                   </td>
                   <td className="px-8 py-5 text-center">
                     <button 
-                      onClick={() => onNavigateToChat([doc.id])}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onNavigateToChat([doc.id]);
+                      }}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-secondary text-white text-xs font-semibold rounded-xl hover:bg-opacity-90 shadow-sm transition-all cursor-pointer"
                       id={`btn-rag-ask-${doc.id}`}
                     >
@@ -202,6 +236,14 @@ export default function DashboardView({ documents, onNavigateToChat, onNavigateT
           </table>
         </div>
       </section>
+      <FileDetailPanel
+        key={detailFileId ?? "closed"}
+        fileId={detailFileId}
+        folders={folders}
+        onClose={() => setDetailFileId(null)}
+        onTagsChanged={(id, tags) => onUpdateDocument(id, { tags })}
+        onDocumentTypeChanged={(id, documentType) => onUpdateDocument(id, { documentType })}
+      />
     </motion.div>
   );
 }

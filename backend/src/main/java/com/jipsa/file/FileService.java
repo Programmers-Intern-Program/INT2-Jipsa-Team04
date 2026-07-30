@@ -323,40 +323,42 @@ public class FileService {
     public void setDocumentType(Long userId, Long fileId, String documentType) {
         File file = requireOwnedFile(userId, fileId);
         String value = documentType == null || documentType.isBlank() ? null : documentType.trim();
-        FileMetadata metadata = fileMetadataRepository.findById(fileId).orElseGet(() -> {
+        if (fileMetadataRepository.updateDocumentType(fileId, value, LocalDateTime.now()) == 0) {
             FileMetadata created = new FileMetadata();
             created.setFileId(file.getId());
             created.setFileType(file.getFileType());
-            return created;
-        });
-        metadata.setDocumentType(value);
-        fileMetadataRepository.save(metadata);
+            created.setDocumentType(value);
+            fileMetadataRepository.save(created);
+        }
     }
 
     @Transactional
     public void setTags(Long userId, Long fileId, List<String> tags) {
         File file = requireOwnedFile(userId, fileId);
         List<String> normalized = normalizeTags(tags);
-        FileMetadata metadata = fileMetadataRepository.findById(fileId).orElseGet(() -> {
+        String serializedTags = writeStringList(normalized);
+        if (fileMetadataRepository.updateTags(fileId, serializedTags, LocalDateTime.now()) == 0) {
             FileMetadata created = new FileMetadata();
             created.setFileId(file.getId());
             created.setFileType(file.getFileType());
-            return created;
-        });
-        metadata.setTags(writeStringList(normalized));
-        fileMetadataRepository.save(metadata);
+            created.setTags(serializedTags);
+            fileMetadataRepository.save(created);
+        }
     }
 
     private String applyOriginalExtension(String requestedName, String originalFileType) {
         if (originalFileType == null || originalFileType.isBlank()) {
             return requestedName;
         }
-        String base = requestedName;
-        int dot = requestedName.lastIndexOf('.');
-        if (dot > 0) {
-            base = requestedName.substring(0, dot);
+        String extension = originalFileType.replaceFirst("^\\.", "").toLowerCase();
+        String suffix = "." + extension;
+        String base = requestedName.toLowerCase().endsWith(suffix)
+                ? requestedName.substring(0, requestedName.length() - suffix.length())
+                : requestedName;
+        if (base.isBlank()) {
+            throw new BadRequestException("파일명은 비어 있을 수 없습니다.");
         }
-        return base + "." + originalFileType.toLowerCase();
+        return base + suffix;
     }
 
     public FileDownload download(Long userId, Long fileId) {
@@ -388,6 +390,7 @@ public class FileService {
     private FileListItem toListItem(File file, FileMetadata metadata) {
         String summary = metadata != null && metadata.getSummary() != null ? metadata.getSummary() : "";
         List<String> tags = metadata != null ? parseStringList(metadata.getTags()) : List.of();
+        List<String> keywords = metadata != null ? parseStringList(metadata.getKeywords()) : List.of();
         return new FileListItem(
                 file.getId(),
                 file.getName(),
@@ -399,6 +402,7 @@ public class FileService {
                 file.getUpdatedAt(),
                 summary,
                 tags,
+                keywords,
                 file.getSecurityRank(),
                 metadata != null ? metadata.getDocumentType() : null,
                 metadata != null ? metadata.getExtractionStatus() : null);

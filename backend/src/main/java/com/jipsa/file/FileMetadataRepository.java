@@ -47,6 +47,42 @@ public interface FileMetadataRepository extends JpaRepository<FileMetadata, Long
             + "where m.fileId = :id and m.extractionStatus = 'GENERATING' and m.claimToken = :token")
     int failGeneration(@Param("id") Long id, @Param("token") String token, @Param("now") LocalDateTime now);
 
+    @Modifying
+    @Query("update FileMetadata m set m.summary = :summary, m.keywords = :keywords, "
+            + "m.extractedEntities = :entities, m.extractionConfidence = :confidence, "
+            + "m.extractionStatus = 'READY', "
+            + "m.extractionIndexVersion = case when :indexVersion is null "
+            + "then m.extractionIndexVersion else :indexVersion end, m.updatedAt = :now "
+            + "where m.fileId = :id and (:indexVersion is null or m.extractionIndexVersion is null "
+            + "or :indexVersion >= m.extractionIndexVersion)")
+    int applyCallbackSuccess(@Param("id") Long id, @Param("summary") String summary,
+                             @Param("keywords") String keywords, @Param("entities") String entities,
+                             @Param("confidence") Double confidence, @Param("indexVersion") Integer indexVersion,
+                             @Param("now") LocalDateTime now);
+
+    @Modifying
+    @Query("update FileMetadata m set m.extractionStatus = 'FAILED', "
+            + "m.extractionIndexVersion = case when :indexVersion is null "
+            + "then m.extractionIndexVersion else :indexVersion end, m.updatedAt = :now "
+            + "where m.fileId = :id and (:indexVersion is null or m.extractionIndexVersion is null "
+            + "or :indexVersion >= m.extractionIndexVersion)")
+    int applyCallbackFailure(@Param("id") Long id, @Param("indexVersion") Integer indexVersion,
+                             @Param("now") LocalDateTime now);
+
+    @Modifying
+    @Query("update FileMetadata m set m.tags = :tags, m.updatedAt = :now where m.fileId = :id")
+    int updateTags(@Param("id") Long id, @Param("tags") String tags, @Param("now") LocalDateTime now);
+
+    @Modifying
+    @Query("update FileMetadata m set m.documentType = :documentType, m.updatedAt = :now where m.fileId = :id")
+    int updateDocumentType(@Param("id") Long id, @Param("documentType") String documentType,
+                           @Param("now") LocalDateTime now);
+
+    @Modifying
+    @Query("update FileMetadata m set m.extractionStatus = :status, m.updatedAt = :now where m.fileId = :id")
+    int updateExtractionStatus(@Param("id") Long id, @Param("status") String status,
+                               @Param("now") LocalDateTime now);
+
     @Modifying(clearAutomatically = true)
     @Query("update FileMetadata m set m.extractionStatus = 'PROCESSING', m.claimToken = null, m.updatedAt = :now "
             + "where m.extractionStatus = 'GENERATING' and m.updatedAt < :threshold")

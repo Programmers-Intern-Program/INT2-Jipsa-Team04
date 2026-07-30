@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { convertToHtml } from "mammoth/mammoth.browser";
 import * as XLSX from "xlsx";
 import DOMPurify from "dompurify";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy, type RenderTask } from "pdfjs-dist";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import "pdfjs-dist/web/pdf_viewer.css";
 import { fetchFileBlob, downloadFile } from "../api/files";
+
+GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 export interface PreviewHighlight {
     excerpt?: string | null;
@@ -15,10 +21,12 @@ interface FilePreviewProps {
     fileName: string;
     fileType: string;
     highlight?: PreviewHighlight;
+    onHighlightStatusChange?: (status: HighlightStatus) => void;
     className?: string;
 }
 
 type PreviewStatus = "loading" | "pdf" | "docx" | "txt" | "xlsx" | "unsupported" | "error";
+export type HighlightStatus = "found" | "not-found" | "unavailable";
 
 interface SourcePosition {
     node: Text;
@@ -26,7 +34,7 @@ interface SourcePosition {
 }
 
 function normalize(text: string): string {
-    return text.replace(/\s+/g, " ").trim();
+    return text.normalize("NFKC").replace(/[^\p{L}\p{N}]/gu, "");
 }
 
 function escapeHtml(text: string): string {
@@ -59,51 +67,23 @@ function decodeTextBytes(buffer: ArrayBuffer): string {
     }
 }
 
-function blockContainer(node: Node): Element | null {
-    let el = node.parentElement;
-    while (el) {
-        if (!getComputedStyle(el).display.startsWith("inline")) return el;
-        if (!el.parentElement) return el;
-        el = el.parentElement;
-    }
-    return null;
-}
-
 function collectNormalized(container: HTMLElement): { norm: string; positions: SourcePosition[] } {
     const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
     const positions: SourcePosition[] = [];
     let norm = "";
-    let started = false;
-    let prevBlock: Element | null = null;
-    let pendingWhitespace = false;
-    let whitespaceAnchor: SourcePosition | null = null;
     let current: Node | null;
     while ((current = walker.nextNode())) {
         const textNode = current as Text;
-        const block = blockContainer(textNode);
-        if (started && prevBlock && block !== prevBlock) {
-            pendingWhitespace = true;
-            if (!whitespaceAnchor) whitespaceAnchor = { node: textNode, offset: 0 };
-        }
-        prevBlock = block;
         const data = textNode.data;
         for (let k = 0; k < data.length; k++) {
-            if (/\s/.test(data[k])) {
-                if (started) {
-                    pendingWhitespace = true;
-                    if (!whitespaceAnchor) whitespaceAnchor = { node: textNode, offset: k };
-                }
+            const normalized = data[k].normalize("NFKC").replace(/[^\p{L}\p{N}]/gu, "");
+            if (!normalized) {
                 continue;
             }
-            if (pendingWhitespace) {
-                norm += " ";
-                positions.push(whitespaceAnchor ?? { node: textNode, offset: k });
-                pendingWhitespace = false;
-                whitespaceAnchor = null;
+            norm += normalized;
+            for (let index = 0; index < normalized.length; index++) {
+                positions.push({ node: textNode, offset: k });
             }
-            norm += data[k];
-            positions.push({ node: textNode, offset: k });
-            started = true;
         }
     }
     return { norm, positions };
@@ -141,16 +121,34 @@ function wrapRange(container: HTMLElement, start: SourcePosition, end: SourcePos
     return false;
 }
 
-function highlightExcerpt(container: HTMLElement, excerpt: string | null, sectionTitle: string | null): void {
+function highlightCandidates(excerpt: string | null, sectionTitle: string | null): string[] {
     const candidates: string[] = [];
     if (excerpt) {
         const full = normalize(excerpt);
         if (full) candidates.push(full);
-        if (full.length > 120) candidates.push(full.slice(0, 120));
-        const firstSentence = full.split(/[.!?。]/)[0];
-        if (firstSentence && firstSentence.length >= 10) candidates.push(firstSentence);
+        const sentences = excerpt
+            .split(/[.!?。]\s*/)
+            .map(normalize)
+            .filter((sentence) => sentence.length >= 10)
+            .sort((left, right) => right.length - left.length);
+        candidates.push(...sentences);
+        if (full.length > 160) candidates.push(full.slice(0, 160));
+        if (full.length > 80) candidates.push(full.slice(0, 80));
     }
     if (sectionTitle) candidates.push(normalize(sectionTitle));
+    return [...new Set(candidates.filter(Boolean))];
+}
+
+function clearHighlights(container: HTMLElement) {
+    for (const mark of Array.from(container.querySelectorAll("mark.source-highlight"))) {
+        mark.replaceWith(document.createTextNode(mark.textContent ?? ""));
+    }
+    container.normalize();
+}
+
+function highlightExcerpt(container: HTMLElement, excerpt: string | null, sectionTitle: string | null): boolean {
+    clearHighlights(container);
+    const candidates = highlightCandidates(excerpt, sectionTitle);
 
     const { norm, positions } = collectNormalized(container);
     for (const needle of candidates) {
@@ -160,14 +158,212 @@ function highlightExcerpt(container: HTMLElement, excerpt: string | null, sectio
         const start = positions[idx];
         const end = positions[idx + needle.length - 1];
         if (!start || !end) continue;
-        if (wrapRange(container, start, end)) return;
+        if (wrapRange(container, start, end)) return true;
     }
+    return false;
 }
 
-export default function FilePreview({ fileId, fileName, fileType, highlight, className }: FilePreviewProps) {
+function pdfPageTextMatches(text: string, highlight: PreviewHighlight): boolean {
+    const normalizedText = normalize(text);
+    return highlightCandidates(highlight.excerpt ?? null, highlight.sectionTitle ?? null)
+        .some((candidate) => normalizedText.includes(candidate));
+}
+
+function PdfPreview({
+    data,
+    highlight,
+    onHighlightStatusChange,
+}: {
+    data: ArrayBuffer;
+    highlight?: PreviewHighlight;
+    onHighlightStatusChange?: (status: HighlightStatus) => void;
+}) {
+    const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
+    const [pageNumber, setPageNumber] = useState(1);
+    const [containerWidth, setContainerWidth] = useState(0);
+    const [renderError, setRenderError] = useState(false);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const textLayerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        let active = true;
+        const loadingTask = getDocument({ data: data.slice(0) });
+        loadingTask.promise
+            .then((document) => {
+                if (!active) {
+                    void loadingTask.destroy();
+                    return;
+                }
+                setPdf(document);
+            })
+            .catch(() => {
+                if (active) setRenderError(true);
+            });
+        return () => {
+            active = false;
+            void loadingTask.destroy();
+        };
+    }, [data]);
+
+    useEffect(() => {
+        const container = containerRef.current;
+        if (!container) return;
+        const observer = new ResizeObserver(([entry]) => setContainerWidth(entry.contentRect.width));
+        observer.observe(container);
+        return () => observer.disconnect();
+    }, []);
+
+    useEffect(() => {
+        if (!pdf) return;
+        let active = true;
+        const resolvePage = async () => {
+            const hasTarget = Boolean(highlight?.excerpt || highlight?.sectionTitle);
+            const requestedPage = Math.min(Math.max(highlight?.page ?? 1, 1), pdf.numPages);
+            if (!hasTarget) {
+                setPageNumber(requestedPage);
+                onHighlightStatusChange?.("unavailable");
+                return;
+            }
+            const order = [
+                requestedPage,
+                ...Array.from({ length: pdf.numPages }, (_, index) => index + 1)
+                    .filter((page) => page !== requestedPage),
+            ];
+            for (const candidatePage of order) {
+                const page = await pdf.getPage(candidatePage);
+                const content = await page.getTextContent();
+                const pageText = content.items
+                    .map((item) => ("str" in item ? item.str : ""))
+                    .join(" ");
+                if (pdfPageTextMatches(pageText, highlight ?? {})) {
+                    if (active) setPageNumber(candidatePage);
+                    return;
+                }
+            }
+            if (active) {
+                setPageNumber(requestedPage);
+                onHighlightStatusChange?.("not-found");
+            }
+        };
+        void resolvePage();
+        return () => {
+            active = false;
+        };
+    }, [pdf, highlight, onHighlightStatusChange]);
+
+    useEffect(() => {
+        if (!pdf || containerWidth <= 0) return;
+        let active = true;
+        let textLayer: TextLayer | null = null;
+        let renderTask: RenderTask | null = null;
+        const renderPage = async () => {
+            const page = await pdf.getPage(pageNumber);
+            if (!active) return;
+            const originalViewport = page.getViewport({ scale: 1 });
+            const scale = Math.min(2, Math.max(0.5, (containerWidth - 32) / originalViewport.width));
+            const viewport = page.getViewport({ scale });
+            const canvas = canvasRef.current;
+            const layer = textLayerRef.current;
+            if (!canvas || !layer) return;
+            const outputScale = window.devicePixelRatio || 1;
+            canvas.width = Math.floor(viewport.width * outputScale);
+            canvas.height = Math.floor(viewport.height * outputScale);
+            canvas.style.width = `${viewport.width}px`;
+            canvas.style.height = `${viewport.height}px`;
+            const context = canvas.getContext("2d");
+            if (!context) return;
+            layer.replaceChildren();
+            layer.style.width = `${viewport.width}px`;
+            layer.style.height = `${viewport.height}px`;
+            layer.style.setProperty("--scale-factor", String(viewport.scale));
+            renderTask = page.render({
+                canvasContext: context,
+                canvas,
+                viewport,
+                transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0],
+            });
+            await renderTask.promise;
+            if (!active) return;
+            const textContent = await page.getTextContent();
+            if (!active) return;
+            textLayer = new TextLayer({ textContentSource: textContent, container: layer, viewport });
+            await textLayer.render();
+            if (!active) return;
+            if (highlight?.excerpt || highlight?.sectionTitle) {
+                const found = highlightExcerpt(
+                    layer,
+                    highlight.excerpt ?? null,
+                    highlight.sectionTitle ?? null
+                );
+                onHighlightStatusChange?.(found ? "found" : "not-found");
+            } else {
+                onHighlightStatusChange?.("unavailable");
+            }
+        };
+        void renderPage().catch(() => {
+            if (active) {
+                setRenderError(true);
+                onHighlightStatusChange?.(
+                    highlight?.excerpt || highlight?.sectionTitle ? "not-found" : "unavailable"
+                );
+            }
+        });
+        return () => {
+            active = false;
+            renderTask?.cancel();
+            textLayer?.cancel();
+        };
+    }, [pdf, pageNumber, containerWidth, highlight, onHighlightStatusChange]);
+
+    if (renderError) {
+        return <div className="h-full flex items-center justify-center text-outline text-body-sm">PDF를 렌더링하지 못했습니다.</div>;
+    }
+
+    return (
+        <div ref={containerRef} className="relative h-full overflow-auto bg-surface-container-lowest">
+            {pdf && (
+                <div className="sticky top-3 z-20 mx-auto mb-3 flex w-fit items-center gap-3 rounded-full border border-outline-variant bg-white/95 px-3 py-1.5 shadow-sm backdrop-blur">
+                    <button
+                        type="button"
+                        onClick={() => setPageNumber((current) => Math.max(1, current - 1))}
+                        disabled={pageNumber <= 1}
+                        className="rounded-full p-1 text-outline hover:bg-surface-container disabled:opacity-30 cursor-pointer"
+                    >
+                        <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <span className="min-w-16 text-center text-xs font-bold text-on-surface">
+                        {pageNumber} / {pdf.numPages}
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => setPageNumber((current) => Math.min(pdf.numPages, current + 1))}
+                        disabled={pageNumber >= pdf.numPages}
+                        className="rounded-full p-1 text-outline hover:bg-surface-container disabled:opacity-30 cursor-pointer"
+                    >
+                        <ChevronRight className="h-4 w-4" />
+                    </button>
+                </div>
+            )}
+            <div className="relative mx-auto mb-6 w-fit bg-white shadow-lg">
+                <canvas ref={canvasRef} className="block" />
+                <div ref={textLayerRef} className="textLayer absolute inset-0" />
+            </div>
+        </div>
+    );
+}
+
+export default function FilePreview({
+    fileId,
+    fileName,
+    fileType,
+    highlight,
+    onHighlightStatusChange,
+    className,
+}: FilePreviewProps) {
     const type = fileType.toLowerCase();
     const [status, setStatus] = useState<PreviewStatus>(() => (isRenderable(type) ? "loading" : "unsupported"));
-    const [blobUrl, setBlobUrl] = useState<string | null>(null);
+    const [pdfData, setPdfData] = useState<ArrayBuffer | null>(null);
     const [html, setHtml] = useState<string>("");
     const [text, setText] = useState<string>("");
     const contentRef = useRef<HTMLDivElement>(null);
@@ -175,14 +371,14 @@ export default function FilePreview({ fileId, fileName, fileType, highlight, cla
     useEffect(() => {
         if (!isRenderable(type)) return;
         let active = true;
-        let createdUrl: string | null = null;
         (async () => {
             try {
                 const blob = await fetchFileBlob(fileId);
                 if (!active) return;
                 if (type === "pdf") {
-                    createdUrl = URL.createObjectURL(blob);
-                    setBlobUrl(createdUrl);
+                    const arrayBuffer = await blob.arrayBuffer();
+                    if (!active) return;
+                    setPdfData(arrayBuffer);
                     setStatus("pdf");
                 } else if (type === "docx") {
                     const arrayBuffer = await blob.arrayBuffer();
@@ -213,18 +409,28 @@ export default function FilePreview({ fileId, fileName, fileType, highlight, cla
         })();
         return () => {
             active = false;
-            if (createdUrl) URL.revokeObjectURL(createdUrl);
         };
     }, [fileId, type]);
 
     useEffect(() => {
         const excerpt = highlight?.excerpt ?? null;
         const sectionTitle = highlight?.sectionTitle ?? null;
-        if (!excerpt && !sectionTitle) return;
-        if ((status === "docx" || status === "xlsx" || status === "txt") && contentRef.current) {
-            highlightExcerpt(contentRef.current, excerpt, sectionTitle);
+        if (!excerpt && !sectionTitle) {
+            onHighlightStatusChange?.("unavailable");
+            return;
         }
-    }, [status, highlight?.excerpt, highlight?.sectionTitle]);
+        if ((status === "docx" || status === "xlsx" || status === "txt") && contentRef.current) {
+            const found = highlightExcerpt(contentRef.current, excerpt, sectionTitle);
+            onHighlightStatusChange?.(found ? "found" : "not-found");
+        }
+    }, [status, highlight?.excerpt, highlight?.sectionTitle, onHighlightStatusChange]);
+
+    useEffect(() => {
+        if (status !== "unsupported" && status !== "error") return;
+        onHighlightStatusChange?.(
+            highlight?.excerpt || highlight?.sectionTitle ? "not-found" : "unavailable"
+        );
+    }, [status, highlight?.excerpt, highlight?.sectionTitle, onHighlightStatusChange]);
 
     return (
         <div className={className ?? "h-full"}>
@@ -247,11 +453,11 @@ export default function FilePreview({ fileId, fileName, fileType, highlight, cla
                     문서를 불러오는 중...
                 </div>
             )}
-            {status === "pdf" && blobUrl && (
-                <iframe
-                    title={fileName}
-                    src={`${blobUrl}#page=${highlight?.page ?? 1}&view=FitH`}
-                    className="w-full h-full border-0"
+            {status === "pdf" && pdfData && (
+                <PdfPreview
+                    data={pdfData}
+                    highlight={highlight}
+                    onHighlightStatusChange={onHighlightStatusChange}
                 />
             )}
             {(status === "docx" || status === "xlsx") && (

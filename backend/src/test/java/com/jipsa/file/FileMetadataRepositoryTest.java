@@ -2,6 +2,7 @@ package com.jipsa.file;
 
 import com.jipsa.chunk.Chunk;
 import com.jipsa.chunk.ChunkRepository;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
@@ -19,6 +20,7 @@ class FileMetadataRepositoryTest {
     @Autowired private FileRepository fileRepository;
     @Autowired private FileMetadataRepository fileMetadataRepository;
     @Autowired private ChunkRepository chunkRepository;
+    @Autowired private EntityManager entityManager;
 
     private Long persistFile(FileStatus status) {
         File file = new File();
@@ -166,5 +168,64 @@ class FileMetadataRepositoryTest {
         assertThat(fileMetadataRepository.markPendingSkipped(LocalDateTime.now())).isEqualTo(1);
         assertThat(reload(ready).getExtractionStatus()).isEqualTo("SKIPPED");
         assertThat(reload(notReady).getExtractionStatus()).isEqualTo("PROCESSING");
+    }
+
+    @Test
+    void callbackUpdatePreservesUserManagedFields() {
+        Long fileId = persistFile(FileStatus.READY);
+        persistMetadata(fileId, "PROCESSING", "계약서", null);
+        FileMetadata metadata = reload(fileId);
+        metadata.setTags("[\"사용자태그\"]");
+        fileMetadataRepository.saveAndFlush(metadata);
+
+        int updated = fileMetadataRepository.applyCallbackSuccess(
+                fileId, "새 요약", "[\"AI키워드\"]", "{\"project\":\"A\"}", 0.8, 3, LocalDateTime.now());
+
+        assertThat(updated).isEqualTo(1);
+        entityManager.clear();
+        FileMetadata reloaded = reload(fileId);
+        assertThat(reloaded.getTags()).isEqualTo("[\"사용자태그\"]");
+        assertThat(reloaded.getDocumentType()).isEqualTo("계약서");
+        assertThat(reloaded.getSummary()).isEqualTo("새 요약");
+        assertThat(reloaded.getKeywords()).isEqualTo("[\"AI키워드\"]");
+    }
+
+    @Test
+    void userFieldUpdatesPreserveAiFields() {
+        Long fileId = persistFile(FileStatus.READY);
+        persistMetadata(fileId, "READY", null, null);
+        FileMetadata metadata = reload(fileId);
+        metadata.setSummary("AI 요약");
+        metadata.setKeywords("[\"AI키워드\"]");
+        fileMetadataRepository.saveAndFlush(metadata);
+
+        fileMetadataRepository.updateTags(fileId, "[\"새태그\"]", LocalDateTime.now());
+        fileMetadataRepository.updateDocumentType(fileId, "보고서", LocalDateTime.now());
+
+        entityManager.clear();
+        FileMetadata reloaded = reload(fileId);
+        assertThat(reloaded.getTags()).isEqualTo("[\"새태그\"]");
+        assertThat(reloaded.getDocumentType()).isEqualTo("보고서");
+        assertThat(reloaded.getSummary()).isEqualTo("AI 요약");
+        assertThat(reloaded.getKeywords()).isEqualTo("[\"AI키워드\"]");
+        assertThat(reloaded.getExtractionStatus()).isEqualTo("READY");
+    }
+
+    @Test
+    void callbackRejectsOlderIndexVersionAtomically() {
+        Long fileId = persistFile(FileStatus.READY);
+        persistMetadata(fileId, "READY", null, null);
+        FileMetadata metadata = reload(fileId);
+        metadata.setSummary("최신 요약");
+        metadata.setExtractionIndexVersion(5);
+        fileMetadataRepository.saveAndFlush(metadata);
+
+        int updated = fileMetadataRepository.applyCallbackSuccess(
+                fileId, "오래된 요약", null, null, 0.2, 4, LocalDateTime.now());
+
+        assertThat(updated).isZero();
+        entityManager.clear();
+        assertThat(reload(fileId).getSummary()).isEqualTo("최신 요약");
+        assertThat(reload(fileId).getExtractionIndexVersion()).isEqualTo(5);
     }
 }

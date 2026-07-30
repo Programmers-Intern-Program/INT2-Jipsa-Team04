@@ -25,7 +25,7 @@ import AdminView from "./components/AdminView";
 import SemanticSearchView from "./components/SemanticSearchView";
 
 // Import types
-import type { Document, AISettings, ChatMessage, ChatSession, SessionUser, MeResponse } from "./types";
+import type { Document, AISettings, ChatMessage, ChatSession, DocumentNavigationTarget, SessionUser, MeResponse } from "./types";
 
 import { getUserSettings, updateUserSettings } from "./api/userSettings";
 import { loginWithGoogle, logout as logoutApi } from "./api/auth";
@@ -67,14 +67,13 @@ function clearAuthStorage() {
   localStorage.removeItem(USER_KEY);
 }
 
-let chatSessionSeq = 0;
-function createChatSession(selectedDocIds: string[] = [], title?: string): ChatSession {
-  chatSessionSeq += 1;
+function createChatSession(conversationId: number, title: string, selectedDocIds: string[] = []): ChatSession {
   return {
-    id: `session-${Date.now()}-${chatSessionSeq}`,
-    title: title ?? `대화 ${chatSessionSeq}`,
+    id: `session-${conversationId}`,
+    title,
     chatHistory: [],
-    selectedDocIds
+    selectedDocIds,
+    conversationId
   };
 }
 
@@ -153,6 +152,10 @@ export default function App() {
     if (main) main.scrollTop = 0;
   }, [activeTab]);
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [documentNavigation, setDocumentNavigation] = useState<{ target: DocumentNavigationTarget; requestId: number }>({
+    target: { tab: "mydrive", mode: "all" },
+    requestId: 0,
+  });
   const { uploadedSignal } = useUploads();
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [activeChatSessionId, setActiveChatSessionId] = useState<string>("");
@@ -301,11 +304,8 @@ export default function App() {
               conversations.map(async (conversation) => {
                 const messages = await listMessages(conversation.id).catch(() => []);
                 return {
-                  id: `session-${conversation.id}`,
-                  title: conversation.title,
+                  ...createChatSession(conversation.id, conversation.title),
                   chatHistory: mapServerMessagesToHistory(messages),
-                  selectedDocIds: [],
-                  conversationId: conversation.id,
                 };
               })
           );
@@ -363,7 +363,12 @@ export default function App() {
   };
 
   // Toggle RAG document selection (활성 채팅 탭 기준)
-  const handleToggleDocSelection = (id: string) => {
+  const createServerChatSession = async (selectedDocIds: string[] = []) => {
+    const conversation = await createConversation();
+    return createChatSession(conversation.id, conversation.title, selectedDocIds);
+  };
+
+  const handleToggleDocSelection = async (id: string) => {
     let targetSession = chatSessions.find((session) => session.id === activeChatSessionId);
     if (!targetSession) {
       targetSession = chatSessions[0];
@@ -372,9 +377,14 @@ export default function App() {
       }
     }
     if (!targetSession) {
-      targetSession = createChatSession([], "대화 1");
-      setChatSessions((prev) => [...prev, targetSession!]);
-      setActiveChatSessionId(targetSession.id);
+      try {
+        targetSession = await createServerChatSession([id]);
+        setChatSessions((prev) => [...prev, targetSession!]);
+        setActiveChatSessionId(targetSession.id);
+      } catch (err) {
+        console.error("[chat] 대화 생성 실패:", err);
+      }
+      return;
     }
     const targetSessionId = targetSession.id;
     setChatSessions((prev) =>
@@ -391,15 +401,6 @@ export default function App() {
     );
   };
 
-  const ensureConversation = async (session: ChatSession): Promise<number> => {
-    if (session.conversationId != null) return session.conversationId;
-    const conversation = await createConversation(session.title);
-    setChatSessions((prev) =>
-        prev.map((item) => (item.id === session.id ? { ...item, conversationId: conversation.id } : item))
-    );
-    return conversation.id;
-  };
-
   const runSend = async (sessionId: string, text: string, fileIds: number[], sessionOverride?: ChatSession) => {
     setChatSessions((prev) =>
         prev.map((item) =>
@@ -409,7 +410,10 @@ export default function App() {
     try {
       const session = sessionOverride ?? chatSessions.find((item) => item.id === sessionId);
       if (!session) return;
-      const conversationId = await ensureConversation(session);
+      if (session.conversationId == null) {
+        throw new Error("대화방이 서버에 생성되지 않았습니다.");
+      }
+      const conversationId = session.conversationId;
       const response = await sendMessage(conversationId, { question: text, fileIds });
       const aiMessage: ChatMessage = {
         id: `a-${response.messageId}`,
@@ -439,8 +443,13 @@ export default function App() {
   const handleSendMessage = async (text: string, refDocIds: string[]) => {
     let targetSession = chatSessions.find((session) => session.id === activeChatSessionId) ?? chatSessions[0];
     if (!targetSession) {
-      targetSession = createChatSession([], "대화 1");
-      setChatSessions((prev) => [...prev, targetSession!]);
+      try {
+        targetSession = await createServerChatSession();
+        setChatSessions((prev) => [...prev, targetSession!]);
+      } catch (err) {
+        console.error("[chat] 대화 생성 실패:", err);
+        return;
+      }
     }
     const targetSessionId = targetSession.id;
     if (activeChatSessionId !== targetSessionId) {
@@ -510,18 +519,31 @@ export default function App() {
   };
 
   // Smart navigation from Dashboard/Documents: 지정 문서로 새 채팅 탭을 열어 이동
-  const handleNavigateToChat = (docIds: string[]) => {
-    const newSession = createChatSession(docIds, chatSessions.length === 0 ? "대화 1" : undefined);
-    setChatSessions((prev) => [...prev, newSession]);
-    setActiveChatSessionId(newSession.id);
-    navigateToTab("chat");
+  const handleNavigateToChat = async (docIds: string[]) => {
+    try {
+      const newSession = await createServerChatSession(docIds);
+      setChatSessions((prev) => [...prev, newSession]);
+      setActiveChatSessionId(newSession.id);
+      navigateToTab("chat");
+    } catch (err) {
+      console.error("[chat] 대화 생성 실패:", err);
+    }
+  };
+
+  const handleNavigateToDocuments = (target: DocumentNavigationTarget) => {
+    setDocumentNavigation((current) => ({ target, requestId: current.requestId + 1 }));
+    navigateToTab("documents");
   };
 
   // 채팅 탭 관리
-  const handleNewChatTab = () => {
-    const newSession = createChatSession([], chatSessions.length === 0 ? "대화 1" : undefined);
-    setChatSessions((prev) => [...prev, newSession]);
-    setActiveChatSessionId(newSession.id);
+  const handleNewChatTab = async () => {
+    try {
+      const newSession = await createServerChatSession();
+      setChatSessions((prev) => [...prev, newSession]);
+      setActiveChatSessionId(newSession.id);
+    } catch (err) {
+      console.error("[chat] 대화 생성 실패:", err);
+    }
   };
 
   const handleCloseChatTab = (sessionId: string) => {
@@ -776,7 +798,12 @@ export default function App() {
                 <DashboardView
                   documents={documents}
                   onNavigateToChat={handleNavigateToChat}
-                  onNavigateToTab={navigateToTab}
+                  onNavigateToDocuments={handleNavigateToDocuments}
+                  onUpdateDocument={(id, changes) =>
+                    setDocuments((current) => current.map((document) =>
+                      document.id === String(id) ? { ...document, ...changes } : document
+                    ))
+                  }
                 />
               </motion.div>
             )}
@@ -862,6 +889,7 @@ export default function App() {
             className={activeTab === "documents" && documentsVisible ? "block" : "hidden"}
           >
             <MyDocumentsView
+              key={documentNavigation.requestId}
               documents={documents}
               onNavigateToChat={handleNavigateToChat}
               isUploadOpen={isUploadOpen}
@@ -870,6 +898,7 @@ export default function App() {
               setIsNewUploadOpen={setIsNewUploadOpen}
               onUpdateDocuments={setDocuments}
               sensitivity={committedSettings?.sensitivity ?? 0.85}
+              navigationTarget={documentNavigation.target}
             />
           </motion.div>
         </main>

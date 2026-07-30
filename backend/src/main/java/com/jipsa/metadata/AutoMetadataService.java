@@ -44,7 +44,7 @@ public class AutoMetadataService {
                                @Value("${app.metadata.ai.max-chunks:6}") int maxChunks,
                                @Value("${app.metadata.ai.max-chars:4000}") int maxChars,
                                @Value("${app.metadata.ai.stale-timeout-ms:300000}") long staleTimeoutMs,
-                               @Value("${app.metadata.ai.max-summary-chars:500}") int maxSummaryChars) {
+                               @Value("${app.metadata.ai.max-summary-chars:1000}") int maxSummaryChars) {
         this.fileMetadataRepository = fileMetadataRepository;
         this.chunkRepository = chunkRepository;
         this.autoMetadataClient = autoMetadataClient;

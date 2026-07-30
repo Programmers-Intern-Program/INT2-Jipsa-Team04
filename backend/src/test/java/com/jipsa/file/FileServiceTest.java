@@ -14,6 +14,8 @@ import com.jipsa.purge.S3DeleteService;
 import com.jipsa.chunk.ChunkRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -146,8 +148,54 @@ class FileServiceTest {
     }
 
     @Test
+    void renamePreservesOriginalExtensionAndBaseNameDots() {
+        File file = ownedFile();
+        file.setFileType("PDF");
+        when(fileRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(file));
+
+        fileService.rename(1L, 1L, "분기.보고서.v2");
+
+        assertThat(file.getName()).isEqualTo("분기.보고서.v2.pdf");
+    }
+
+    @Test
+    void renameCannotReplaceOriginalExtension() {
+        File file = ownedFile();
+        file.setFileType("pdf");
+        when(fileRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(file));
+
+        fileService.rename(1L, 1L, "보고서.exe");
+
+        assertThat(file.getName()).isEqualTo("보고서.exe.pdf");
+    }
+
+    @Test
+    void renameDoesNotDuplicateOriginalExtension() {
+        File file = ownedFile();
+        file.setFileType("pdf");
+        when(fileRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(file));
+
+        fileService.rename(1L, 1L, "보고서.PDF");
+
+        assertThat(file.getName()).isEqualTo("보고서.pdf");
+    }
+
+    @Test
     void renameRejectsBlank() {
         assertThatThrownBy(() -> fileService.rename(1L, 1L, "   "))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"pdf", "txt", "docx", "xlsx", "pptx"})
+    void renameRejectsExtensionOnlyName(String extension) {
+        File file = ownedFile();
+        file.setFileType(extension);
+        when(fileRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(file));
+
+        assertThatThrownBy(() -> fileService.rename(1L, 1L, "." + extension))
+                .isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> fileService.rename(1L, 1L, "." + extension.toUpperCase()))
                 .isInstanceOf(BadRequestException.class);
     }
 
@@ -175,6 +223,7 @@ class FileServiceTest {
         metadata.setFileId(1L);
         metadata.setSummary("계약 요약");
         metadata.setTags("[\"세금\",\"계약\"]");
+        metadata.setKeywords("[\"임대\",\"보증금\"]");
         when(fileRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(file));
         when(fileMetadataRepository.findById(1L)).thenReturn(Optional.of(metadata));
 
@@ -182,6 +231,7 @@ class FileServiceTest {
 
         assertThat(result.summary()).isEqualTo("계약 요약");
         assertThat(result.tags()).containsExactly("세금", "계약");
+        assertThat(result.keywords()).containsExactly("임대", "보증금");
         assertThat(result.entities()).isNotNull();
         assertThat(result.entities().dates()).isEmpty();
     }
@@ -196,6 +246,7 @@ class FileServiceTest {
 
         assertThat(result.summary()).isEqualTo("");
         assertThat(result.tags()).isEmpty();
+        assertThat(result.keywords()).isEmpty();
         assertThat(result.entities()).isNotNull();
     }
 
@@ -203,13 +254,18 @@ class FileServiceTest {
     void listReturnsPageMetadata() {
         File file = ownedFile();
         file.setName("a.pdf");
+        FileMetadata metadata = new FileMetadata();
+        metadata.setFileId(1L);
+        metadata.setKeywords("[\"자동\",\"분류\"]");
         when(fileRepository.search(eq(1L), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(), isNull(),
                 any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(file), PageRequest.of(0, 20), 1));
+        when(fileMetadataRepository.findAllById(List.of(1L))).thenReturn(List.of(metadata));
 
         FileListResponse result = fileService.list(1L, null, null, null, null, null, null, null, 0);
 
         assertThat(result.items()).hasSize(1);
+        assertThat(result.items().get(0).keywords()).containsExactly("자동", "분류");
         assertThat(result.total()).isEqualTo(1);
         assertThat(result.page()).isEqualTo(0);
         assertThat(result.size()).isEqualTo(20);

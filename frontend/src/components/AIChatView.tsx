@@ -40,6 +40,21 @@ interface AIChatViewProps {
 
 const EMPTY_CHAT_HISTORY: ChatMessage[] = [];
 
+function deduplicateCitations(citations: Citation[]): Citation[] {
+  const seen = new Set<string>();
+  return citations.filter((citation) => {
+    const key = [
+      citation.fileId,
+      citation.page ?? "",
+      citation.sectionTitle?.trim() ?? "",
+      citation.excerpt?.replace(/\s+/g, " ").trim() ?? "",
+    ].join("|");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export default function AIChatView({
   documents,
   chatSessions,
@@ -87,11 +102,22 @@ export default function AIChatView({
   const chatError = activeSession?.error ?? null;
 
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto scroll to bottom on new messages
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatHistory, isLoadingChat]);
+
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return;
+    composer.style.height = "0px";
+    const maxHeight = 160;
+    const nextHeight = Math.min(composer.scrollHeight, maxHeight);
+    composer.style.height = `${Math.max(nextHeight, 40)}px`;
+    composer.style.overflowY = composer.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [inputText]);
 
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -219,7 +245,7 @@ export default function AIChatView({
         </div>
 
         {/* Messages Feed */}
-        <div className="flex-1 overflow-y-auto p-8 space-y-8 pb-36 custom-scrollbar" id="messages-scroller">
+        <div className="flex-1 overflow-y-auto p-8 space-y-8 pb-72 custom-scrollbar" id="messages-scroller">
           {!activeSession ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-8" id="chat-empty-state">
               <div className="w-16 h-16 bg-primary/10 text-primary rounded-2xl flex items-center justify-center mb-4">
@@ -314,9 +340,9 @@ export default function AIChatView({
                       {msg.sender === "ai" && msg.citations.length > 0 && (
                         <div className="mt-5 flex flex-wrap gap-2 pt-4 border-t border-outline-variant/30">
                           <span className="text-[11px] text-outline w-full mb-1 font-bold">인용된 신뢰 근거 문서:</span>
-                          {msg.citations.map((cite, idx) => (
+                          {deduplicateCitations(msg.citations).map((cite) => (
                             <button 
-                              key={idx}
+                              key={`${cite.fileId}-${cite.page ?? "none"}-${cite.sectionTitle ?? ""}-${cite.excerpt ?? ""}`}
                               onClick={() => setPreviewCitation(cite)}
                               className="px-3 py-1 bg-surface-container text-secondary text-xs font-bold rounded-lg border border-secondary/10 hover:bg-secondary/15 transition-all flex items-center gap-1 cursor-pointer"
                             >
@@ -428,6 +454,7 @@ export default function AIChatView({
                 </button>
                 
                 <textarea 
+                  ref={composerRef}
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
                   onKeyDown={(e) => {
@@ -442,8 +469,7 @@ export default function AIChatView({
                         : "문서를 선택하지 않으면 전체 문서에서 찾아 답합니다..."
                   }
                   rows={1}
-                  className="flex-1 bg-transparent border-none focus:ring-0 resize-none py-2 text-body-md outline-none min-h-[40px] max-h-48 font-sans"
-                  style={{ height: "auto" }}
+                  className="flex-1 bg-transparent border-none focus:ring-0 resize-none py-2 text-body-md leading-6 outline-none min-h-[40px] max-h-40 font-sans"
                 />
 
                 <div className="flex items-center gap-2 mb-1">

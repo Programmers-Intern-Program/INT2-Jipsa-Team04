@@ -195,21 +195,17 @@ public class JobProcessingService {
     }
 
     private void markMetadataProcessing(File file) {
-        FileMetadata metadata = fileMetadataRepository.findById(file.getId()).orElseGet(() -> {
+        if (fileMetadataRepository.updateExtractionStatus(file.getId(), "PROCESSING", LocalDateTime.now()) == 0) {
             FileMetadata created = new FileMetadata();
             created.setFileId(file.getId());
             created.setFileType(file.getFileType());
-            return created;
-        });
-        metadata.setExtractionStatus("PROCESSING");
-        fileMetadataRepository.save(metadata);
+            created.setExtractionStatus("PROCESSING");
+            fileMetadataRepository.save(created);
+        }
     }
 
     private void markMetadataFailed(File file) {
-        fileMetadataRepository.findById(file.getId()).ifPresent(metadata -> {
-            metadata.setExtractionStatus("FAILED");
-            fileMetadataRepository.save(metadata);
-        });
+        fileMetadataRepository.updateExtractionStatus(file.getId(), "FAILED", LocalDateTime.now());
     }
 
     private void handleFailure(Job job, File file, RuntimeException e) {

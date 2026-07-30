@@ -10,8 +10,8 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
   const [stage, setStage] = useState<SmartOrganizeStage>("idle");
   const [proposal, setProposal] = useState<OrganizeProposal | null>(null);
   const [applyResult, setApplyResult] = useState<OrganizeApplyResponse | null>(null);
+  const [appliedFileIds, setAppliedFileIds] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [organizeStep, setOrganizeStep] = useState(0);
   const [isVisible, setIsVisible] = useState(true);
   const [isUploadFlow, setIsUploadFlow] = useState(false);
   const [uploadFileIds, setUploadFileIds] = useState<number[]>([]);
@@ -22,8 +22,8 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
     setStage("idle");
     setProposal(null);
     setApplyResult(null);
+    setAppliedFileIds([]);
     setError(null);
-    setOrganizeStep(0);
     setIsVisible(true);
     setIsUploadFlow(false);
     setUploadFileIds([]);
@@ -33,12 +33,10 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
     setStage("proposing");
     setProposal(null);
     setApplyResult(null);
+    setAppliedFileIds([]);
     setError(null);
-    setOrganizeStep(1);
     setIsVisible(true);
     setIsUploadFlow(uploadFlow);
-    const step1 = window.setTimeout(() => setOrganizeStep(2), 800);
-    const step2 = window.setTimeout(() => setOrganizeStep(3), 1600);
     try {
       const nextProposal = await request();
       setProposal({ ...nextProposal, idempotencyKey: crypto.randomUUID() });
@@ -46,9 +44,6 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       setStage("failed");
       setError(err instanceof Error ? err.message : "스마트 정리 제안 생성 중 오류가 발생했습니다.");
-    } finally {
-      window.clearTimeout(step1);
-      window.clearTimeout(step2);
     }
   }, []);
 
@@ -60,6 +55,7 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
     setStage("uploading");
     setProposal(null);
     setApplyResult(null);
+    setAppliedFileIds([]);
     setError(null);
     setIsUploadFlow(true);
     setUploadFileIds([]);
@@ -78,14 +74,15 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
     }
   }, [uploadQueuedAndWait, startProposal]);
 
-  const apply = useCallback(async () => {
+  const apply = useCallback(async (selectedProposal: OrganizeProposal) => {
     if (!proposal || stage !== "reviewing") return;
     setStage("applying");
     setIsVisible(true);
     setError(null);
     try {
-      const result = await applyOrganization(proposal);
+      const result = await applyOrganization(selectedProposal);
       setApplyResult(result);
+      setAppliedFileIds(selectedProposal.mappings.map((mapping) => mapping.fileId));
       setStage("result");
       setCompletedSignal((value) => value + 1);
     } catch (err) {
@@ -112,8 +109,8 @@ export function SmartOrganizeProvider({ children }: { children: ReactNode }) {
         stage,
         proposal,
         applyResult,
+        appliedFileIds,
         error,
-        organizeStep,
         isVisible,
         isUploadFlow,
         uploadFileIds,

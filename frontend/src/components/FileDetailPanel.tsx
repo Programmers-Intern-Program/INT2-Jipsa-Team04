@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { X, FileText, Tag, ShieldAlert, Calendar, Users, Coins, FolderClosed } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { X, FileText, Tag, ShieldAlert, Calendar, Users, Coins, FolderClosed, Sparkles } from "lucide-react";
 import type { Folder as FolderType } from "../types";
 import { formatBytes } from "../utils/formatBytes";
 import { getFolderPath } from "../utils/folderTree";
@@ -12,6 +12,48 @@ interface FileDetailPanelProps {
     onClose: () => void;
     onTagsChanged?: (fileId: number, tags: string[]) => void;
     onDocumentTypeChanged?: (fileId: number, documentType: string | null) => void;
+}
+
+function ScrollableSummary({ text }: { text: string }) {
+    const viewportRef = useRef<HTMLDivElement>(null);
+    const [fadeTop, setFadeTop] = useState(false);
+    const [fadeBottom, setFadeBottom] = useState(false);
+
+    const updateFades = useCallback(() => {
+        const viewport = viewportRef.current;
+        if (!viewport) return;
+        setFadeTop(viewport.scrollTop > 1);
+        setFadeBottom(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop > 1);
+    }, []);
+
+    useEffect(() => {
+        const frame = requestAnimationFrame(updateFades);
+        const viewport = viewportRef.current;
+        const observer = new ResizeObserver(updateFades);
+        if (viewport) observer.observe(viewport);
+        return () => {
+            cancelAnimationFrame(frame);
+            observer.disconnect();
+        };
+    }, [text, updateFades]);
+
+    return (
+        <div className="relative overflow-hidden rounded-xl border border-outline-variant/30 bg-surface-container/50">
+            <div
+                ref={viewportRef}
+                onScroll={updateFades}
+                className="max-h-52 overflow-y-auto px-3 py-3 text-body-sm text-on-surface leading-relaxed"
+            >
+                {text}
+            </div>
+            {fadeTop && (
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-surface-container via-surface-container/80 to-transparent" />
+            )}
+            {fadeBottom && (
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-surface-container via-surface-container/80 to-transparent" />
+            )}
+        </div>
+    );
 }
 
 export default function FileDetailPanel({ fileId, folders, onClose, onTagsChanged, onDocumentTypeChanged }: FileDetailPanelProps) {
@@ -189,9 +231,7 @@ export default function FileDetailPanel({ fileId, folders, onClose, onTagsChange
 
                         <div>
                             <p className="text-[11px] font-bold text-outline mb-1.5">AI 요약</p>
-                            <p className="text-body-sm text-on-surface leading-relaxed bg-surface-container/50 rounded-xl p-3">
-                                {detail.summary || "요약 정보가 아직 없습니다. (문서 처리 중이거나 미생성)"}
-                            </p>
+                            <ScrollableSummary text={detail.summary || "요약 정보가 아직 없습니다. (문서 처리 중이거나 미생성)"} />
                         </div>
 
                         <div>
@@ -205,7 +245,13 @@ export default function FileDetailPanel({ fileId, folders, onClose, onTagsChange
                                         </button>
                                     </span>
                                 ))}
-                                {tags.length === 0 && <span className="text-body-sm text-outline">태그 없음</span>}
+                                {(detail.keywords ?? []).filter((keyword) => !tags.includes(keyword)).map((keyword) => (
+                                    <span key={keyword} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-secondary/10 text-secondary text-[11px] font-semibold border border-secondary/15">
+                                        <Sparkles className="w-3 h-3" />
+                                        #{keyword}
+                                    </span>
+                                ))}
+                                {tags.length === 0 && (detail.keywords?.length ?? 0) === 0 && <span className="text-body-sm text-outline">태그 없음</span>}
                             </div>
                             <div className="flex gap-1.5 mt-2">
                                 <input
@@ -230,17 +276,6 @@ export default function FileDetailPanel({ fileId, folders, onClose, onTagsChange
                                 {entities.dates.length > 0 && <p className="text-body-sm flex items-start gap-1.5"><Calendar className="w-3.5 h-3.5 text-outline mt-0.5 shrink-0" /> {entities.dates.join(", ")}</p>}
                                 {entities.people.length > 0 && <p className="text-body-sm flex items-start gap-1.5"><Users className="w-3.5 h-3.5 text-outline mt-0.5 shrink-0" /> {entities.people.join(", ")}</p>}
                                 {entities.amounts.length > 0 && <p className="text-body-sm flex items-start gap-1.5"><Coins className="w-3.5 h-3.5 text-outline mt-0.5 shrink-0" /> {entities.amounts.join(", ")}</p>}
-                            </div>
-                        )}
-
-                        {detail.keywords && detail.keywords.length > 0 && (
-                            <div className="space-y-1.5">
-                                <p className="text-[11px] font-bold text-outline mb-1.5">AI 키워드</p>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {detail.keywords.map((kw) => (
-                                        <span key={kw} className="px-2 py-0.5 bg-surface-container text-[11px] font-semibold text-on-surface rounded-lg">{kw}</span>
-                                    ))}
-                                </div>
                             </div>
                         )}
 
