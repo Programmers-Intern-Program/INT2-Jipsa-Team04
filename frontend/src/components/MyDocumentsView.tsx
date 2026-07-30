@@ -300,6 +300,13 @@ export default function MyDocumentsView({
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderError, setNewFolderError] = useState("");
   const [folderRenameTarget, setFolderRenameTarget] = useState<FolderRenameTarget | null>(null);
+
+  const navigateToFolder = (folderId: number | null) => {
+    setCurrentTab("mydrive");
+    setSelectedFolder(folderId);
+    setCheckedDocIds([]);
+    setCheckedTrashFolderIds([]);
+  };
   const [folderRenameName, setFolderRenameName] = useState("");
   const [folderRenameError, setFolderRenameError] = useState("");
   const [isMoveModalOpen, setIsMoveModalOpen] = useState(false);
@@ -487,6 +494,18 @@ export default function MyDocumentsView({
     }
     return currentLevelDocuments.length === 0;
   }, [currentTab, searchQuery, currentLevelFolders, currentLevelDocuments, trashFolders]);
+
+  const visibleDocumentIds = currentLevelDocuments.map((document) => document.id);
+  const allVisibleFilesSelected = visibleDocumentIds.length > 0
+    && visibleDocumentIds.every((id) => checkedDocIds.includes(id));
+
+  const toggleSelectAllVisibleFiles = () => {
+    if (allVisibleFilesSelected) {
+      setCheckedDocIds((current) => current.filter((id) => !visibleDocumentIds.includes(id)));
+      return;
+    }
+    setCheckedDocIds(visibleDocumentIds);
+  };
 
   // Handle Drag events
   const handleDrag = (e: React.DragEvent) => {
@@ -833,7 +852,7 @@ export default function MyDocumentsView({
       newFolders: organizeResult.newFolders.filter((folder) => tempIds.has(folder.tempId)),
     };
     await applySmartOrganization(selectedProposal);
-    setSelectedFolder(null);
+    navigateToFolder(null);
   };
 
   // 미리보기(적용 전)/결과(적용 후) 모달을 모두 닫는다.
@@ -973,7 +992,7 @@ export default function MyDocumentsView({
     }
 
     if (selectedFolder !== null && idsToDelete.includes(selectedFolder)) {
-      setSelectedFolder(null);
+      navigateToFolder(null);
     }
 
     // 왼쪽 사이드바 폴더 트리는 탭과 무관하게 항상 떠 있어서, "휴지통" 탭을 보고 있는 채로도
@@ -1489,7 +1508,7 @@ export default function MyDocumentsView({
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6" id="documents-header-container">
         <div>
           <nav className="flex text-outline font-medium text-xs mb-2 gap-2 items-center" id="doc-breadcrumbs">
-            <span className="hover:text-primary cursor-pointer" onClick={() => setSelectedFolder(null)}>Drive</span>
+            <span className="hover:text-primary cursor-pointer" onClick={() => navigateToFolder(null)}>Drive</span>
             <ChevronRight className="w-3.5 h-3.5 text-outline-variant" />
             <span className="text-primary font-bold">내 문서</span>
           </nav>
@@ -1754,7 +1773,7 @@ export default function MyDocumentsView({
                           <ChevronRight className="w-3 h-3 text-outline-variant shrink-0" />
                           <button
                             type="button"
-                            onClick={() => setSelectedFolder(ancestor.folderId)}
+                            onClick={() => navigateToFolder(ancestor.folderId)}
                             className={`hover:text-primary hover:underline transition-colors cursor-pointer max-w-[120px] truncate ${
                               index === arr.length - 1 ? "text-primary bg-primary/5 px-2.5 py-1 rounded-full border border-primary/10" : ""
                             }`}
@@ -1809,7 +1828,10 @@ export default function MyDocumentsView({
               {/* Type Filter */}
               <select 
                 value={selectedType || ""} 
-                onChange={(e) => setSelectedType(e.target.value || null)}
+                onChange={(e) => {
+                  setSelectedType(e.target.value || null);
+                  setCheckedDocIds([]);
+                }}
                 className="bg-white border border-outline-variant rounded-xl py-2 px-3 text-xs font-semibold text-on-surface-variant focus:ring-2 focus:ring-primary/10 outline-none cursor-pointer hover:border-outline transition-colors"
               >
                 <option value="">파일 유형 전체</option>
@@ -1822,7 +1844,10 @@ export default function MyDocumentsView({
 
               <select
                   value={selectedDocumentType || ""}
-                  onChange={(e) => setSelectedDocumentType(e.target.value || null)}
+                  onChange={(e) => {
+                    setSelectedDocumentType(e.target.value || null);
+                    setCheckedDocIds([]);
+                  }}
                   className="bg-white border border-outline-variant rounded-xl py-2 px-3 text-xs font-semibold text-on-surface-variant focus:ring-2 focus:ring-primary/10 outline-none cursor-pointer hover:border-outline transition-colors"
               >
                 <option value="">문서 종류 전체</option>
@@ -1834,7 +1859,10 @@ export default function MyDocumentsView({
               <input
                   type="text"
                   value={tagFilter}
-                  onChange={(e) => setTagFilter(e.target.value)}
+                  onChange={(e) => {
+                    setTagFilter(e.target.value);
+                    setCheckedDocIds([]);
+                  }}
                   placeholder="태그 검색"
                   className="bg-white border border-outline-variant rounded-xl py-2 px-3 text-xs font-semibold text-on-surface-variant focus:ring-2 focus:ring-primary/10 outline-none hover:border-outline transition-colors w-28"
               />
@@ -1842,14 +1870,20 @@ export default function MyDocumentsView({
               <input
                   type="date"
                   value={dateFromFilter}
-                  onChange={(e) => setDateFromFilter(e.target.value)}
+                  onChange={(e) => {
+                    setDateFromFilter(e.target.value);
+                    setCheckedDocIds([]);
+                  }}
                   className="bg-white border border-outline-variant rounded-xl py-2 px-3 text-xs font-semibold text-on-surface-variant focus:ring-2 focus:ring-primary/10 outline-none cursor-pointer hover:border-outline transition-colors"
               />
               <span className="text-xs text-outline">~</span>
               <input
                   type="date"
                   value={dateToFilter}
-                  onChange={(e) => setDateToFilter(e.target.value)}
+                  onChange={(e) => {
+                    setDateToFilter(e.target.value);
+                    setCheckedDocIds([]);
+                  }}
                   className="bg-white border border-outline-variant rounded-xl py-2 px-3 text-xs font-semibold text-on-surface-variant focus:ring-2 focus:ring-primary/10 outline-none cursor-pointer hover:border-outline transition-colors"
               />
 
@@ -1857,13 +1891,14 @@ export default function MyDocumentsView({
               {(selectedFolder || selectedType || searchQuery || selectedDocumentType || tagFilter || dateFromFilter || dateToFilter) && (
                 <button 
                   onClick={() => {
-                    setSelectedFolder(null);
+                    navigateToFolder(null);
                     setSelectedType(null);
                     setSearchQuery("");
                     setSelectedDocumentType(null);
                     setTagFilter("");
                     setDateFromFilter("");
                     setDateToFilter("");
+                    setCheckedDocIds([]);
                   }}
                   className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl transition-all cursor-pointer font-bold text-xs flex items-center gap-1 border border-rose-100"
                 >
@@ -1878,12 +1913,18 @@ export default function MyDocumentsView({
               <input 
                 type="text" 
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setCheckedDocIds([]);
+                }}
                 placeholder="현재 열린 폴더 및 드라이브 내 문서 검색..." 
                 className="w-full bg-white border border-outline-variant rounded-2xl py-3 pl-11 pr-4 focus:outline-none focus:ring-2 focus:ring-primary/10 focus:border-primary text-body-sm font-semibold transition-all shadow-sm"
               />
               {searchQuery && (
-                <button onClick={() => setSearchQuery("")} className="absolute right-4 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface">
+                <button onClick={() => {
+                  setSearchQuery("");
+                  setCheckedDocIds([]);
+                }} className="absolute right-4 top-1/2 -translate-y-1/2 text-outline hover:text-on-surface">
                   <X className="w-4 h-4" />
                 </button>
               )}
@@ -1915,6 +1956,17 @@ export default function MyDocumentsView({
                 >
                   <Check className="w-3.5 h-3.5 inline mr-1" />
                   {allTrashItemsSelected ? "전체 해제" : "휴지통 전체 선택"}
+                </button>
+              )}
+              {currentTab !== "trash" && (
+                <button
+                  type="button"
+                  onClick={toggleSelectAllVisibleFiles}
+                  disabled={visibleDocumentIds.length === 0}
+                  className="px-3 py-1.5 bg-white border border-outline-variant rounded-lg text-[11px] font-bold text-primary hover:bg-primary/5 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Check className="w-3.5 h-3.5 inline mr-1" />
+                  {allVisibleFilesSelected ? "현재 파일 전체 해제" : "현재 파일 전체 선택"}
                 </button>
               )}
             </div>
@@ -2014,7 +2066,7 @@ export default function MyDocumentsView({
                 <p className="text-xs text-outline mt-1 leading-relaxed">검색어 필터를 리셋하시거나 'AI 스마트 정리' 버튼을 이용해 분류해 보세요.</p>
                 <button 
                   onClick={() => {
-                    setSelectedFolder(null);
+                    navigateToFolder(null);
                     setSelectedType(null);
                     setSearchQuery("");
                   }}
@@ -2040,7 +2092,7 @@ export default function MyDocumentsView({
                         return (
                           <div 
                             key={`folder-grid-${folder.folderId}`}
-                            onClick={() => setSelectedFolder(folder.folderId)}
+                            onClick={() => navigateToFolder(folder.folderId)}
                             className="group bg-surface-container-lowest hover:bg-primary/[0.02] p-4.5 rounded-2xl border border-outline-variant hover:border-primary/40 transition-all flex items-center justify-between cursor-pointer hover:shadow-md"
                           >
                             <div className="flex items-center gap-3 min-w-0">
@@ -2339,20 +2391,14 @@ export default function MyDocumentsView({
                       <th className="px-6 py-4 text-center whitespace-nowrap">
                         <button
                           type="button"
-                          onClick={() => {
-                            const isAllFilteredChecked = currentLevelDocuments.length > 0 && currentLevelDocuments.every(d => checkedDocIds.includes(d.id));
-                            if (isAllFilteredChecked) {
-                              setCheckedDocIds(prev => prev.filter(id => !currentLevelDocuments.some(fd => fd.id === id)));
-                            } else {
-                              const allIds = currentLevelDocuments.map(d => d.id);
-                              setCheckedDocIds(prev => Array.from(new Set([...prev, ...allIds])));
-                            }
-                          }}
+                          onClick={toggleSelectAllVisibleFiles}
+                          disabled={visibleDocumentIds.length === 0}
+                          aria-label={allVisibleFilesSelected ? "현재 파일 전체 해제" : "현재 파일 전체 선택"}
                           className={`w-4.5 h-4.5 rounded border flex items-center justify-center mx-auto cursor-pointer transition-all ${
-                            currentLevelDocuments.length > 0 && currentLevelDocuments.every(d => checkedDocIds.includes(d.id))
+                            allVisibleFilesSelected
                               ? "bg-primary border-primary text-white"
                               : "bg-white border-outline-variant hover:border-outline text-transparent"
-                          }`}
+                          } disabled:opacity-40 disabled:cursor-not-allowed`}
                         >
                           <Check className="w-3 h-3 stroke-[3]" />
                         </button>
@@ -2371,7 +2417,7 @@ export default function MyDocumentsView({
                       return (
                         <tr 
                            key={`folder-row-${folder.folderId}`} 
-                          onClick={() => setSelectedFolder(folder.folderId)}
+                          onClick={() => navigateToFolder(folder.folderId)}
                           className="hover:bg-primary/[0.01] cursor-pointer transition-colors group"
                         >
                           <td className="px-6 py-4 text-center">
@@ -2401,7 +2447,7 @@ export default function MyDocumentsView({
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setSelectedFolder(folder.folderId);
+                                  navigateToFolder(folder.folderId);
                                 }}
                                 className="px-2.5 py-1.5 bg-primary/10 text-primary text-[10px] font-extrabold rounded-lg hover:bg-primary/20 transition-all cursor-pointer whitespace-nowrap"
                               >
@@ -3006,7 +3052,7 @@ export default function MyDocumentsView({
                 <div className="flex gap-3 w-full">
                   <button 
                     onClick={() => {
-                      setSelectedFolder(autoResultData.targetFolderId);
+                      navigateToFolder(autoResultData.targetFolderId);
                       setShowAutoResultModal(false);
                     }}
                     className="flex-1 py-3 bg-secondary text-white rounded-xl font-bold text-xs hover:bg-opacity-95 transition-all cursor-pointer shadow-md shadow-secondary/10 flex items-center justify-center gap-1"
