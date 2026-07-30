@@ -146,6 +146,39 @@ class FileServiceTest {
     }
 
     @Test
+    void renamePreservesOriginalExtensionAndBaseNameDots() {
+        File file = ownedFile();
+        file.setFileType("PDF");
+        when(fileRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(file));
+
+        fileService.rename(1L, 1L, "분기.보고서.v2");
+
+        assertThat(file.getName()).isEqualTo("분기.보고서.v2.pdf");
+    }
+
+    @Test
+    void renameCannotReplaceOriginalExtension() {
+        File file = ownedFile();
+        file.setFileType("pdf");
+        when(fileRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(file));
+
+        fileService.rename(1L, 1L, "보고서.exe");
+
+        assertThat(file.getName()).isEqualTo("보고서.exe.pdf");
+    }
+
+    @Test
+    void renameDoesNotDuplicateOriginalExtension() {
+        File file = ownedFile();
+        file.setFileType("pdf");
+        when(fileRepository.findByIdAndDeletedAtIsNull(1L)).thenReturn(Optional.of(file));
+
+        fileService.rename(1L, 1L, "보고서.PDF");
+
+        assertThat(file.getName()).isEqualTo("보고서.pdf");
+    }
+
+    @Test
     void renameRejectsBlank() {
         assertThatThrownBy(() -> fileService.rename(1L, 1L, "   "))
                 .isInstanceOf(BadRequestException.class);

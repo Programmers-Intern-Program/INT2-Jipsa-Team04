@@ -31,6 +31,7 @@ import {
 import type { Document, DocumentNavigationTarget, FileMapping, Folder as FolderType, OrganizeProposal, ProposedFolder } from "../types";
 import { formatBytes } from "../utils/formatBytes";
 import { formatDateTime } from "../utils/formatDateTime";
+import { buildFileName, getBaseName, normalizeExtension } from "../utils/fileName";
 import { fetchWithRetry } from "../utils/retry";
 import { getFolderPath, getFolderAncestors, isDescendantOrSelf } from "../utils/folderTree";
 import { ApiError } from "../api/client";
@@ -74,6 +75,12 @@ interface FolderRenameTarget {
   folderId: number;
   name: string;
   parentFolderId: number | null;
+}
+
+interface FileRenameTarget {
+  fileId: string;
+  originalName: string;
+  fileType: string;
 }
 
 export default function MyDocumentsView({
@@ -294,6 +301,10 @@ export default function MyDocumentsView({
   const [isPermanentDeleting, setIsPermanentDeleting] = useState(false);
   const permanentDeleteInFlightRef = useRef(false);
   const [detailFileId, setDetailFileId] = useState<number | null>(null);
+  const [fileRenameTarget, setFileRenameTarget] = useState<FileRenameTarget | null>(null);
+  const [fileRenameName, setFileRenameName] = useState("");
+  const [fileRenameError, setFileRenameError] = useState("");
+  const [isRenamingFile, setIsRenamingFile] = useState(false);
 
   // Modals state
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
@@ -551,41 +562,53 @@ export default function MyDocumentsView({
     }
   };
 
-  const handleRenameDocument = async (docId: string, currentName: string) => {
-    const name = window.prompt("새 파일 이름을 입력하세요.", currentName);
-    if (!name || !name.trim() || name.trim() === currentName) return;
-    const trimmed = name.trim();
-    const fileType = documents.find((d) => d.id === docId)?.fileType ?? "";
-    const dot = trimmed.lastIndexOf(".");
-    const base = dot > 0 ? trimmed.slice(0, dot) : trimmed;
-    const finalName = fileType ? `${base}.${fileType.toLowerCase()}` : trimmed;
-    try {
-      await renameFile(Number(docId), trimmed);
-      onUpdateDocuments(
-          documents.map((d) => (d.id === docId ? { ...d, name: finalName } : d))
-      );
-    } catch (err) {
-      console.warn("[files] PATCH /api/v1/files/{id}/name 실패:", err);
-      alert("이름 변경에 실패했습니다.");
-    }
+  const openFileRename = (document: Document) => {
+    setFileRenameTarget({
+      fileId: document.id,
+      originalName: document.name,
+      fileType: document.fileType,
+    });
+    setFileRenameName(getBaseName(document.name, document.fileType));
+    setFileRenameError("");
   };
 
-  const fileNameClickTimer = useRef<number | null>(null);
-  const handleFileNameClick = (docId: string) => {
-    if (fileNameClickTimer.current !== null) {
-      window.clearTimeout(fileNameClickTimer.current);
-    }
-    fileNameClickTimer.current = window.setTimeout(() => {
-      fileNameClickTimer.current = null;
-      setDetailFileId(Number(docId));
-    }, 250);
+  const closeFileRename = () => {
+    if (isRenamingFile) return;
+    setFileRenameTarget(null);
+    setFileRenameName("");
+    setFileRenameError("");
   };
-  const handleFileNameDoubleClick = (docId: string, currentName: string) => {
-    if (fileNameClickTimer.current !== null) {
-      window.clearTimeout(fileNameClickTimer.current);
-      fileNameClickTimer.current = null;
+
+  const handleRenameDocument = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!fileRenameTarget || isRenamingFile) return;
+    const baseName = fileRenameName.trim();
+    if (!baseName) {
+      setFileRenameError("파일 이름을 입력해 주세요.");
+      return;
     }
-    handleRenameDocument(docId, currentName);
+    const finalName = buildFileName(baseName, fileRenameTarget.fileType);
+    if (finalName === fileRenameTarget.originalName) {
+      closeFileRename();
+      return;
+    }
+    setIsRenamingFile(true);
+    setFileRenameError("");
+    try {
+      await renameFile(Number(fileRenameTarget.fileId), baseName);
+      onUpdateDocuments((current) =>
+        current.map((document) =>
+          document.id === fileRenameTarget.fileId ? { ...document, name: finalName } : document
+        )
+      );
+      setFileRenameTarget(null);
+      setFileRenameName("");
+    } catch (err) {
+      console.warn("[files] PATCH /api/v1/files/{id}/name 실패:", err);
+      setFileRenameError("이름 변경에 실패했습니다.");
+    } finally {
+      setIsRenamingFile(false);
+    }
   };
 
   const handleMoveDocuments = async (docIds: string[], targetFolder: number | null) => {
@@ -2206,10 +2229,20 @@ export default function MyDocumentsView({
                         const isChecked = checkedDocIds.includes(doc.id);
                         return (
                           <div 
-                            key={doc.id} 
+                            key={doc.id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setDetailFileId(Number(doc.id))}
+                            onKeyDown={(event) => {
+                              if (event.target !== event.currentTarget) return;
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                setDetailFileId(Number(doc.id));
+                              }
+                            }}
                             className={`group bg-white p-5 rounded-2xl border transition-all flex flex-col justify-between relative ${
                               isChecked ? "border-primary bg-primary/[0.01] shadow-md shadow-primary/5" : "border-outline-variant hover:border-primary/50 hover:shadow-lg"
-                            }`}
+                            } cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary`}
                             id={`grid-card-${doc.id}`}
                           >
                             {/* Grid Item Checkbox top-left */}
@@ -2253,7 +2286,7 @@ export default function MyDocumentsView({
                                   </button>
                                   <div className="min-w-0 flex-1">
                                     <div className="flex items-center gap-1.5">
-                                      <p className="font-bold text-body-sm text-on-surface leading-tight truncate cursor-pointer" title="클릭하여 미리보기 · 더블클릭하여 이름 변경" onClick={() => handleFileNameClick(doc.id)} onDoubleClick={() => handleFileNameDoubleClick(doc.id, doc.name)}>{doc.name}</p>
+                                      <p className="font-bold text-body-sm text-on-surface leading-tight truncate">{doc.name}</p>
                                       <button
                                         type="button"
                                         onClick={(e) => {
@@ -2333,14 +2366,18 @@ export default function MyDocumentsView({
                               </div>
 
                               <div className="flex gap-2 border-t border-outline-variant/30 pt-4 mt-2">
-                                <button 
-                                  onClick={() => onNavigateToChat([doc.id])}
+                                <button
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    onNavigateToChat([doc.id]);
+                                  }}
                                   className="flex-1 py-2 bg-secondary text-white rounded-xl text-[11px] font-extrabold hover:bg-opacity-95 transition-colors cursor-pointer flex items-center justify-center gap-1 shadow-sm"
                                 >
                                   <Sparkles className="w-3.5 h-3.5 fill-white/20 animate-pulse" /> RAG 대화
                                 </button>
-                                <button 
-                                  onClick={() => {
+                                <button
+                                  onClick={(event) => {
+                                    event.stopPropagation();
                                     setMovingDocIds([doc.id]);
                                     setMoveTargetFolder(doc.folderId);
                                     setIsMoveModalOpen(true);
@@ -2351,18 +2388,34 @@ export default function MyDocumentsView({
                                   <FolderInput className="w-4 h-4" />
                                 </button>
                                 <button
-                                    onClick={() => setDetailFileId(Number(doc.id))}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setDetailFileId(Number(doc.id));
+                                    }}
                                     className="p-2 border border-outline-variant text-outline hover:text-on-surface rounded-xl hover:bg-surface-container transition-colors cursor-pointer"
                                     title="상세 정보"
                                 >
                                   <Info className="w-4 h-4" />
                                 </button>
                                 <button
-                                    onClick={() => downloadFile(Number(doc.id), doc.name).catch(() => alert("다운로드에 실패했습니다."))}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    downloadFile(Number(doc.id), doc.name).catch(() => alert("다운로드에 실패했습니다."));
+                                  }}
                                   className="p-2 border border-outline-variant text-outline hover:text-on-surface rounded-xl hover:bg-surface-container transition-colors cursor-pointer"
                                   title="다운로드"
                                 >
                                   <Download className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    openFileRename(doc);
+                                  }}
+                                  className="p-2 border border-outline-variant text-outline hover:text-primary rounded-xl hover:bg-primary/5 transition-colors cursor-pointer"
+                                  title="이름 변경"
+                                >
+                                  <Pencil className="w-4 h-4" />
                                 </button>
                               </div>
                             </div>
@@ -2530,11 +2583,25 @@ export default function MyDocumentsView({
                     {currentLevelDocuments.map((doc) => {
                       const isChecked = checkedDocIds.includes(doc.id);
                       return (
-                        <tr key={doc.id} className={`hover:bg-surface-container-low transition-colors group ${isChecked ? "bg-primary/[0.01]" : ""}`}>
+                        <tr
+                          key={doc.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setDetailFileId(Number(doc.id))}
+                          onKeyDown={(event) => {
+                            if (event.target !== event.currentTarget) return;
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              setDetailFileId(Number(doc.id));
+                            }
+                          }}
+                          className={`hover:bg-surface-container-low transition-colors group cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${isChecked ? "bg-primary/[0.01]" : ""}`}
+                        >
                           <td className="px-6 py-4 text-center">
                             <button
                               type="button"
-                              onClick={() => {
+                              onClick={(event) => {
+                                event.stopPropagation();
                                 setCheckedDocIds(prev => 
                                   prev.includes(doc.id) ? prev.filter(id => id !== doc.id) : [...prev, doc.id]
                                 );
@@ -2580,7 +2647,7 @@ export default function MyDocumentsView({
                               )}
                               </button>
                               <div className="truncate flex-1">
-                                <p className="font-bold text-xs text-on-surface leading-tight truncate cursor-pointer" title="클릭하여 미리보기 · 더블클릭하여 이름 변경" onClick={() => handleFileNameClick(doc.id)} onDoubleClick={() => handleFileNameDoubleClick(doc.id, doc.name)}>{doc.name}</p>
+                                <p className="font-bold text-xs text-on-surface leading-tight truncate">{doc.name}</p>
                                 <p className="text-[10px] text-outline mt-1 font-sans truncate">
                                   {getFolderPath(doc.folderId, folders) || "미분류"} · {doc.ownerName}
                                 </p>
@@ -2615,14 +2682,18 @@ export default function MyDocumentsView({
                           </td>
                           <td className="px-6 py-4 text-center whitespace-nowrap">
                             <div className="flex items-center justify-center gap-1.5">
-                              <button 
-                                onClick={() => onNavigateToChat([doc.id])}
+                              <button
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onNavigateToChat([doc.id]);
+                                }}
                                 className="px-2.5 py-1.5 bg-secondary text-white text-[10px] font-extrabold rounded-lg hover:bg-opacity-95 shadow-sm transition-all cursor-pointer flex items-center gap-1"
                               >
                                 <Sparkles className="w-3 h-3 fill-white/10" /> RAG
                               </button>
-                              <button 
-                                onClick={() => {
+                              <button
+                                onClick={(event) => {
+                                  event.stopPropagation();
                                   setMovingDocIds([doc.id]);
                                   setMoveTargetFolder(doc.folderId);
                                   setIsMoveModalOpen(true);
@@ -2633,18 +2704,34 @@ export default function MyDocumentsView({
                                 <FolderInput className="w-4 h-4" />
                               </button>
                               <button
-                                  onClick={() => setDetailFileId(Number(doc.id))}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setDetailFileId(Number(doc.id));
+                                  }}
                                   className="p-1.5 hover:bg-surface-container rounded-lg text-outline hover:text-on-surface cursor-pointer"
                                   title="상세 정보"
                               >
                                 <Info className="w-4 h-4" />
                               </button>
                               <button
-                                  onClick={() => downloadFile(Number(doc.id), doc.name).catch(() => alert("다운로드에 실패했습니다."))}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  downloadFile(Number(doc.id), doc.name).catch(() => alert("다운로드에 실패했습니다."));
+                                }}
                                 className="p-1.5 hover:bg-surface-container rounded-lg text-outline hover:text-on-surface cursor-pointer"
                                 title="다운로드"
                               >
                                 <Download className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openFileRename(doc);
+                                }}
+                                className="p-1.5 hover:bg-primary/5 rounded-lg text-outline hover:text-primary cursor-pointer"
+                                title="이름 변경"
+                              >
+                                <Pencil className="w-4 h-4" />
                               </button>
                             </div>
                           </td>
@@ -3080,6 +3167,73 @@ export default function MyDocumentsView({
           onTagsChanged={(id, tags) => onUpdateDocuments((prev) => prev.map((d) => (d.id === String(id) ? { ...d, tags } : d)))}
           onDocumentTypeChanged={(id, documentType) => onUpdateDocuments((prev) => prev.map((d) => (d.id === String(id) ? { ...d, documentType } : d)))}
       />
+
+      {createPortal(
+        <AnimatePresence>
+          {fileRenameTarget && (
+            <div className="fixed inset-0 z-[145] flex items-center justify-center bg-black/55 backdrop-blur-sm p-4" onClick={closeFileRename}>
+              <motion.form
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                onSubmit={handleRenameDocument}
+                onClick={(event) => event.stopPropagation()}
+                className="w-full max-w-md rounded-2xl border border-outline-variant bg-white p-6 shadow-2xl"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <h3 className="text-base font-bold text-on-surface">파일 이름 변경</h3>
+                  <button
+                    type="button"
+                    onClick={closeFileRename}
+                    disabled={isRenamingFile}
+                    className="rounded-full p-2 text-outline hover:bg-surface-container hover:text-on-surface cursor-pointer disabled:opacity-40"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="mt-5 flex items-stretch overflow-hidden rounded-xl border border-outline-variant focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15">
+                  <input
+                    type="text"
+                    value={fileRenameName}
+                    onChange={(event) => {
+                      setFileRenameName(event.target.value);
+                      setFileRenameError("");
+                    }}
+                    maxLength={Math.max(1, 254 - normalizeExtension(fileRenameTarget.fileType).length)}
+                    autoFocus
+                    disabled={isRenamingFile}
+                    className="min-w-0 flex-1 px-4 py-3 text-sm font-semibold text-on-surface outline-none disabled:opacity-60"
+                  />
+                  {normalizeExtension(fileRenameTarget.fileType) && (
+                    <span className="flex items-center border-l border-outline-variant bg-surface-container-low px-3 text-sm font-bold text-outline">
+                      .{normalizeExtension(fileRenameTarget.fileType)}
+                    </span>
+                  )}
+                </div>
+                {fileRenameError && <p className="mt-2 text-xs font-semibold text-error">{fileRenameError}</p>}
+                <div className="mt-6 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={closeFileRename}
+                    disabled={isRenamingFile}
+                    className="rounded-xl border border-outline-variant px-4 py-2.5 text-xs font-bold text-outline hover:bg-surface-container cursor-pointer disabled:opacity-40"
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isRenamingFile || !fileRenameName.trim()}
+                    className="rounded-xl bg-primary px-5 py-2.5 text-xs font-bold text-white hover:bg-opacity-95 cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {isRenamingFile ? "변경 중..." : "변경"}
+                  </button>
+                </div>
+              </motion.form>
+            </div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
 
       {/* Dynamic Upload Modal Form */}
       <AnimatePresence>

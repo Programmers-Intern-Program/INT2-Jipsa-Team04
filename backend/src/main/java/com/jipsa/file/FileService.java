@@ -351,12 +351,12 @@ public class FileService {
         if (originalFileType == null || originalFileType.isBlank()) {
             return requestedName;
         }
-        String base = requestedName;
-        int dot = requestedName.lastIndexOf('.');
-        if (dot > 0) {
-            base = requestedName.substring(0, dot);
-        }
-        return base + "." + originalFileType.toLowerCase();
+        String extension = originalFileType.replaceFirst("^\\.", "").toLowerCase();
+        String suffix = "." + extension;
+        String base = requestedName.toLowerCase().endsWith(suffix)
+                ? requestedName.substring(0, requestedName.length() - suffix.length())
+                : requestedName;
+        return base + suffix;
     }
 
     public FileDownload download(Long userId, Long fileId) {
