@@ -92,6 +92,11 @@ $ErrorActionPreference = 'Stop'
 # Load Plane:
 #   모든 성능 요청은 JIPSA_RAG_EXTERNAL_BASE_URL의 외부 Search API로만 보냅니다.
 #   Local RAG Process, 운영 Qdrant Collection, DB Row를 변경하거나 중단하지 않습니다.
+#
+# Windows 출력 인코딩:
+#   Capacity Ladder처럼 이 Script가 다른 PowerShell 함수의 Pipeline 안에서 실행되더라도
+#   Python stdout이 cp1252로 후퇴하지 않도록 PYTHONUTF8과 PYTHONIOENCODING을 현재 Process와
+#   자식 Process에만 설정합니다. 종료 시 기존 값을 반드시 복원합니다.
 # ============================================================
 
 $ProjectRoot = (
@@ -148,6 +153,159 @@ function Assert-RequiredFile {
 
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "필수 파일을 찾을 수 없습니다: $Path"
+    }
+}
+
+function Get-RunDirectories {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Root
+    )
+
+    if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
+        return @()
+    }
+
+    $Directories = Get-ChildItem `
+        -LiteralPath $Root `
+        -Directory `
+        -ErrorAction SilentlyContinue
+    if ($null -eq $Directories) {
+        return @()
+    }
+    return @($Directories)
+}
+
+function Assert-GeneratedArtifact {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Path,
+
+        [Parameter(Mandatory = $true)]
+        [string] $DisplayName
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "성공 종료 후 필수 산출물이 없습니다: $DisplayName ($Path)"
+    }
+
+    $Item = Get-Item -LiteralPath $Path
+    if ($Item.Length -le 0) {
+        throw "성공 종료 후 필수 산출물이 비어 있습니다: $DisplayName ($Path)"
+    }
+}
+
+function Assert-CampaignArtifacts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $CampaignDirectory
+    )
+
+    # Python Runner가 정상 종료했다고 해도 파일 생성 도중의 회귀가 있으면 완료로 안내해서는
+    # 안 됩니다. Campaign 요약 3개와 상세 Stress 입력·원시 결과·요약 보고서를 모두 확인합니다.
+    $RequiredRelativePaths = @(
+        'report.json',
+        'report.md',
+        'report.html',
+        'external-stress/external_target.resolved.json',
+        'external-stress/stress_plan.resolved.json',
+        'external-stress/execution_command.txt',
+        'external-stress/environment.json',
+        'external-stress/requests.json',
+        'external-stress/requests.csv',
+        'external-stress/stage_summaries.json',
+        'external-stress/stage_summaries.csv',
+        'external-stress/capacity_boundaries.json',
+        'external-stress/capacity_boundaries.csv',
+        'external-stress/health_checks.json',
+        'external-stress/progress.log',
+        'external-stress/report.json',
+        'external-stress/report.md',
+        'external-stress/report.html'
+    )
+
+    foreach ($RelativePath in $RequiredRelativePaths) {
+        $ArtifactPath = Join-Path -Path $CampaignDirectory -ChildPath $RelativePath
+        Assert-GeneratedArtifact `
+            -Path $ArtifactPath `
+            -DisplayName $RelativePath
+    }
+
+    $CampaignReportPath = Join-Path -Path $CampaignDirectory -ChildPath 'report.json'
+    $CampaignReport = Get-Content `
+        -LiteralPath $CampaignReportPath `
+        -Raw `
+        -Encoding UTF8 |
+        ConvertFrom-Json
+
+    if ($null -ne $CampaignReport.execution_error_type) {
+        throw (
+            'Python Process는 종료되었지만 Campaign 보고서에 실행 오류가 기록되어 있습니다: ' +
+            [string] $CampaignReport.execution_error_type
+        )
+    }
+    if (-not [bool] $CampaignReport.preflight_health_passed) {
+        throw 'Campaign 보고서의 사전 Health 검증이 통과하지 않았습니다.'
+    }
+    if (-not [bool] $CampaignReport.postflight_health_passed) {
+        throw 'Campaign 보고서의 사후 Health 검증이 통과하지 않았습니다.'
+    }
+    if (@($CampaignReport.stage_summaries).Count -le 0) {
+        throw 'Campaign 보고서에 완료된 Stress Stage가 없습니다.'
+    }
+
+    $DetailedReportPath = Join-Path `
+        -Path $CampaignDirectory `
+        -ChildPath 'external-stress/report.json'
+    $DetailedReport = Get-Content `
+        -LiteralPath $DetailedReportPath `
+        -Raw `
+        -Encoding UTF8 |
+        ConvertFrom-Json
+
+    if ($null -ne $DetailedReport.execution_error_type) {
+        throw (
+            '상세 Stress 보고서에 실행 오류가 기록되어 있습니다: ' +
+            [string] $DetailedReport.execution_error_type
+        )
+    }
+    if ([int] $DetailedReport.stage_count -le 0) {
+        throw '상세 Stress 보고서의 Stage 수가 0입니다.'
+    }
+    if ([int] $DetailedReport.request_count -le 0) {
+        throw '상세 Stress 보고서의 Request 수가 0입니다.'
+    }
+
+    return [PSCustomObject]@{
+        RunId = [string] $CampaignReport.run_id
+        CampaignDirectory = $CampaignDirectory
+        CampaignMarkdown = Join-Path -Path $CampaignDirectory -ChildPath 'report.md'
+        CampaignHtml = Join-Path -Path $CampaignDirectory -ChildPath 'report.html'
+        DetailedMarkdown = Join-Path `
+            -Path $CampaignDirectory `
+            -ChildPath 'external-stress/report.md'
+        DetailedHtml = Join-Path `
+            -Path $CampaignDirectory `
+            -ChildPath 'external-stress/report.html'
+    }
+}
+
+function Restore-ProcessEnvironmentVariable {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Name,
+
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [string] $OriginalValue
+    )
+
+    $EnvironmentPath = "Env:$Name"
+    if ($null -eq $OriginalValue) {
+        Remove-Item -Path $EnvironmentPath -ErrorAction SilentlyContinue
+    }
+    else {
+        Set-Item -Path $EnvironmentPath -Value $OriginalValue
     }
 }
 
@@ -208,7 +366,8 @@ function Invoke-NativeCommand {
     $PreviousPreference = $ErrorActionPreference
     $ExitCode = $null
     try {
-        # uv는 정상 정보도 stderr로 출력할 수 있으므로 종료 코드로 성공을 판정합니다.
+        # uv는 정상 정보도 stderr로 출력할 수 있으므로 PowerShell ErrorRecord 개수 대신
+        # Native Process 종료 코드만으로 성공 여부를 판정합니다.
         $ErrorActionPreference = 'Continue'
         $global:LASTEXITCODE = 0
         & $FilePath @ArgumentList
@@ -257,6 +416,8 @@ $OriginalPerformanceToken = $env:JIPSA_RAG_PERFORMANCE_INTERNAL_TOKEN
 $OriginalPerformanceTarget = $env:JIPSA_RAG_PERFORMANCE_TARGET_BASE_URL
 $OriginalPerformanceQdrantUrl = $env:JIPSA_RAG_PERFORMANCE_QDRANT_URL
 $OriginalPerformanceQdrantCollection = $env:JIPSA_RAG_PERFORMANCE_QDRANT_COLLECTION
+$OriginalPythonUtf8 = $env:PYTHONUTF8
+$OriginalPythonIoEncoding = $env:PYTHONIOENCODING
 
 $Utf8Encoding = [System.Text.UTF8Encoding]::new($false)
 $LocationPushed = $false
@@ -265,6 +426,12 @@ try {
     [Console]::InputEncoding = $Utf8Encoding
     [Console]::OutputEncoding = $Utf8Encoding
     $OutputEncoding = $Utf8Encoding
+
+    # Console Encoding만 바꾸면 Python stdout이 PowerShell Pipeline 또는 파일로 Redirect될 때
+    # Windows ANSI Code Page(cp1252 등)를 다시 선택할 수 있습니다. 두 환경 변수를 함께 지정해
+    # 직접 실행과 Capacity Ladder 중첩 실행에서 동일하게 UTF-8을 사용하도록 강제합니다.
+    $env:PYTHONUTF8 = '1'
+    $env:PYTHONIOENCODING = 'utf-8'
 
     Write-Step -Message '필수 명령과 파일 확인'
     foreach ($CommandName in @('uv', 'git')) {
@@ -394,7 +561,7 @@ try {
     }
 
     Write-Host "성능 측정 프로그램: $ProjectRoot"
-    Write-Host "실행 방식: 외부 HTTP Black-box"
+    Write-Host '실행 방식: 외부 HTTP Black-box'
     Write-Host "외부 Target Origin: $($TargetUri.Scheme)://$($TargetUri.Authority)"
     Write-Host "API Prefix: $ApiPrefix"
     Write-Host "Target 환경: $TargetEnvironment"
@@ -407,6 +574,7 @@ try {
     Write-Host "RAG 환경 파일: $ResolvedRagEnvironmentPath"
     Write-Host "결과 Root: $ResolvedOutputRoot"
     Write-Host 'Token 자동 로드: True'
+    Write-Host 'Python UTF-8 강제: True'
     Write-Host 'Local RAG Process 제어: 하지 않음'
     Write-Host '운영 Qdrant·DB 변경: 하지 않음'
 
@@ -454,7 +622,7 @@ try {
 
     Write-Step -Message "외부 단계형 Stress Campaign: $TestProfile"
     $HumanReadableCommand = (
-        ".\scripts\run-staged-stress-test.ps1 " +
+        '.\scripts\run-staged-stress-test.ps1 ' +
         "-TestProfile '$TestProfile' " +
         "-DataSource '$DataSource' " +
         "-RagEnvironmentPath '$ResolvedRagEnvironmentPath'"
@@ -520,13 +688,10 @@ try {
             $CampaignArguments += [System.IO.Path]::GetFullPath($SearchRoot)
         }
     }
-    # Nullable[long] 매개변수는 실제 값이 전달되면 PowerShell 바인더가
-    # System.Int64 자체로 언박싱할 수 있다. 따라서 Nullable 전용 Value 속성에
-    # 접근하지 않고, 명시적으로 전달된 값을 Int64로 정규화한 뒤 문자열 인자로
-    # 변환한다.
-    #
-    # PSBoundParameters를 함께 확인하여 매개변수가 생략된 경우에는 Python Runner가
-    # 자체 Seed를 생성하도록 --random-seed 인자를 전달하지 않는다.
+
+    # Nullable[long] 매개변수는 실제 값이 전달되면 PowerShell 바인더가 System.Int64 자체로
+    # 언박싱할 수 있습니다. 따라서 Nullable 전용 Value 속성에 접근하지 않고, 명시적으로
+    # 전달된 값을 Int64로 정규화한 뒤 문자열 인자로 변환합니다.
     $HasExplicitRandomSeed = (
         $PSBoundParameters.ContainsKey('RandomSeed') -and
         $null -ne $RandomSeed
@@ -559,14 +724,39 @@ try {
         $CampaignArguments += '--skip-readme-update'
     }
 
+    # 새 Run 폴더를 정확히 식별하기 위해 실행 전 전체 경로를 저장합니다. 성공 후 단순히
+    # LastWriteTime이 가장 최신인 폴더를 선택하면 이전 실패 폴더나 동시에 생성된 폴더를 잘못
+    # 채택할 수 있으므로, 이번 실행에서 새로 생긴 폴더만 허용합니다.
+    [System.IO.Directory]::CreateDirectory($ResolvedOutputRoot) | Out-Null
+    $BeforeRunPaths = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($Directory in Get-RunDirectories -Root $ResolvedOutputRoot) {
+        $BeforeRunPaths.Add($Directory.FullName) | Out-Null
+    }
+
     Invoke-NativeCommand `
         -FilePath 'uv' `
         -ArgumentList $CampaignArguments `
         -FailureMessage '외부 단계형 Stress Campaign 실패.'
 
+    $NewRunDirectories = @(Get-RunDirectories -Root $ResolvedOutputRoot) |
+        Where-Object { -not $BeforeRunPaths.Contains($_.FullName) } |
+        Sort-Object LastWriteTimeUtc -Descending
+    $CampaignDirectory = $NewRunDirectories | Select-Object -First 1
+    if ($null -eq $CampaignDirectory) {
+        throw "정상 종료 후 새 Campaign 결과 폴더를 찾을 수 없습니다: $ResolvedOutputRoot"
+    }
+
+    Write-Step -Message '결과 파일 완전성 검증'
+    $Artifacts = Assert-CampaignArtifacts -CampaignDirectory $CampaignDirectory.FullName
+
     Write-Step -Message '캠페인 완료'
-    Write-Host "결과는 다음 경로 아래에 생성되었습니다: $ResolvedOutputRoot" -ForegroundColor Green
-    Write-Host '각 실행 폴더의 report.html을 열면 표와 그래프를 볼 수 있습니다.' -ForegroundColor Green
+    Write-Host "Run ID: $($Artifacts.RunId)" -ForegroundColor Green
+    Write-Host "Campaign Markdown: $($Artifacts.CampaignMarkdown)" -ForegroundColor Green
+    Write-Host "Campaign HTML: $($Artifacts.CampaignHtml)" -ForegroundColor Green
+    Write-Host "상세 Stress Markdown: $($Artifacts.DetailedMarkdown)" -ForegroundColor Green
+    Write-Host "상세 Stress HTML(표·그래프): $($Artifacts.DetailedHtml)" -ForegroundColor Green
     if (-not $SkipReadmeUpdate) {
         Write-Host 'README.md와 README.html의 마지막 검증 기록을 갱신했습니다.' -ForegroundColor Green
     }
@@ -574,33 +764,24 @@ try {
 finally {
     # 자동 주입한 환경 변수는 성공·실패·사용자 중단과 관계없이 원래 값으로 복원합니다.
     # 값 자체는 Console, 실행 명령, README 또는 결과 파일에 기록하지 않습니다.
-    if ($null -eq $OriginalPerformanceToken) {
-        Remove-Item -Path 'Env:JIPSA_RAG_PERFORMANCE_INTERNAL_TOKEN' -ErrorAction SilentlyContinue
-    }
-    else {
-        $env:JIPSA_RAG_PERFORMANCE_INTERNAL_TOKEN = $OriginalPerformanceToken
-    }
-    if ($null -eq $OriginalPerformanceTarget) {
-        Remove-Item -Path 'Env:JIPSA_RAG_PERFORMANCE_TARGET_BASE_URL' -ErrorAction SilentlyContinue
-    }
-    else {
-        $env:JIPSA_RAG_PERFORMANCE_TARGET_BASE_URL = $OriginalPerformanceTarget
-    }
-    if ($null -eq $OriginalPerformanceQdrantUrl) {
-        Remove-Item -Path 'Env:JIPSA_RAG_PERFORMANCE_QDRANT_URL' -ErrorAction SilentlyContinue
-    }
-    else {
-        $env:JIPSA_RAG_PERFORMANCE_QDRANT_URL = $OriginalPerformanceQdrantUrl
-    }
-    if ($null -eq $OriginalPerformanceQdrantCollection) {
-        Remove-Item `
-            -Path 'Env:JIPSA_RAG_PERFORMANCE_QDRANT_COLLECTION' `
-            -ErrorAction SilentlyContinue
-    }
-    else {
-        $env:JIPSA_RAG_PERFORMANCE_QDRANT_COLLECTION = `
-            $OriginalPerformanceQdrantCollection
-    }
+    Restore-ProcessEnvironmentVariable `
+        -Name 'JIPSA_RAG_PERFORMANCE_INTERNAL_TOKEN' `
+        -OriginalValue $OriginalPerformanceToken
+    Restore-ProcessEnvironmentVariable `
+        -Name 'JIPSA_RAG_PERFORMANCE_TARGET_BASE_URL' `
+        -OriginalValue $OriginalPerformanceTarget
+    Restore-ProcessEnvironmentVariable `
+        -Name 'JIPSA_RAG_PERFORMANCE_QDRANT_URL' `
+        -OriginalValue $OriginalPerformanceQdrantUrl
+    Restore-ProcessEnvironmentVariable `
+        -Name 'JIPSA_RAG_PERFORMANCE_QDRANT_COLLECTION' `
+        -OriginalValue $OriginalPerformanceQdrantCollection
+    Restore-ProcessEnvironmentVariable `
+        -Name 'PYTHONUTF8' `
+        -OriginalValue $OriginalPythonUtf8
+    Restore-ProcessEnvironmentVariable `
+        -Name 'PYTHONIOENCODING' `
+        -OriginalValue $OriginalPythonIoEncoding
 
     if ($LocationPushed) {
         Pop-Location

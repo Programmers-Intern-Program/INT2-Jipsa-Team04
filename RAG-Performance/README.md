@@ -40,6 +40,18 @@ Embedding        : Qwen/Qwen3-Embedding-0.6B / 1024 dimensions
 Token, DB Password와 API Key의 실제 값은 README, Console, JSON, CSV, HTML과 실행 명령에
 기록하지 않습니다.
 
+Windows PowerShell에서 직접 실행하거나 `run-capacity-ladder.ps1`을 통해 중첩 실행할 때 모두
+Python 표준 입출력을 UTF-8로 고정합니다.
+
+```text
+PYTHONUTF8=1
+PYTHONIOENCODING=utf-8
+```
+
+두 값은 현재 PowerShell Process와 자식 Process에만 적용되며 Script 종료 시 원래 값으로
+복원됩니다. 따라서 Pipeline Redirect 환경에서 Python이 `cp1252`를 선택해 한글 로그 출력에
+실패하는 문제를 방지합니다.
+
 ---
 
 ## 1. 문서 바로가기
@@ -49,7 +61,8 @@ Token, DB Password와 API Key의 실제 값은 README, Console, JSON, CSV, HTML�
 | [`README.md`](README.md) | 구조, 자동 환경 로드, 데이터 선정, 실행, 결과 해석 |
 | [`README.html`](README.html) | 검색·테마·인쇄·표·그래프가 포함된 시각적 총괄 문서 |
 | [`TEST_COMMANDS.md`](TEST_COMMANDS.md) | 품질 검사와 Profile별 실제 명령 |
-| [`scripts/run-staged-stress-test.ps1`](scripts/run-staged-stress-test.ps1) | 자동 환경·데이터 선정 포함 PowerShell 진입점 |
+| [`scripts/run-staged-stress-test.ps1`](scripts/run-staged-stress-test.ps1) | 자동 환경·데이터 선정, UTF-8 강제, 산출물 검증 포함 PowerShell 진입점 |
+| [`scripts/run-capacity-ladder.ps1`](scripts/run-capacity-ladder.ps1) | Quick → Standard → 승인된 Destructive 승격 제어기 |
 | [`configs/stress-plan-quick.json`](configs/stress-plan-quick.json) | 단기 Smoke·기본 한계 |
 | [`configs/stress-plan-standard.json`](configs/stress-plan-standard.json) | 표준 부하·피크 복구 |
 | [`configs/stress-plan-endurance.json`](configs/stress-plan-endurance.json) | 장시간 누수·지연 Drift |
@@ -66,7 +79,9 @@ Token, DB Password와 API Key의 실제 값은 README, Console, JSON, CSV, HTML�
 └─ RAG-Performance
    ├─ RAG/.env.local 자동 로드
    ├─ 기존 데이터 읽기 전용 선정
+   ├─ Python stdout UTF-8 강제
    ├─ Burst / Interval / Batch / Ramp / Chaos / Soak
+   ├─ Campaign·상세 산출물 완전성 검증
    └─ 외부 HTTP 요청
           │
           ▼
@@ -84,6 +99,10 @@ http://INT2-jipsa.iptime.org:9802
 Control Plane에서 Local Qdrant 또는 DB를 조회할 수 있지만, 실제 부하는 항상
 `JIPSA_RAG_EXTERNAL_BASE_URL`에만 전송됩니다. Local `8077` Listener가 실행 중이어도 외부
 테스트를 차단하지 않습니다.
+
+`run-capacity-ladder.ps1`은 하위 `run-staged-stress-test.ps1`의 Native stdout을 `Out-Host`로
+즉시 표시합니다. 출력 문자열은 Profile 결과 객체의 반환 Pipeline에서 제거되므로
+`$Result`가 문자열 배열로 오염되지 않습니다.
 
 ---
 
@@ -106,6 +125,8 @@ Control Plane에서 Local Qdrant 또는 DB를 조회할 수 있지만, 실제 �
 - 평균·최소·최대·p50·p90·p95·p99
 - Ramp의 정상 최대 동시성·최초 실패 동시성
 - 실행 전·후 Health·Readiness
+- Client 측 Process 실행 환경
+- Campaign 및 상세 보고서 파일 완전성
 
 ### 제외
 
@@ -120,7 +141,7 @@ Control Plane에서 Local Qdrant 또는 DB를 조회할 수 있지만, 실제 �
 
 ---
 
-## 4. 환경 변수 자동 로드
+## 4. 환경 변수 자동 로드와 UTF-8 실행
 
 기본 경로:
 
@@ -139,9 +160,13 @@ RAG/.env.local 읽기
 → JIPSA_RAG_EXTERNAL_BASE_URL 적용
 → RAG_INGEST_TOKEN을 현재 Process에만 설정
 → Qdrant·DB 연결 설정 적용
+→ PYTHONUTF8=1 적용
+→ PYTHONIOENCODING=utf-8 적용
 → 실제 User/File 자동 선정
 → 외부 Search 단일 사전 검증
 → 단계형 Stress Campaign
+→ 전체 결과 파일 존재·비어 있지 않음 검증
+→ 환경 변수 원상 복구
 ```
 
 Token은 다음 Process 환경 변수에 자동 주입됩니다.
@@ -151,6 +176,19 @@ JIPSA_RAG_PERFORMANCE_INTERNAL_TOKEN
 ```
 
 사용자가 값을 입력할 필요가 없으며, Script 종료 후 별도 파일에 남지 않습니다.
+
+### 왜 Console Encoding만으로 충분하지 않은가
+
+PowerShell의 `[Console]::OutputEncoding`과 `$OutputEncoding`을 UTF-8로 변경해도 Python stdout이
+다른 PowerShell 함수의 Pipeline에 연결되면 Python이 Windows ANSI Code Page를 선택할 수
+있습니다. 이 경우 한글 로그 출력 시 다음 예외가 발생할 수 있습니다.
+
+```text
+UnicodeEncodeError: 'charmap' codec can't encode characters
+```
+
+따라서 Script는 Console Encoding과 함께 `PYTHONUTF8`, `PYTHONIOENCODING`을 명시적으로
+설정합니다. 값은 성공·실패·사용자 중단 여부와 관계없이 `finally`에서 원상 복구됩니다.
 
 ---
 
@@ -238,7 +276,10 @@ Qdrant Collection Snapshot은 Point와 Payload를 포함하는 복원용 Archive
 | 4 | Ramp | 동시성을 단계적으로 증가 | 정상 최대·최초 실패 |
 | 5 | Chaos | 기준 TPS + 주기적 Spike | 실제 피크와 복구 |
 
-Profile별 Soak가 이후 실행됩니다. 모든 기본 Profile은 `max_requests=0`을 사용하므로 요청 수로 조기 종료하지 않고 `duration_seconds` 전체를 수행합니다. 고정 동시성과 Client 메모리 Guard는 유지되며, 별도 사용자 Plan에서 양수 `max_requests`를 지정한 경우에만 요청 수 안전 상한이 활성화됩니다.
+Profile별 Soak가 이후 실행됩니다. 모든 기본 Profile은 `max_requests=0`을 사용하므로 요청 수로
+조기 종료하지 않고 `duration_seconds` 전체를 수행합니다. 고정 동시성과 Client 메모리 Guard는
+유지되며, 별도 사용자 Plan에서 양수 `max_requests`를 지정한 경우에만 요청 수 안전 상한이
+활성화됩니다.
 
 ```text
 Quick       1~5단계 + 2분 Soak
@@ -325,6 +366,15 @@ uv run pytest
 uv run python -m compileall -q src tests
 ```
 
+이번 수정의 집중 계약 테스트:
+
+```powershell
+uv run pytest `
+    tests/test_stress_runner_contract.py `
+    tests/test_capacity_ladder_contract.py `
+    tests/test_soak_duration_contract.py
+```
+
 ---
 
 ## 11. Quick 실행
@@ -334,11 +384,24 @@ uv run python -m compileall -q src tests
 ```powershell
 & .\scripts\run-staged-stress-test.ps1 `
     -TestProfile quick `
+    -RandomSeed 8179069822024929128 `
     -SkipQualityGate
 ```
 
 현재 RAG 외부 주소가 HTTP이므로 Script가 Test 환경에서 `AllowInsecureHttp`를 자동 적용하고
 경고를 출력합니다.
+
+정상 종료 시 다음 경로를 각각 출력합니다.
+
+```text
+Campaign Markdown
+Campaign HTML
+상세 Stress Markdown
+상세 Stress HTML(표·그래프)
+```
+
+최상위 `report.html`은 Campaign 요약이며, 표·그래프가 포함된 상세 보고서는
+`external-stress/report.html`입니다.
 
 ---
 
@@ -349,14 +412,26 @@ C128까지 자동 승격합니다. Standard에서 최초 실패가 발견되면 
 
 ```powershell
 & .\scripts\run-capacity-ladder.ps1 `
+    -RandomSeed 8179069822024929128 `
     -SkipQualityGate
 ```
+
+하위 Script의 stdout은 Console에 그대로 표시되지만 `Invoke-CapacityProfile`의 반환값에는
+포함되지 않습니다. 각 Profile이 끝날 때 다음을 다시 확인합니다.
+
+- 이번 실행에서 새로 생성된 Run 폴더인지
+- Campaign `report.json`, `report.md`, `report.html`이 존재하고 비어 있지 않은지
+- 상세 `external-stress/report.json`, `report.md`, `report.html`이 존재하는지
+- `execution_error_type`이 비어 있는지
+- 사전·사후 Health가 통과했는지
+- Stage와 처리 한계 근거가 존재하는지
 
 이미 Quick 결과를 확보했다면 Standard부터 시작할 수 있습니다.
 
 ```powershell
 & .\scripts\run-capacity-ladder.ps1 `
     -StartProfile standard `
+    -RandomSeed 8179069822024929128 `
     -SkipQualityGate
 ```
 
@@ -366,6 +441,7 @@ Standard C128까지 실패가 없을 때 C256 Destructive까지 이어가려면 
 & .\scripts\run-capacity-ladder.ps1 `
     -AllowDestructive `
     -ConfirmTargetHost 'int2-jipsa.iptime.org' `
+    -RandomSeed 8179069822024929128 `
     -SkipQualityGate
 ```
 
@@ -449,25 +525,41 @@ Snapshot만 사용:
 
 ## 15. 결과 파일과 해석
 
+정상 종료한 Campaign은 다음 18개 파일을 모두 생성합니다.
+
 ```text
 artifacts/external-stress/<RUN_ID>/
-├─ report.md
-├─ report.html
+├─ report.json                         # Campaign 구조화 요약
+├─ report.md                           # Campaign Markdown 요약
+├─ report.html                         # Campaign HTML 요약·상세 링크
 └─ external-stress/
-   ├─ target_config.public.json
-   ├─ requests.json
-   ├─ requests.csv
-   ├─ stage_summaries.json
-   ├─ stage_summaries.csv
-   ├─ capacity_boundaries.json
-   ├─ capacity_boundaries.csv
-   ├─ health_checks.json
-   ├─ progress.log
-   ├─ report.md
-   └─ report.html
+   ├─ external_target.resolved.json    # Secret이 제거된 최종 Target·선정 정보
+   ├─ stress_plan.resolved.json        # 실제 적용된 Stress Plan
+   ├─ execution_command.txt            # Secret이 없는 재현용 실행 명령
+   ├─ environment.json                 # Client 실행 환경
+   ├─ requests.json                    # 요청별 구조화 결과
+   ├─ requests.csv                     # 요청별 CSV
+   ├─ stage_summaries.json             # Stage별 구조화 요약
+   ├─ stage_summaries.csv              # Stage별 CSV
+   ├─ capacity_boundaries.json         # 정상 최대·최초 실패 경계
+   ├─ capacity_boundaries.csv          # 처리 한계 CSV
+   ├─ health_checks.json               # 사전·단계 후·사후 Health
+   ├─ progress.log                     # UTF-8 진행 로그
+   ├─ report.json                      # 상세 Stress 구조화 보고서
+   ├─ report.md                        # 상세 Stress Markdown
+   └─ report.html                      # 상세 Stress 표·그래프 HTML
 ```
 
-자동 선정 정보는 `target_config.public.json`에 다음 형태로 기록됩니다.
+### 보고서 계층
+
+| 경로 | 역할 |
+|---|---|
+| `<RUN_ID>/report.html` | Target, Source, Seed, Health 등 Campaign 요약과 상세 링크 |
+| `<RUN_ID>/external-stress/report.html` | Stage별 표, 오류율 그래프, 처리 한계 등 상세 수치 |
+| `<RUN_ID>/report.json` | Capacity Ladder가 읽는 Campaign 상태와 경계 |
+| `<RUN_ID>/external-stress/report.json` | 전체 요청·Stage 집계의 구조화 상세 요약 |
+
+자동 선정 정보는 `external_target.resolved.json`에 다음 형태로 기록됩니다.
 
 ```text
 selection_source
@@ -483,6 +575,10 @@ query_count
 
 질문·청크 원문·Token·DB Password는 기록하지 않습니다.
 
+Script는 Native Process 종료 코드가 0이어도 위 파일 중 하나가 없거나 비어 있으면 성공으로
+안내하지 않고 즉시 실패합니다. Campaign과 상세 JSON의 `execution_error_type`, 사전·사후 Health,
+Stage·Request 수까지 검증합니다.
+
 ### 정상 최대와 최초 실패
 
 ```text
@@ -490,9 +586,13 @@ query_count
 최초 실패 동시성: 오류율·SLA·p95 기준을 처음 초과한 단계
 ```
 
-Ramp 상한까지 실패가 없으면 실제 한계는 계획 상한보다 높을 수 있습니다. `run-capacity-ladder.ps1`은 이 상한 검열을 읽어 Quick C32에서 Standard C128로 자동 승격하며, Destructive C256은 명시적으로 승인한 경우에만 실행합니다.
+Ramp 상한까지 실패가 없으면 실제 한계는 계획 상한보다 높을 수 있습니다.
+`run-capacity-ladder.ps1`은 이 상한 검열을 읽어 Quick C32에서 Standard C128로 자동 승격하며,
+Destructive C256은 명시적으로 승인한 경우에만 실행합니다.
 
-Soak 결과는 `elapsed_seconds`가 계획 시간에 도달했는지 함께 확인해야 합니다. 기본 Profile은 요청 수 상한을 비활성화했으므로 정상 종료는 설정 시간 경과가 기준입니다. 사용자 정의 Plan에서 양수 상한을 지정하고 상한이 먼저 소진되면 Stage 상태는 `stopped`가 됩니다.
+Soak 결과는 `elapsed_seconds`가 계획 시간에 도달했는지 함께 확인해야 합니다. 기본 Profile은
+요청 수 상한을 비활성화했으므로 정상 종료는 설정 시간 경과가 기준입니다. 사용자 정의 Plan에서
+양수 상한을 지정하고 상한이 먼저 소진되면 Stage 상태는 `stopped`가 됩니다.
 
 ---
 
@@ -502,39 +602,39 @@ Soak 결과는 `elapsed_seconds`가 계획 시간에 도달했는지 함께 확�
 > 이 구간은 외부 단계형 Stress Campaign 종료 시 자동 갱신됩니다. 
 > 성공뿐 아니라 실패·중단 결과도 마지막 실행 상태로 기록합니다.
 
-**상태: `FAIL` · Profile: `quick` · Run ID: `20260730T221907Z-36da3bd7`**
+**상태: `DEGRADED` · Profile: `destructive` · Run ID: `20260730T235751Z-744c8580`**
 
 | 항목 | 마지막 실행 값 |
 |---|---|
-| 완료 시각 | `2026-07-30T22:19:07.360+00:00` |
+| 완료 시각 | `2026-07-31T00:35:21.953+00:00` |
 | 실행 방식 | `external_http_black_box` |
 | 외부 Target | `http://int2-jipsa.iptime.org:9802` |
 | Target 환경 | `test` |
 | 데이터 Source | `qdrant` |
-| 선정 Seed | `8179069822024929128` |
-| 선정 User IDX | `8` |
+| 선정 Seed | `8752795089301448294` |
+| 선정 User IDX | `1` |
 | 선정 File 수 | `2` |
-| 파괴적 Profile | `False` |
+| 파괴적 Profile | `True` |
 | 품질 게이트 | `생략` |
-| 사전 Health | `False` |
-| 사후 Health | `False` |
+| 사전 Health | `True` |
+| 사후 Health | `True` |
 | Local RAG 접근 | `False` |
-| 실행 오류 | `UnicodeEncodeError` |
-| Stage | 전체 `0` · 통과 `0` · 저하 `0` · 실패 `0` · 중단 `0` |
-| 요청 | 전체 `0` · 성공 `0` · 실패 `0` |
+| 실행 오류 | `없음` |
+| Stage | 전체 `13` · 통과 `2` · 저하 `11` · 실패 `0` · 중단 `0` |
+| 요청 | 전체 `51652` · 성공 `51276` · 실패 `376` |
 
 ### 처리 한계 관측
 
 | 작업 | 확인된 정상 최대 동시성 | 최초 실패 동시성 | 해석 |
 |---|---:|---:|---|
-| - | - | - | Ramp 근거 없음 |
+| `search` | `256` | - | 계획 상한까지 실패 없음 — 실제 최대치는 더 높을 수 있음 |
 
 ### 마지막 결과 바로가기
 
-- [캠페인 Markdown 보고서](artifacts/external-stress/20260730T221907Z-36da3bd7/report.md)
-- [캠페인 HTML 보고서](artifacts/external-stress/20260730T221907Z-36da3bd7/report.html)
-- [상세 Stress Markdown](artifacts/external-stress/20260730T221907Z-36da3bd7/external-stress/report.md)
-- [상세 Stress HTML](artifacts/external-stress/20260730T221907Z-36da3bd7/external-stress/report.html)
+- [캠페인 Markdown 보고서](artifacts/external-stress/20260730T235751Z-744c8580/report.md)
+- [캠페인 HTML 보고서](artifacts/external-stress/20260730T235751Z-744c8580/report.html)
+- [상세 Stress Markdown](artifacts/external-stress/20260730T235751Z-744c8580/external-stress/report.md)
+- [상세 Stress HTML](artifacts/external-stress/20260730T235751Z-744c8580/external-stress/report.html)
 
 README 갱신으로 작업 트리에 변경이 생기는 것은 의도된 동작입니다.
 <!-- STRESS-VERIFICATION:END -->
@@ -554,13 +654,16 @@ README 갱신으로 작업 트리에 변경이 생기는 것은 의도된 동작
 - Stage별 상태 수
 - 전체·성공·실패 요청 수
 - 정상 최대·최초 실패 동시성
-- 결과 Markdown·HTML 링크
+- 실제 생성된 결과 Markdown·HTML 링크
 
 자동 갱신 제외:
 
 ```powershell
 -SkipReadmeUpdate
 ```
+
+실패 실행에서 상세 보고서가 생성되지 않은 경우 존재하지 않는 상세 링크를 정상 결과처럼
+해석하지 않습니다. 수정 적용 후 정상 Campaign은 산출물 완전성 검증을 통과해야 완료됩니다.
 
 ---
 
@@ -579,10 +682,49 @@ README 갱신으로 작업 트리에 변경이 생기는 것은 의도된 동작
 - Production Destructive 이중 승인
 - Load Generator Memory Guard
 - 오류 연속 발생 시 조기 중단
+- Python UTF-8 Process 범위 강제 및 원상 복구
+- 이번 실행에서 새로 생성된 Run 폴더만 결과로 허용
+- 성공 안내 전 18개 Campaign·상세 산출물 검증
+- Capacity Ladder에서 이전 실패 폴더 Fallback 금지
 
 ---
 
 ## 19. 문제 해결
+
+### `UnicodeEncodeError: 'charmap' codec can't encode characters`
+
+수정 전 `run-capacity-ladder.ps1`에서 하위 Python stdout이 PowerShell Pipeline에 연결되면
+`cp1252`가 선택될 수 있었습니다. 수정된 `run-staged-stress-test.ps1`은 다음 값을 자식 Python에
+강제하고 종료 시 복원합니다.
+
+```text
+PYTHONUTF8=1
+PYTHONIOENCODING=utf-8
+```
+
+동일 오류가 다시 발생하면 먼저 실제 적용 파일에 다음 문자열이 있는지 확인합니다.
+
+```text
+$env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
+```
+
+그리고 `uv run pytest tests/test_stress_runner_contract.py`를 실행해 계약 테스트를 확인합니다.
+
+### 최상위 `report.html`에는 그래프가 없음
+
+정상 동작입니다. 최상위 파일은 Campaign 요약입니다. 상세 표·오류율 그래프는 다음 파일에
+있습니다.
+
+```text
+artifacts/external-stress/<RUN_ID>/external-stress/report.html
+```
+
+### 결과 파일 일부가 비어 있거나 없음
+
+수정된 Script는 정상 종료 후 18개 파일을 모두 검사합니다. 하나라도 없거나 0 Byte이면
+`캠페인 완료`를 출력하지 않고 실패합니다. 실패 Run과 정상 Run을 혼동하지 않도록 새로 생성된
+Run 폴더만 검사합니다.
 
 ### `No active Qdrant payload`
 
@@ -624,13 +766,14 @@ Control Plane의 Qdrant·DB·Snapshot과 외부 RAG가 서로 다른 데이터 �
 
 ```text
 1. 품질 게이트
-2. Quick / DataSource auto
-3. Quick 결과와 자동 선정 Source 확인
-4. Standard
-5. Endurance
-6. 승인 후 Destructive
-7. README 마지막 검증 기록 확인
-8. 결과와 Commit SHA 함께 보관
+2. 집중 계약 테스트
+3. Quick / DataSource auto
+4. 18개 결과 파일과 상세 HTML 확인
+5. Capacity Ladder Quick → Standard
+6. Endurance
+7. 승인 후 Destructive
+8. README 마지막 검증 기록 확인
+9. 결과와 Commit SHA 함께 보관
 ```
 
 ---
@@ -642,11 +785,15 @@ Control Plane의 Qdrant·DB·Snapshot과 외부 RAG가 서로 다른 데이터 �
 - [ ] Mypy Strict 통과
 - [ ] Pytest 통과
 - [ ] Compileall 통과
+- [ ] UTF-8·산출물·Capacity Ladder 집중 계약 테스트 통과
 - [ ] `RAG/.env.local` Git 추적 제외
 - [ ] `snapshots/*.snapshot` Git 추적 제외
 - [ ] Token·Password가 결과 파일에 없음
 - [ ] Quick의 자동 데이터 선정 성공
 - [ ] 외부 Search `result_count > 0` 확인
+- [ ] Quick 정상 종료 후 18개 산출물 존재·비어 있지 않음 확인
+- [ ] Campaign `report.html` 링크에서 상세 HTML 열림 확인
+- [ ] Capacity Ladder가 Quick 결과 객체를 정상 출력하는지 확인
 - [ ] README.md·README.html 자동 갱신 확인
 - [ ] Destructive 승인 대상 Host 확인
 
@@ -663,4 +810,6 @@ Control Plane의 Qdrant·DB·Snapshot과 외부 RAG가 서로 다른 데이터 �
 7. 검색 결과가 있는 데이터만 부하에 사용합니다.
 8. 측정 결과로 운영 제한값을 자동 변경하지 않습니다.
 9. 실행하지 않은 검증을 통과로 기록하지 않습니다.
-10. 모든 결과는 Commit SHA·환경·Profile과 함께 해석합니다.
+10. Native Process 종료 코드와 결과 파일 완전성을 모두 통과해야 성공으로 판정합니다.
+11. 이전 실패 Run을 새 Capacity 결과로 재사용하지 않습니다.
+12. 모든 결과는 Commit SHA·환경·Profile과 함께 해석합니다.

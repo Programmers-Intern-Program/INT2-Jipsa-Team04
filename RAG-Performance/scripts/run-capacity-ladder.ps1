@@ -68,6 +68,9 @@ $ErrorActionPreference = 'Stop'
 # 3. Quick 상한까지 실패가 없으면 Standard로 자동 승격합니다.
 # 4. Standard 상한까지 실패가 없을 때 Destructive는 명시적 승인 후에만 실행합니다.
 # 5. 모든 Profile은 같은 Random Seed를 사용하므로 서로 다른 데이터가 결과를 왜곡하지 않습니다.
+# 6. 하위 Stress Script의 표준 출력은 Out-Host로 즉시 표시하고 함수 반환 Pipeline에서
+#    제거합니다. 따라서 출력 문자열이 Profile 결과 PSCustomObject에 섞이지 않습니다.
+# 7. 각 Profile의 Campaign·상세 보고서와 Health·Stage를 다시 검증한 뒤 다음 단계로 진행합니다.
 # ============================================================
 
 $ProjectRoot = (
@@ -86,13 +89,8 @@ if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
 $ResolvedOutputRoot = [System.IO.Path]::GetFullPath($OutputRoot)
 [System.IO.Directory]::CreateDirectory($ResolvedOutputRoot) | Out-Null
 
-# PowerShell은 Nullable[T] 매개변수에 실제 값이 바인딩되면 값을 T 자체로
-# 언박싱할 수 있다. 따라서 ``$RandomSeed.Value``처럼 Nullable 전용 속성에
-# 접근하면 Set-StrictMode 환경에서 Int64에 Value 속성이 없다는 오류가 발생한다.
-#
-# 사용자가 Seed를 명시했는지는 값의 런타임 타입이 아니라 PSBoundParameters로
-# 판별한다. 명시된 값은 Int64로 정규화하고, 생략되거나 명시적으로 null이면
-# Ladder 전체에서 재사용할 새 Seed를 한 번 생성한다.
+# PowerShell은 Nullable[T] 매개변수에 실제 값이 바인딩되면 값을 T 자체로 언박싱할 수
+# 있습니다. 따라서 ``$RandomSeed.Value``처럼 Nullable 전용 속성에 접근하지 않습니다.
 $HasExplicitRandomSeed = (
     $PSBoundParameters.ContainsKey('RandomSeed') -and
     $null -ne $RandomSeed
@@ -101,7 +99,7 @@ $EffectiveSeed = if ($HasExplicitRandomSeed) {
     [long] $RandomSeed
 }
 else {
-    # Millisecond Epoch는 한 Ladder 안에서 고정되고 결과에 기록할 수 있는 양의 Int64다.
+    # Millisecond Epoch는 한 Ladder 안에서 고정되고 결과에 기록할 수 있는 양의 Int64입니다.
     [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 }
 
@@ -114,6 +112,25 @@ function Get-RunDirectories {
         return @()
     }
     return @($Directories)
+}
+
+function Assert-RunArtifact {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Path,
+
+        [Parameter(Mandatory = $true)]
+        [string] $DisplayName
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Capacity Ladder Profile 산출물이 없습니다: $DisplayName ($Path)"
+    }
+
+    $Item = Get-Item -LiteralPath $Path
+    if ($Item.Length -le 0) {
+        throw "Capacity Ladder Profile 산출물이 비어 있습니다: $DisplayName ($Path)"
+    }
 }
 
 function Get-SearchBoundary {
@@ -129,6 +146,76 @@ function Get-SearchBoundary {
         throw '외부 Stress 보고서에서 search 처리 한계를 찾을 수 없습니다.'
     }
     return $Boundary
+}
+
+function Assert-CompletedProfileReport {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.IO.DirectoryInfo] $RunDirectory,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('quick', 'standard', 'destructive')]
+        [string] $Profile
+    )
+
+    # 하위 실행 Script도 전체 산출물을 검증하지만, Ladder는 다음 Profile 실행 여부를 결정하는
+    # 상위 제어기이므로 최소 핵심 파일과 JSON 상태를 한 번 더 검증합니다. 이렇게 하면 오래된
+    # 실패 폴더나 부분 생성 폴더를 처리 한계 근거로 사용하는 일을 차단할 수 있습니다.
+    $RequiredRelativePaths = @(
+        'report.json',
+        'report.md',
+        'report.html',
+        'external-stress/report.json',
+        'external-stress/report.md',
+        'external-stress/report.html',
+        'external-stress/stage_summaries.json',
+        'external-stress/capacity_boundaries.json',
+        'external-stress/requests.json',
+        'external-stress/progress.log'
+    )
+    foreach ($RelativePath in $RequiredRelativePaths) {
+        Assert-RunArtifact `
+            -Path (Join-Path -Path $RunDirectory.FullName -ChildPath $RelativePath) `
+            -DisplayName $RelativePath
+    }
+
+    $ReportPath = Join-Path -Path $RunDirectory.FullName -ChildPath 'report.json'
+    $Report = Get-Content `
+        -LiteralPath $ReportPath `
+        -Raw `
+        -Encoding UTF8 |
+        ConvertFrom-Json
+
+    if ([string] $Report.profile -ne $Profile) {
+        throw (
+            "새 결과 폴더의 Profile이 요청과 다릅니다. expected=$Profile, " +
+            "actual=$([string] $Report.profile)"
+        )
+    }
+    if ($null -ne $Report.execution_error_type) {
+        throw (
+            "$Profile Campaign 보고서에 실행 오류가 기록되어 있습니다: " +
+            [string] $Report.execution_error_type
+        )
+    }
+    if (-not [bool] $Report.preflight_health_passed) {
+        throw "$Profile Campaign의 사전 Health 검증이 통과하지 않았습니다."
+    }
+    if (-not [bool] $Report.postflight_health_passed) {
+        throw "$Profile Campaign의 사후 Health 검증이 통과하지 않았습니다."
+    }
+    if (@($Report.stage_summaries).Count -le 0) {
+        throw "$Profile Campaign에 완료된 Stress Stage가 없습니다."
+    }
+
+    $Boundary = Get-SearchBoundary -Report $Report
+    return [PSCustomObject]@{
+        Report = $Report
+        Boundary = $Boundary
+        DetailedReportHtml = Join-Path `
+            -Path $RunDirectory.FullName `
+            -ChildPath 'external-stress/report.html'
+    }
 }
 
 function Invoke-CapacityProfile {
@@ -197,38 +284,36 @@ function Invoke-CapacityProfile {
 
     Write-Host ''
     Write-Host "[Capacity Ladder] $Profile 실행" -ForegroundColor Cyan
-    & $RunnerPath @Arguments
+
+    # 중요: 외부 Process의 stdout은 PowerShell Success Pipeline으로 전달됩니다. 이 호출을
+    # 그대로 두면 Invoke-CapacityProfile 함수가 Console 문자열과 마지막 PSCustomObject를 함께
+    # 반환해 $Result가 Object[]가 됩니다. Out-Host는 출력을 실시간 표시하면서 함수 반환값에서는
+    # 제거하므로 Ladder 결과 형식을 안정적으로 유지합니다.
+    & $RunnerPath @Arguments | Out-Host
 
     $NewRuns = @(Get-RunDirectories) |
         Where-Object { -not $BeforePaths.Contains($_.FullName) } |
         Sort-Object LastWriteTimeUtc -Descending
     $RunDirectory = $NewRuns | Select-Object -First 1
+
+    # 각 Run ID는 UUID 일부가 포함된 고유 폴더이므로 이번 실행에서 새 폴더가 없으면 오래된
+    # 최신 폴더로 Fallback하지 않습니다. 이전 실패 보고서를 새 Profile 결과로 오인하는 것보다
+    # 즉시 실패시키는 편이 안전합니다.
     if ($null -eq $RunDirectory) {
-        # 파일 시스템 Timestamp 정밀도나 외부 정리 작업으로 신규 폴더 구분이 실패한 경우에도
-        # 방금 수정된 최신 결과를 한 번 더 확인한다.
-        $RunDirectory = Get-RunDirectories |
-            Sort-Object LastWriteTimeUtc -Descending |
-            Select-Object -First 1
-    }
-    if ($null -eq $RunDirectory) {
-        throw "$Profile 실행 결과 폴더를 찾을 수 없습니다: $ResolvedOutputRoot"
+        throw "$Profile 실행에서 새 결과 폴더를 찾을 수 없습니다: $ResolvedOutputRoot"
     }
 
-    $ReportPath = Join-Path -Path $RunDirectory.FullName -ChildPath 'report.json'
-    if (-not (Test-Path -LiteralPath $ReportPath -PathType Leaf)) {
-        throw "$Profile 실행 보고서를 찾을 수 없습니다: $ReportPath"
-    }
-    $Report = Get-Content `
-        -LiteralPath $ReportPath `
-        -Raw `
-        -Encoding UTF8 |
-        ConvertFrom-Json
-    $Boundary = Get-SearchBoundary -Report $Report
+    $Validated = Assert-CompletedProfileReport `
+        -RunDirectory $RunDirectory `
+        -Profile $Profile
+    $Report = $Validated.Report
+    $Boundary = $Validated.Boundary
 
     return [PSCustomObject]@{
         Profile = $Profile
         RunId = [string] $Report.run_id
         RunDirectory = $RunDirectory.FullName
+        DetailedReportHtml = $Validated.DetailedReportHtml
         NormalMaximumConcurrency = $Boundary.normal_maximum_concurrency
         FirstFailureConcurrency = $Boundary.first_failure_concurrency
         FirstFailureStageId = $Boundary.first_failure_stage_id
@@ -259,6 +344,9 @@ foreach ($Profile in $Profiles) {
         "[Capacity Ladder] $Profile 결과: normal_max=$($Result.NormalMaximumConcurrency), " +
         "first_failure=$($Result.FirstFailureConcurrency), " +
         "censored=$($Result.UpperBoundCensored)"
+    ) -ForegroundColor Green
+    Write-Host (
+        "[Capacity Ladder] $Profile 상세 HTML: $($Result.DetailedReportHtml)"
     ) -ForegroundColor Green
 
     if ($null -ne $Result.FirstFailureConcurrency) {
@@ -332,17 +420,20 @@ $MarkdownLines.Add(
     "- 상한 검열 여부: ``$($LastResult.UpperBoundCensored)``"
 )
 $MarkdownLines.Add('')
-$MarkdownLines.Add('| Profile | Run ID | 정상 최대 | 최초 실패 | 상한 검열 |')
-$MarkdownLines.Add('|---|---|---:|---:|---:|')
+$MarkdownLines.Add('| Profile | Run ID | 정상 최대 | 최초 실패 | 상한 검열 | 상세 HTML |')
+$MarkdownLines.Add('|---|---|---:|---:|---:|---|')
 foreach ($Result in $Results) {
     $MarkdownLines.Add(
         "| $($Result.Profile) | ``$($Result.RunId)`` | " +
         "$($Result.NormalMaximumConcurrency) | $($Result.FirstFailureConcurrency) | " +
-        "$($Result.UpperBoundCensored) |"
+        "$($Result.UpperBoundCensored) | ``$($Result.DetailedReportHtml)`` |"
     )
 }
 $MarkdownLines.Add('')
-$MarkdownLines.Add('각 Run의 상세 수치는 해당 실행 폴더의 report.html을 확인합니다.')
+$MarkdownLines.Add(
+    '각 Run의 표·그래프·단계별 수치는 해당 실행 폴더의 ' +
+    '`external-stress/report.html`을 확인합니다.'
+)
 $MarkdownLines |
     Set-Content -LiteralPath $SummaryMarkdownPath -Encoding UTF8
 
