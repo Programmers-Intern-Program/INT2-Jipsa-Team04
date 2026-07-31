@@ -1,0 +1,866 @@
+<!doctype html>
+<html lang="ko" data-theme="system">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Jipsa 외부 RAG 단계형 한계 테스트의 구조, UTF-8 실행, 설정, 산출물 검증, 안전장치와 결과 해석을 통합한 시각적 README입니다.">
+  <meta name="theme-color" content="#00236f">
+  <meta name="color-scheme" content="light dark">
+  <title>Jipsa External RAG Performance</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --brand: #00236f;
+      --brand-2: #00687a;
+      --surface: #f4f7fc;
+      --surface-2: #e9f0fb;
+      --card: #ffffff;
+      --text: #10213a;
+      --soft: #44536a;
+      --muted: #64748b;
+      --border: #c8d5e9;
+      --success: #087a55;
+      --warning: #8a5a00;
+      --danger: #ba1a1a;
+      --code: #071426;
+      --code-text: #eaf1ff;
+      --shadow: 0 24px 70px rgba(0, 35, 111, .12);
+      --max: 1480px;
+      --content: 980px;
+      --top: 70px;
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --brand: #b6c4ff;
+      --brand-2: #57dffe;
+      --surface: #07111f;
+      --surface-2: #102038;
+      --card: #0d1a2b;
+      --text: #eaf1ff;
+      --soft: #c7d4e8;
+      --muted: #9eb0ca;
+      --border: #29415f;
+      --success: #66e0b4;
+      --warning: #ffd36a;
+      --danger: #ffb4ab;
+      --code: #030a13;
+      --code-text: #eaf1ff;
+      --shadow: 0 24px 70px rgba(0, 0, 0, .42);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: calc(var(--top) + 24px); }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(circle at 8% -6%, rgba(0, 35, 111, .18), transparent 34rem),
+        radial-gradient(circle at 94% 4%, rgba(0, 104, 122, .13), transparent 32rem),
+        var(--surface);
+      color: var(--text);
+      font-family: Inter, Pretendard, "Noto Sans KR", "Segoe UI", system-ui, sans-serif;
+      line-height: 1.72;
+    }
+    a { color: var(--brand); text-underline-offset: .18em; }
+    a:hover { color: var(--brand-2); }
+    button, input { font: inherit; }
+    :focus-visible { outline: 3px solid var(--brand-2); outline-offset: 3px; }
+    .skip-link {
+      position: fixed;
+      top: 8px;
+      left: 8px;
+      z-index: 999;
+      transform: translateY(-150%);
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: var(--brand);
+      color: #fff;
+      text-decoration: none;
+    }
+    .skip-link:focus { transform: translateY(0); }
+    .progress { position: fixed; inset: 0 0 auto; height: 3px; z-index: 100; }
+    .progress span {
+      display: block;
+      width: 0;
+      height: 100%;
+      background: linear-gradient(90deg, var(--brand), var(--brand-2));
+    }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 60;
+      min-height: var(--top);
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--card) 88%, transparent);
+      backdrop-filter: blur(18px);
+    }
+    .topbar-inner {
+      max-width: var(--max);
+      min-height: var(--top);
+      margin: 0 auto;
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 900;
+    }
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      color: #fff;
+      background: linear-gradient(145deg, #00236f, #00687a);
+    }
+    .brand small {
+      display: block;
+      color: var(--muted);
+      font-size: .68rem;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .spacer { flex: 1; }
+    .toolbar { display: flex; gap: 8px; }
+    .button {
+      min-height: 40px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 8px 12px;
+      background: var(--card);
+      color: var(--text);
+      text-decoration: none;
+      cursor: pointer;
+      font-weight: 750;
+    }
+    .button:hover { border-color: var(--brand-2); transform: translateY(-1px); }
+    .shell {
+      max-width: var(--max);
+      margin: 0 auto;
+      padding: 30px 24px 80px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 300px;
+      gap: 28px;
+      align-items: start;
+    }
+    .doc {
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 26px;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: clamp(36px, 6vw, 74px);
+      background: linear-gradient(135deg, #00236f, #1e3a8a 54%, #00687a);
+      color: #fff;
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      width: 430px;
+      height: 430px;
+      right: -180px;
+      top: -180px;
+      border: 80px solid rgba(87, 223, 254, .18);
+      border-radius: 50%;
+    }
+    .eyebrow {
+      margin: 0 0 18px;
+      color: #dbe7ff;
+      font-size: .8rem;
+      font-weight: 850;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+    .hero h1 {
+      max-width: 900px;
+      margin: 0;
+      font-size: clamp(2.6rem, 7vw, 5.5rem);
+      line-height: 1;
+      letter-spacing: -.06em;
+    }
+    .hero h1 span { color: #82eaff; }
+    .hero p { max-width: 860px; color: #eaf1ff; font-size: 1.1rem; }
+    .chips, .actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 24px; }
+    .chip {
+      border: 1px solid rgba(255, 255, 255, .25);
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: rgba(255, 255, 255, .09);
+    }
+    .actions .button { border-color: rgba(255, 255, 255, .28); background: rgba(255, 255, 255, .1); color: #fff; }
+    .actions .primary { background: #fff; color: #00236f; }
+    .snapshot {
+      padding: 20px 36px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      background: var(--surface-2);
+    }
+    .snapshot article { border: 1px solid var(--border); border-radius: 15px; padding: 16px; background: var(--card); }
+    .snapshot strong { display: block; color: var(--brand); }
+    .snapshot span { color: var(--muted); font-size: .82rem; }
+    .body { max-width: var(--content); margin: 0 auto; padding: 12px clamp(22px, 5vw, 64px) 72px; }
+    .section { padding-top: 44px; }
+    .section + .section { margin-top: 12px; border-top: 1px solid var(--border); }
+    .section.hidden { display: none; }
+    .section h2 { margin: 0 0 20px; font-size: clamp(1.6rem, 3vw, 2.25rem); letter-spacing: -.035em; }
+    .section h3 { margin: 30px 0 12px; color: var(--brand); }
+    .section p, .section li { color: var(--soft); }
+    .anchor { margin-left: .35rem; opacity: 0; color: var(--muted); text-decoration: none; }
+    h2:hover .anchor, h3:hover .anchor, .anchor:focus { opacity: 1; }
+    .table-wrap, .table-scroll {
+      width: 100%;
+      overflow-x: auto;
+      margin: 20px 0;
+      border: 1px solid var(--border);
+      border-radius: 15px;
+    }
+    table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: .91rem; }
+    th, td { padding: 12px 14px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { background: var(--surface-2); }
+    tbody tr:last-child td { border-bottom: 0; }
+    code {
+      padding: .14rem .38rem;
+      border-radius: 6px;
+      background: var(--surface-2);
+      color: var(--brand);
+      font-family: "Cascadia Code", Consolas, monospace;
+    }
+    pre {
+      position: relative;
+      overflow: auto;
+      margin: 20px 0;
+      padding: 20px;
+      border-radius: 15px;
+      background: var(--code);
+      color: var(--code-text);
+    }
+    pre code { padding: 0; background: transparent; color: inherit; white-space: pre; }
+    .copy {
+      float: right;
+      margin: -10px -10px 6px 10px;
+      border: 1px solid rgba(255, 255, 255, .22);
+      border-radius: 8px;
+      padding: 5px 9px;
+      background: rgba(255, 255, 255, .08);
+      color: #fff;
+      cursor: pointer;
+    }
+    .callout { margin: 20px 0; padding: 18px 20px; border-left: 5px solid var(--brand-2); border-radius: 0 14px 14px 0; background: var(--surface-2); }
+    .callout.warning { border-left-color: var(--warning); }
+    .callout.danger { border-left-color: var(--danger); }
+    .profile-chart { display: grid; gap: 14px; margin: 24px 0; }
+    .profile-row { display: grid; grid-template-columns: 110px 1fr 110px; gap: 12px; align-items: center; }
+    .track { height: 16px; overflow: hidden; border-radius: 999px; background: var(--surface-2); }
+    .track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--brand), var(--brand-2)); }
+    .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 22px 0; }
+    .metric-card { padding: 17px; border: 1px solid var(--border); border-radius: 15px; background: var(--card); }
+    .metric-value { display: block; color: var(--brand); font-size: 1.8rem; font-weight: 900; }
+    .metric-label { display: block; font-weight: 800; }
+    .metric-note { display: block; color: var(--muted); font-size: .78rem; }
+    .status-pill { display: inline-flex; border-radius: 999px; padding: 7px 11px; font-weight: 850; }
+    .status-passed { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+    .status-degraded { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
+    .status-failed { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+    .quick-links { display: flex; flex-wrap: wrap; gap: 10px; }
+    .quick-links a { border: 1px solid var(--border); border-radius: 10px; padding: 8px 11px; text-decoration: none; }
+    .artifact-tree { font-size: .83rem; }
+    .sidebar {
+      position: sticky;
+      top: calc(var(--top) + 18px);
+      max-height: calc(100vh - var(--top) - 36px);
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 18px;
+      background: var(--card);
+      box-shadow: 0 8px 24px rgba(0, 35, 111, .08);
+    }
+    .search { width: 100%; min-height: 42px; border: 1px solid var(--border); border-radius: 11px; padding: 9px 11px; background: var(--surface-2); color: var(--text); }
+    .search-status { min-height: 1.3rem; color: var(--muted); font-size: .75rem; margin: 6px 2px; }
+    #toc { display: grid; gap: 2px; }
+    #toc a { display: block; padding: 7px 9px; border-radius: 9px; color: var(--muted); text-decoration: none; font-size: .82rem; }
+    #toc a:hover, #toc a.active { background: var(--surface-2); color: var(--brand); font-weight: 800; }
+    #toc a[data-level="3"] { padding-left: 22px; font-size: .77rem; }
+    #toc a.hidden { display: none; }
+    .top { position: fixed; right: 22px; bottom: 22px; width: 44px; height: 44px; border: 1px solid var(--border); border-radius: 14px; background: var(--card); color: var(--brand); opacity: 0; pointer-events: none; cursor: pointer; }
+    .top.visible { opacity: 1; pointer-events: auto; }
+    footer { max-width: var(--max); margin: 0 auto; padding: 0 24px 44px; color: var(--muted); text-align: center; }
+    @media (max-width: 1100px) {
+      .shell { grid-template-columns: 1fr; }
+      .sidebar { position: static; order: -1; max-height: none; }
+      #toc { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .snapshot, .metric-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 650px) {
+      .shell { padding: 12px 10px 50px; }
+      .topbar-inner { padding-inline: 12px; }
+      .brand small, .desktop { display: none; }
+      .hero { padding: 38px 22px; }
+      .snapshot, .metric-grid { grid-template-columns: 1fr; padding: 16px; }
+      .body { padding-inline: 20px; }
+      #toc { grid-template-columns: 1fr; }
+      .profile-row { grid-template-columns: 90px 1fr 76px; }
+    }
+    @media print {
+      .topbar, .sidebar, .top, .progress, .copy, .actions { display: none !important; }
+      body { background: #fff; color: #000; }
+      .shell { display: block; max-width: none; padding: 0; }
+      .doc { border: 0; box-shadow: none; }
+      .hero { background: #fff; color: #000; padding: 0 0 20px; border-bottom: 2px solid #00236f; }
+      .hero p, .hero h1, .hero h1 span, .eyebrow { color: #000; }
+      .chip { color: #000; border-color: #666; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">본문으로 바로가기</a>
+  <div class="progress"><span id="progress-bar"></span></div>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#top"><span class="brand-mark">R</span><span>Jipsa External RAG<small>Performance &amp; limit testing</small></span></a>
+      <span class="spacer"></span>
+      <nav class="toolbar" aria-label="문서 도구">
+        <a class="button" href="README.md"><span class="desktop">Markdown</span></a>
+        <button class="button" id="print-button" type="button"><span class="desktop">인쇄</span></button>
+        <button class="button" id="theme-toggle" type="button"><span id="theme-label">테마</span></button>
+      </nav>
+    </div>
+  </header>
+
+  <div class="shell" id="top">
+    <main id="main" tabindex="-1">
+      <article class="doc">
+        <header class="hero">
+          <p class="eyebrow">External HTTP black-box benchmark</p>
+          <h1>Jipsa <span>External RAG</span> Performance</h1>
+          <p>기존 RAG/.env.local에서 외부 주소와 Token을 자동 로드하고, 실행 중인 Qdrant·Local RAG DB·최신 Snapshot에서 실제 User/File을 선정한 뒤 외부 Endpoint에 단계형 Traffic을 전송합니다. Windows 중첩 PowerShell 실행에서도 Python stdout을 UTF-8로 고정하고, 완료 전에 18개 결과 파일을 검증합니다.</p>
+          <div class="chips">
+            <span class="chip">Auto env load</span>
+            <span class="chip">PYTHONUTF8 · PYTHONIOENCODING</span>
+            <span class="chip">Qdrant · DB · Snapshot</span>
+            <span class="chip">Quick · Standard · Endurance · Destructive</span>
+            <span class="chip">Artifact completeness gate</span>
+          </div>
+          <div class="actions">
+            <a class="button primary" href="#quick-start">Quick Start</a>
+            <a class="button" href="#profiles">Profile 비교</a>
+            <a class="button" href="#results">결과 파일</a>
+            <a class="button" href="#troubleshooting">문제 해결</a>
+          </div>
+        </header>
+
+        <section class="snapshot">
+          <article><strong>UTF-8 Safe</strong><span>Pipeline에서도 cp1252 후퇴 방지</span></article>
+          <article><strong>Existing Data</strong><span>Qdrant → DB → Snapshot</span></article>
+          <article><strong>6 Traffic Modes</strong><span>Burst · Interval · Batch · Ramp · Chaos · Soak</span></article>
+          <article><strong>18 Artifacts</strong><span>Campaign + 상세 결과 완전성 확인</span></article>
+        </section>
+
+        <div class="body">
+          <section class="section" id="docs" data-search-section>
+            <h2>1. 문서 바로가기</h2>
+            <div class="table-wrap"><table><thead><tr><th>문서·파일</th><th>역할</th></tr></thead><tbody>
+              <tr><td><a href="README.md"><code>README.md</code></a></td><td>전체 구조·자동 설정·실행·해석</td></tr>
+              <tr><td><a href="TEST_COMMANDS.md"><code>TEST_COMMANDS.md</code></a></td><td>복사 가능한 전체 테스트 명령</td></tr>
+              <tr><td><a href="scripts/run-staged-stress-test.ps1"><code>run-staged-stress-test.ps1</code></a></td><td>UTF-8 강제와 산출물 검증을 포함한 실행 진입점</td></tr>
+              <tr><td><a href="scripts/run-capacity-ladder.ps1"><code>run-capacity-ladder.ps1</code></a></td><td>Quick → Standard → 승인된 Destructive 승격</td></tr>
+              <tr><td><a href="src/jipsa_rag_benchmark/rag_environment.py"><code>rag_environment.py</code></a></td><td>RAG 환경 파일 안전 로드</td></tr>
+              <tr><td><a href="src/jipsa_rag_benchmark/test_data_discovery.py"><code>test_data_discovery.py</code></a></td><td>Qdrant·DB·Snapshot 자동 선정</td></tr>
+            </tbody></table></div>
+          </section>
+
+          <section class="section" id="architecture" data-search-section>
+            <h2>2. 외부 전용 구조</h2>
+            <pre><code>RAG/.env.local
+  ├─ JIPSA_RAG_EXTERNAL_BASE_URL
+  ├─ RAG_INGEST_TOKEN
+  ├─ JIPSA_RAG_QDRANT_*
+  └─ JIPSA_RAG_DATABASE_*
+          │
+          ▼
+RAG-Performance Control Plane
+  ├─ Qdrant → DB → Snapshot 자동 Fallback
+  ├─ 실제 Users_IDX / File_IDX 무작위 선정
+  ├─ PYTHONUTF8=1
+  ├─ PYTHONIOENCODING=utf-8
+  ├─ 외부 Search 결과 사전 검증
+  └─ Campaign·상세 산출물 완전성 검증
+          │
+          ▼
+외부 Jipsa RAG /api/v1/chunks/search</code></pre>
+            <div class="callout"><strong>중요:</strong> 데이터 선정에서 Local Qdrant·DB를 읽을 수 있지만 실제 부하는 항상 <code>JIPSA_RAG_EXTERNAL_BASE_URL</code>로만 전송됩니다. 운영 Collection과 DB는 수정하지 않습니다.</div>
+          </section>
+
+          <section class="section" id="boundary" data-search-section>
+            <h2>3. 측정 경계</h2>
+            <div class="table-wrap"><table><thead><tr><th>포함</th><th>제외</th></tr></thead><tbody><tr>
+              <td>DNS·TCP·HTTP·외부 Network·Proxy·Token 인증·Embedding·Qdrant Search·DB 조회·응답 전송·Latency·TPS·SLA·Health·산출물 완전성</td>
+              <td>서버 CPU·RAM·GPU·VRAM 직접 측정, 외부 Container 중단, DB 삭제, 운영 제한값 변경, 실제 OOM 유발</td>
+            </tr></tbody></table></div>
+          </section>
+
+          <section class="section" id="environment" data-search-section>
+            <h2>4. 환경 변수 자동 로드와 UTF-8</h2>
+            <p>사용자가 Token과 주소를 다시 입력하지 않습니다. 기본 경로는 <code>../RAG/.env.local</code>입니다.</p>
+            <div class="table-wrap"><table><thead><tr><th>용도</th><th>환경 변수</th></tr></thead><tbody>
+              <tr><td>외부 Origin</td><td><code>JIPSA_RAG_EXTERNAL_BASE_URL</code></td></tr>
+              <tr><td>API Prefix</td><td><code>JIPSA_RAG_API_V1_PREFIX</code></td></tr>
+              <tr><td>Search Token</td><td><code>RAG_INGEST_TOKEN</code></td></tr>
+              <tr><td>Qdrant</td><td><code>JIPSA_RAG_QDRANT_URL</code> · <code>JIPSA_RAG_QDRANT_COLLECTION</code></td></tr>
+              <tr><td>DB</td><td><code>JIPSA_RAG_DATABASE_*</code></td></tr>
+              <tr><td>Python UTF-8 Mode</td><td><code>PYTHONUTF8=1</code></td></tr>
+              <tr><td>Python stdout/stderr Encoding</td><td><code>PYTHONIOENCODING=utf-8</code></td></tr>
+            </tbody></table></div>
+            <pre><code>외부 Origin : http://INT2-jipsa.iptime.org:9802
+API Prefix   : /api/v1
+Collection   : rag_chunk_vector_qwen3_embedding_0_6b_1024
+Embedding    : Qwen/Qwen3-Embedding-0.6B / 1024</code></pre>
+            <p>Token·Password·API Key는 Process Memory에만 유지하고 Console·README·JSON·CSV·HTML에 기록하지 않습니다. UTF-8 환경 변수도 Script 종료 시 기존 값으로 복원합니다.</p>
+            <div class="callout warning"><strong>수정 핵심:</strong> Console Encoding만 바꾸는 방식은 Pipeline Redirect에서 충분하지 않습니다. Python 자체의 UTF-8 Mode와 표준 입출력 Encoding을 함께 지정합니다.</div>
+          </section>
+
+          <section class="section" id="data-discovery" data-search-section>
+            <h2>5. 기존 데이터 자동 선정</h2>
+            <div class="profile-chart" aria-label="데이터 선정 우선순위">
+              <div class="profile-row"><strong>1. Qdrant</strong><div class="track"><i style="width:100%"></i></div><span>우선</span></div>
+              <div class="profile-row"><strong>2. DB</strong><div class="track"><i style="width:66%"></i></div><span>Fallback</span></div>
+              <div class="profile-row"><strong>3. Snapshot</strong><div class="track"><i style="width:40%"></i></div><span>최종</span></div>
+            </div>
+            <h3>Qdrant</h3>
+            <p><code>is_active=true</code> Point의 <code>users_idx</code>, <code>file_idx</code>, <code>content</code>만 읽고 Vector는 읽지 않습니다.</p>
+            <h3>Local RAG DB</h3>
+            <p>Qdrant 접근 실패 시 <code>RAG_Document.Index_Status='INDEXED'</code>, <code>Deleted_At IS NULL</code> 조건으로 <code>SELECT</code>만 수행합니다.</p>
+            <h3>Snapshot</h3>
+            <p><code>snapshots/</code>, 저장소 Root와 <code>RAG/</code>에서 최신 <code>*.snapshot</code>을 찾습니다. 운영 Qdrant가 아닌 임시 Container·임시 Collection에 복원한 뒤 반드시 제거합니다.</p>
+            <h3>무작위 선정</h3>
+            <ul><li>파일 수 조건을 만족하는 User 중 무작위 선택</li><li>활성 File IDX 무작위 선택</li><li>실제 Chunk Content로 Query 생성</li><li>RandomSeed 기록</li><li>외부 Search의 <code>result_count &gt; 0</code> 검증</li></ul>
+          </section>
+
+          <section class="section" id="modes" data-search-section>
+            <h2>6. 공통 단계</h2>
+            <div class="table-wrap"><table><thead><tr><th>단계</th><th>Mode</th><th>동작</th><th>관측</th></tr></thead><tbody>
+              <tr><td>1</td><td>Burst</td><td>순간 동시 제출</td><td>Connection·Queue 수용력</td></tr>
+              <tr><td>2</td><td>Interval</td><td>짧은 간격 연속 제출</td><td>Queue 누적</td></tr>
+              <tr><td>3</td><td>Batch</td><td>그룹 Wave</td><td>충격과 회복</td></tr>
+              <tr><td>4</td><td>Ramp</td><td>동시성 증가</td><td>정상 최대·최초 실패</td></tr>
+              <tr><td>5</td><td>Chaos</td><td>기본 TPS + Spike</td><td>실사용 피크 복구</td></tr>
+              <tr><td>6</td><td>Soak</td><td>계획 시간 동안 지속</td><td>장기 오류·지연 Drift</td></tr>
+            </tbody></table></div>
+          </section>
+
+          <section class="section" id="profiles" data-search-section>
+            <h2>7. Profile 비교</h2>
+            <div class="profile-chart" aria-label="Profile 상대 강도 그래프">
+              <div class="profile-row"><strong>Quick</strong><div class="track"><i style="width:18%"></i></div><span>약 5분</span></div>
+              <div class="profile-row"><strong>Standard</strong><div class="track"><i style="width:48%"></i></div><span>30~45분</span></div>
+              <div class="profile-row"><strong>Endurance</strong><div class="track"><i style="width:100%"></i></div><span>약 6시간</span></div>
+              <div class="profile-row"><strong>Destructive</strong><div class="track"><i style="width:76%"></i></div><span>25분+</span></div>
+            </div>
+            <div class="table-wrap"><table><thead><tr><th>Profile</th><th>Burst</th><th>Ramp</th><th>Chaos</th><th>Soak</th></tr></thead><tbody>
+              <tr><td>Quick</td><td>40 / C8</td><td>C32</td><td>1분 · 5 TPS · Spike 40</td><td>실제 2분 · 요청 수 조기 종료 없음</td></tr>
+              <tr><td>Standard</td><td>200 / C32</td><td>C128</td><td>5분 · 20 TPS · Spike 200</td><td>실제 20분 · 요청 수 조기 종료 없음</td></tr>
+              <tr><td>Endurance</td><td>500 / C64</td><td>C128</td><td>30분 · 20 TPS · Spike 200</td><td>실제 5시간 · 요청 수 조기 종료 없음</td></tr>
+              <tr><td>Destructive</td><td>1,000 / C256</td><td>C256</td><td>10분 · 50 TPS · Spike 400</td><td>실제 15분 / C128 · 요청 수 조기 종료 없음</td></tr>
+            </tbody></table></div>
+            <p>모든 기본 Profile의 Soak는 <code>max_requests=0</code>으로 요청 수 상한을 비활성화하고 <code>duration_seconds</code> 전체를 수행합니다.</p>
+          </section>
+
+          <section class="section" id="destructive" data-search-section>
+            <h2>8. 파괴적 외부 테스트</h2>
+            <p>Traffic 관점의 파괴적 테스트입니다. 높은 동시성과 Spike를 보내지만 외부 Host·Container·DB·Collection을 중단하거나 삭제하지 않습니다.</p>
+          </section>
+
+          <section class="section" id="requirements" data-search-section>
+            <h2>9. 실행 전 준비</h2>
+            <ul><li><code>RAG/.env.local</code> 존재</li><li>외부 RAG 접근 가능</li><li>RAG Token 일치</li><li>Qdrant·DB·Snapshot 중 하나에 활성 데이터 존재</li><li>Snapshot은 <code>RAG-Performance/snapshots/</code>에 배치 가능</li></ul>
+          </section>
+
+          <section class="section" id="quality" data-search-section>
+            <h2>10. 품질 검사</h2>
+            <pre><code>Set-Location 'D:\Programming\INT2-Jipsa-Team04\RAG-Performance'
+uv sync --frozen
+uv run ruff format --check src tests
+uv run ruff check src tests
+uv run mypy src tests
+uv run pytest
+uv run python -m compileall -q src tests
+uv run pytest tests/test_stress_runner_contract.py tests/test_capacity_ladder_contract.py tests/test_soak_duration_contract.py</code></pre>
+          </section>
+
+          <section class="section" id="quick-start" data-search-section>
+            <h2>11. Quick Start</h2>
+            <pre><code>&amp; .\scripts\run-staged-stress-test.ps1 `
+    -TestProfile quick `
+    -RandomSeed 8179069822024929128 `
+    -SkipQualityGate</code></pre>
+            <p>외부 주소가 HTTP이면 Test 환경에서 <code>AllowInsecureHttp</code>를 자동 적용합니다. 정상 종료 전 Campaign과 상세 Stress 파일을 모두 검증합니다.</p>
+          </section>
+
+          <section class="section" id="standard-endurance" data-search-section>
+            <h2>12. Capacity Ladder·Standard·Endurance</h2>
+            <p>Quick C32가 상한 검열 상태이면 같은 Seed와 같은 데이터로 Standard C128까지 자동 승격합니다. 하위 Script stdout은 <code>Out-Host</code>로 표시되어 Profile 결과 객체에 섞이지 않습니다.</p>
+            <pre><code>&amp; .\scripts\run-capacity-ladder.ps1 `
+    -RandomSeed 8179069822024929128 `
+    -SkipQualityGate
+
+&amp; .\scripts\run-capacity-ladder.ps1 `
+    -StartProfile standard `
+    -RandomSeed 8179069822024929128 `
+    -SkipQualityGate
+
+&amp; .\scripts\run-capacity-ladder.ps1 `
+    -AllowDestructive `
+    -ConfirmTargetHost 'int2-jipsa.iptime.org' `
+    -RandomSeed 8179069822024929128 `
+    -SkipQualityGate</code></pre>
+            <p>각 Profile에서 이번 실행에 새로 생긴 Run 폴더만 허용합니다. 이전 실패 폴더를 최신 결과로 Fallback하지 않습니다.</p>
+          </section>
+
+          <section class="section" id="destructive-command" data-search-section>
+            <h2>13. Destructive 실행</h2>
+            <pre><code>&amp; .\scripts\run-staged-stress-test.ps1 `
+    -TestProfile destructive `
+    -AllowDestructive `
+    -ConfirmTargetHost 'int2-jipsa.iptime.org' `
+    -SkipQualityGate</code></pre>
+          </section>
+
+          <section class="section" id="source-control" data-search-section>
+            <h2>14. Source 강제 실행</h2>
+            <pre><code>-DataSource qdrant
+-DataSource database
+-DataSource snapshot
+-SnapshotPath '.\snapshots\collection.snapshot'
+-RandomSeed 159</code></pre>
+          </section>
+
+          <section class="section" id="results" data-search-section>
+            <h2>15. 결과 파일과 해석</h2>
+            <div class="metric-grid">
+              <article class="metric-card"><span class="metric-value">3</span><span class="metric-label">Campaign files</span><span class="metric-note">JSON · Markdown · HTML</span></article>
+              <article class="metric-card"><span class="metric-value">15</span><span class="metric-label">Detailed files</span><span class="metric-note">입력 · 요청 · Stage · Health · 보고서</span></article>
+              <article class="metric-card"><span class="metric-value">18</span><span class="metric-label">Required total</span><span class="metric-note">하나라도 없으면 실패</span></article>
+              <article class="metric-card"><span class="metric-value">2</span><span class="metric-label">HTML reports</span><span class="metric-note">Campaign 요약 · 상세 표/그래프</span></article>
+            </div>
+            <pre class="artifact-tree"><code>artifacts/external-stress/&lt;RUN_ID&gt;/
+├─ report.json
+├─ report.md
+├─ report.html                         # Campaign 요약
+└─ external-stress/
+   ├─ external_target.resolved.json
+   ├─ stress_plan.resolved.json
+   ├─ execution_command.txt
+   ├─ environment.json
+   ├─ requests.json
+   ├─ requests.csv
+   ├─ stage_summaries.json
+   ├─ stage_summaries.csv
+   ├─ capacity_boundaries.json
+   ├─ capacity_boundaries.csv
+   ├─ health_checks.json
+   ├─ progress.log
+   ├─ report.json
+   ├─ report.md
+   └─ report.html                      # 상세 표·그래프</code></pre>
+            <div class="table-wrap"><table><thead><tr><th>경로</th><th>역할</th></tr></thead><tbody>
+              <tr><td><code>&lt;RUN_ID&gt;/report.html</code></td><td>Target·Source·Seed·Health Campaign 요약과 상세 링크</td></tr>
+              <tr><td><code>&lt;RUN_ID&gt;/external-stress/report.html</code></td><td>Stage별 표, 오류율 그래프, 처리 한계</td></tr>
+              <tr><td><code>external_target.resolved.json</code></td><td>Secret이 제거된 Target과 selection_source·selection_seed·선정 User/File</td></tr>
+              <tr><td><code>progress.log</code></td><td>UTF-8 진행 로그</td></tr>
+            </tbody></table></div>
+            <div class="callout"><strong>완료 조건:</strong> Native Process 종료 코드 0뿐 아니라 18개 파일의 존재·비어 있지 않음, Campaign과 상세 JSON의 실행 오류 없음, 사전·사후 Health, Stage·Request 수를 모두 확인합니다.</div>
+          </section>
+
+<!-- STRESS-VERIFICATION:START -->
+          <section class='doc-section verification verification-degraded'
+                   id='verification'
+                   data-search-section>
+            <span class='status-pill status-degraded'>! DEGRADED · destructive</span>
+            <h2>16. 마지막 검증 기록</h2>
+            <p class='lead'>
+              외부 RAG 단계형 Stress Campaign의 마지막 실행 결과입니다.
+              Local RAG와 Docker는 제어하지 않습니다.
+            </p>
+            <div class='metric-grid'>
+              <article class='metric-card'>
+                <span class='metric-value'>13</span>
+                <span class='metric-label'>Stages</span>
+                <span class='metric-note'>통과 2 · 저하 11 · 실패 0 · 중단 0</span>
+              </article>
+              <article class='metric-card'>
+                <span class='metric-value'>51652</span>
+                <span class='metric-label'>Requests</span>
+                <span class='metric-note'>성공 51276 · 실패 376</span>
+              </article>
+              <article class='metric-card'>
+                <span class='metric-value'>True</span>
+                <span class='metric-label'>Preflight health</span>
+                <span class='metric-note'>http://int2-jipsa.iptime.org:9802</span>
+              </article>
+              <article class='metric-card'>
+                <span class='metric-value'>True</span>
+                <span class='metric-label'>Postflight health</span>
+                <span class='metric-note'>테스트 종료 후 응답 가능 여부</span>
+              </article>
+            </div>
+            <div class='table-scroll' role='region' tabindex='0'
+                 aria-label='마지막 외부 실행 요약'>
+              <table>
+                <tbody>
+                  <tr><td>Run ID</td><td><code>20260730T235751Z-744c8580</code></td></tr>
+                  <tr><td>완료 시각</td><td><code>2026-07-31T00:35:21.953+00:00</code></td></tr>
+                  <tr><td>실행 방식</td><td><code>external_http_black_box</code></td></tr>
+                  <tr><td>외부 Target</td><td><code>http://int2-jipsa.iptime.org:9802</code></td></tr>
+                  <tr><td>Target 환경</td><td><code>test</code></td></tr>
+                  <tr><td>데이터 Source</td><td><code>qdrant</code></td></tr>
+                  <tr><td>선정 Seed</td><td><code>8752795089301448294</code></td></tr>
+                  <tr><td>선정 User IDX</td><td><code>1</code></td></tr>
+                  <tr><td>선정 File 수</td><td><code>2</code></td></tr>
+                  <tr><td>파괴적 Profile</td><td><code>True</code></td></tr>
+                  <tr><td>품질 게이트</td><td><code>생략</code></td></tr>
+                  <tr><td>Local RAG 접근</td><td><code>False</code></td></tr>
+                  <tr><td>실행 오류</td><td><code>없음</code></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <h3>처리 한계 관측</h3>
+            <div class='table-scroll' role='region' tabindex='0'
+                 aria-label='처리 한계 관측'>
+              <table>
+                <thead><tr><th>작업</th><th>정상 최대</th>
+                  <th>최초 실패</th><th>해석</th></tr></thead>
+                <tbody><tr><td><code>search</code></td><td>256</td><td>-</td><td>계획 상한까지 실패 없음 — 실제 최대치는 더 높을 수 있음</td></tr></tbody>
+              </table>
+            </div>
+            <h3>마지막 결과 바로가기</h3>
+            <div class='quick-links'>
+              <a href='artifacts/external-stress/20260730T235751Z-744c8580/report.md'>캠페인 Markdown</a>
+              <a href='artifacts/external-stress/20260730T235751Z-744c8580/report.html'>캠페인 HTML</a>
+              <a href='artifacts/external-stress/20260730T235751Z-744c8580/external-stress/report.md'>상세 Stress Markdown</a>
+              <a href='artifacts/external-stress/20260730T235751Z-744c8580/external-stress/report.html'>상세 Stress HTML</a>
+            </div>
+          </section>
+<!-- STRESS-VERIFICATION:END -->
+
+          <section class="section" id="readme-update" data-search-section>
+            <h2>17. README 자동 갱신</h2>
+            <p>Profile, Run ID, 외부 Origin, Source, Seed, User/File 수, Health, Stage, 요청 수와 처리 한계를 Markdown·HTML에 기록합니다. 정상 실행은 실제 생성된 Campaign·상세 링크를 포함합니다.</p>
+          </section>
+
+          <section class="section" id="safety" data-search-section>
+            <h2>18. 안전장치</h2>
+            <ul>
+              <li>RAG 환경 파일 읽기 전용</li>
+              <li>Secret 출력 금지</li>
+              <li>Vector 미조회</li>
+              <li>DB SELECT 전용</li>
+              <li>Snapshot 임시 Container 복원</li>
+              <li>외부 Search 결과 1건 이상 사전 검증</li>
+              <li>Production Destructive 이중 승인</li>
+              <li>PYTHONUTF8·PYTHONIOENCODING Process 범위 적용과 복원</li>
+              <li>이번 실행의 새 Run 폴더만 결과로 허용</li>
+              <li>18개 산출물 완전성 검증</li>
+              <li>Capacity Ladder의 이전 실패 폴더 Fallback 금지</li>
+            </ul>
+          </section>
+
+          <section class="section" id="troubleshooting" data-search-section>
+            <h2>19. 문제 해결</h2>
+            <div class="table-wrap"><table><thead><tr><th>증상</th><th>확인</th></tr></thead><tbody>
+              <tr><td><code>UnicodeEncodeError: charmap</code></td><td>실제 Script에 <code>PYTHONUTF8=1</code>, <code>PYTHONIOENCODING=utf-8</code> 설정과 복원 로직이 있는지 확인</td></tr>
+              <tr><td>최상위 HTML에 그래프가 없음</td><td><code>external-stress/report.html</code>이 상세 표·그래프 보고서</td></tr>
+              <tr><td>결과 파일 일부 누락·0 Byte</td><td>수정된 Script는 18개 파일 검증 단계에서 실패해야 정상</td></tr>
+              <tr><td>No active Qdrant payload</td><td>Collection·is_active·Qdrant 상태 또는 auto Fallback</td></tr>
+              <tr><td>No snapshot found</td><td><code>snapshots/*.snapshot</code> 위치</td></tr>
+              <tr><td>Snapshot restore failed</td><td>Qdrant Minor Version과 현재 Image</td></tr>
+              <tr><td>Selected values returned no results</td><td>Control Plane과 외부 RAG 데이터 시점 일치</td></tr>
+              <tr><td>401</td><td><code>RAG_INGEST_TOKEN</code> 일치·<code>INTERNAL_TOKEN</code> 혼용 여부</td></tr>
+            </tbody></table></div>
+          </section>
+
+          <section class="section" id="order" data-search-section>
+            <h2>20. 권장 실행 순서</h2>
+            <pre><code>품질 게이트
+→ UTF-8·산출물·Capacity 계약 테스트
+→ Quick(auto)
+→ external-stress/report.html과 18개 파일 확인
+→ Capacity Ladder
+→ Endurance
+→ 승인 후 Destructive
+→ README 검증 기록 확인</code></pre>
+          </section>
+
+          <section class="section" id="checklist" data-search-section>
+            <h2>21. 병합 전 체크리스트</h2>
+            <ul><li>Ruff·Mypy·Pytest·Compileall 통과</li><li>UTF-8·산출물·Capacity 집중 테스트 통과</li><li><code>.env.local</code>·<code>*.snapshot</code> Git 제외</li><li>Token·Password 결과 미포함</li><li>Quick 자동 데이터 선정 성공</li><li>18개 산출물 존재·비어 있지 않음</li><li>상세 HTML 표·그래프 확인</li><li>README.md·HTML 자동 갱신 확인</li></ul>
+          </section>
+
+          <section class="section" id="principles" data-search-section>
+            <h2>22. 설계 원칙</h2>
+            <ol><li>부하 생성기와 RAG를 분리합니다.</li><li>사용자 Secret·식별자 반복 입력을 제거합니다.</li><li>운영 데이터는 읽기 전용으로 탐색합니다.</li><li>Snapshot은 격리된 Qdrant에서만 해석합니다.</li><li>Seed를 기록해 재현성을 보장합니다.</li><li>검색 결과가 있는 데이터만 부하에 사용합니다.</li><li>종료 코드와 산출물 완전성을 함께 검증합니다.</li><li>이전 실패 Run을 새 결과로 재사용하지 않습니다.</li></ol>
+          </section>
+        </div>
+      </article>
+    </main>
+
+    <aside class="sidebar" aria-label="목차와 검색">
+      <input class="search" id="document-search" type="search" placeholder="문서 내 검색 · Ctrl+K">
+      <div class="search-status" id="search-status" aria-live="polite"></div>
+      <nav id="toc" aria-label="페이지 목차"></nav>
+    </aside>
+  </div>
+
+  <button class="top" id="back-to-top" type="button" aria-label="맨 위로 이동">↑</button>
+  <footer><strong>Jipsa External RAG Performance</strong> · Standalone HTML · No external runtime assets</footer>
+
+  <script>
+    (() => {
+      'use strict';
+      const root = document.documentElement;
+      const toggle = document.getElementById('theme-toggle');
+      const label = document.getElementById('theme-label');
+      const storageKey = 'jipsa-external-rag-theme';
+      const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+      const stored = (() => {
+        try { return localStorage.getItem(storageKey); }
+        catch (_) { return null; }
+      })();
+      let preference = stored || 'system';
+
+      const applyTheme = () => {
+        const resolved = preference === 'system'
+          ? (systemDark.matches ? 'dark' : 'light')
+          : preference;
+        root.dataset.theme = resolved;
+        label.textContent = resolved === 'dark' ? '라이트' : '다크';
+      };
+      applyTheme();
+
+      toggle.addEventListener('click', () => {
+        preference = root.dataset.theme === 'dark' ? 'light' : 'dark';
+        try { localStorage.setItem(storageKey, preference); }
+        catch (_) { /* 브라우저 저장소 차단 시 현재 문서에만 적용 */ }
+        applyTheme();
+      });
+
+      document.getElementById('print-button').addEventListener('click', () => window.print());
+
+      const progress = document.getElementById('progress-bar');
+      const topButton = document.getElementById('back-to-top');
+      const updateScroll = () => {
+        const max = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
+        progress.style.width = `${Math.min(100, window.scrollY / max * 100)}%`;
+        topButton.classList.toggle('visible', window.scrollY > 700);
+      };
+      document.addEventListener('scroll', updateScroll, { passive: true });
+      topButton.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+      updateScroll();
+
+      document.querySelectorAll('pre').forEach((pre) => {
+        const code = pre.querySelector('code');
+        if (!code) return;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'copy';
+        button.textContent = '복사';
+        button.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(code.textContent || '');
+            button.textContent = '완료';
+          }
+          catch (_) {
+            button.textContent = '실패';
+          }
+          setTimeout(() => { button.textContent = '복사'; }, 1300);
+        });
+        pre.prepend(button);
+      });
+
+      const toc = document.getElementById('toc');
+      const headings = [...document.querySelectorAll('.section h2, .section h3')];
+      headings.forEach((heading, index) => {
+        if (!heading.id) heading.id = `heading-${index + 1}`;
+        const anchor = document.createElement('a');
+        anchor.className = 'anchor';
+        anchor.href = `#${heading.id}`;
+        anchor.textContent = '#';
+        heading.append(anchor);
+
+        const section = heading.closest('.section');
+        if (!section) return;
+        const link = document.createElement('a');
+        link.href = `#${section.id}`;
+        link.dataset.level = heading.tagName === 'H2' ? '2' : '3';
+        link.textContent = heading.childNodes[0].textContent.trim();
+        toc.append(link);
+      });
+
+      const tocLinks = [...toc.querySelectorAll('a')];
+      const sections = [...document.querySelectorAll('[data-search-section]')];
+      const search = document.getElementById('document-search');
+      const status = document.getElementById('search-status');
+      const normalize = (value) => value.toLocaleLowerCase('ko-KR').replace(/\s+/g, ' ').trim();
+
+      const runSearch = () => {
+        const query = normalize(search.value);
+        let matched = 0;
+        sections.forEach((section) => {
+          const hit = !query || normalize(section.textContent || '').includes(query);
+          section.classList.toggle('hidden', !hit);
+          if (hit) matched += 1;
+        });
+        tocLinks.forEach((link) => {
+          const section = document.querySelector(link.hash);
+          link.classList.toggle(
+            'hidden',
+            Boolean(query) && Boolean(section?.classList.contains('hidden'))
+          );
+        });
+        status.textContent = query ? `${matched}개 섹션 일치` : '';
+      };
+
+      search.addEventListener('input', runSearch);
+      search.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          search.value = '';
+          runSearch();
+          search.blur();
+        }
+      });
+      document.addEventListener('keydown', (event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+          event.preventDefault();
+          search.focus();
+        }
+      });
+
+      if ('IntersectionObserver' in window) {
+        const observer = new IntersectionObserver((entries) => {
+          const visible = entries
+            .filter((entry) => entry.isIntersecting)
+            .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+          if (!visible.length) return;
+          tocLinks.forEach((link) => link.classList.remove('active'));
+          toc.querySelector(`a[href="#${visible[0].target.id}"]`)?.classList.add('active');
+        }, { rootMargin: '-20% 0px -70% 0px', threshold: [0, 1] });
+        sections.forEach((section) => observer.observe(section));
+      }
+    })();
+  </script>
+</body>
+</html>

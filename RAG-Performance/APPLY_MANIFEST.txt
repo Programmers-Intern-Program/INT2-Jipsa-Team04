@@ -1,0 +1,50 @@
+적용 기준 경로: D:\Programming\INT2-Jipsa-Team04\RAG-Performance
+
+이 ZIP의 최상위는 RAG-Performance 내부 기준입니다.
+현재 RAG-Performance 폴더에 바로 압축 해제하여 아래 전체 파일을 추가·교체합니다.
+
+[문서]
+README.md
+README.html
+TEST_COMMANDS.md
+
+[프로젝트 설정]
+pyproject.toml
+
+[실행 스크립트]
+scripts/run-staged-stress-test.ps1
+
+[Stress Plan]
+configs/stress-plan-quick.json
+configs/stress-plan-standard.json
+configs/stress-plan-endurance.json
+configs/stress-plan-destructive.json
+
+[Python Source]
+src/jipsa_rag_benchmark/stress_analysis.py
+src/jipsa_rag_benchmark/stress_models.py
+src/jipsa_rag_benchmark/stress_runner.py
+src/jipsa_rag_benchmark/verification_readme.py
+
+[Test]
+tests/test_project_metadata.py
+tests/test_stress_analysis.py
+tests/test_stress_models.py
+tests/test_stress_runner_contract.py
+tests/test_verification_readme.py
+
+[변경하지 않음]
+RAG/src
+RAG/pyproject.toml
+RAG/.env.local
+RAG/infra/qdrant/compose.yaml
+AWS Backend Source
+운영 제한값
+Docker Volume
+운영 DB·Qdrant 데이터
+
+[정상 핵심 경로]
+D:\Programming\INT2-Jipsa-Team04\RAG-Performance\scripts\run-staged-stress-test.ps1
+
+[잘못된 중첩 경로 예시]
+D:\Programming\INT2-Jipsa-Team04\RAG-Performance\RAG-Performance\scripts\run-staged-stress-test.ps1

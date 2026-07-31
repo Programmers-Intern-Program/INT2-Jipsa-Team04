@@ -1,0 +1,33 @@
+# Standalone Python environment
+.venv/
+
+# Generated benchmark fixtures and measurement artifacts
+artifacts/
+
+# Local target overrides and Qdrant snapshots can contain environment-specific metadata.
+configs/external-target.local.json
+snapshots/*.snapshot
+snapshots/**/*.snapshot
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build outputs
+build/
+dist/
+*.egg-info/
+
+# Coverage outputs
+.coverage
+.coverage.*
+htmlcov/
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
